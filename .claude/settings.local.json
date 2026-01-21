@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx shadcn@latest init --defaults)",
+      "Bash(npx shadcn@latest add:*)",
+      "Bash(pnpm list:*)",
+      "Bash(pnpm install)",
+      "Bash(npx tsc --noEmit)",
+      "WebFetch(domain:api.datamuse.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:gist.githubusercontent.com)"
+    ]
+  }
+}

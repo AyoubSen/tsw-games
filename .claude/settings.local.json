@@ -8,7 +8,12 @@
       "Bash(npx tsc --noEmit)",
       "WebFetch(domain:api.datamuse.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:gist.githubusercontent.com)"
+      "WebFetch(domain:gist.githubusercontent.com)",
+      "Bash(pnpm add:*)",
+      "Bash(ls -la \"C:\\\\Users\\\\ayoub\\\\OneDrive\\\\Bureau\\\\coding-things\\\\tsw-games\\\\src\"\" 2>/dev/null || dir \"C:UsersayoubOneDriveBureaucoding-thingstsw-gamessrc \")",
+      "Bash(dir:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx partykit build)"
     ]
   }
 }

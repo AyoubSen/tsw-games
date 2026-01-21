@@ -227,6 +227,12 @@ export function useWordle() {
   // Keyboard input
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input or textarea
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return
+      }
+
       if (isResetting.current) return
       if (gameStatus !== 'playing') return
       if (e.ctrlKey || e.metaKey || e.altKey) return

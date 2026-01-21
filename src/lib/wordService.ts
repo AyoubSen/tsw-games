@@ -203,3 +203,11 @@ export function getValidCount(): number {
 export function isWordsLoaded(): boolean {
   return answerWords.length > 0 && validWordsSet.size > 0
 }
+
+export function getAnswerWords(): string[] {
+  return answerWords
+}
+
+export function getValidWordsSet(): Set<string> {
+  return validWordsSet
+}

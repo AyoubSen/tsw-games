@@ -4,7 +4,7 @@ import PartySocket from "partysocket"
 export const PARTYKIT_HOST =
   typeof window !== "undefined" && window.location.hostname === "localhost"
     ? "localhost:1999"
-    : "tsw-games.your-username.partykit.dev" // Update after deploying
+    : "tsw-games.ayoubsen.partykit.dev"
 
 export function createPartySocket(roomId: string, isHost: boolean, mode: string) {
   return new PartySocket({

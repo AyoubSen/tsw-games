@@ -151,7 +151,7 @@ function HomePage() {
             TSW Games
           </h1>
           <p className="text-lg md:text-xl text-muted-foreground mb-6">
-            Mini games for the crew. Challenge your friends and have fun!
+            Mini games for the boys (and the girls, of course!)
           </p>
           <div className="flex items-center justify-center gap-6 text-sm text-muted-foreground">
             <div className="flex items-center gap-2">
@@ -160,7 +160,7 @@ function HomePage() {
             </div>
             <div className="flex items-center gap-2">
               <Users className="w-4 h-4 text-blue-500" />
-              <span>Multiplayer soon</span>
+              <span>Multiplayer</span>
             </div>
           </div>
         </div>

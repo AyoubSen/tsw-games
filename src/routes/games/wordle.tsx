@@ -22,7 +22,7 @@ import {
   getAnswerWords,
   getValidWordsSet,
 } from '@/lib/wordService'
-import type { GameMode } from '../../../party/wordle'
+import type { GameMode, RevealMode } from '../../../party/wordle'
 
 export const Route = createFileRoute('/games/wordle')({ component: WordlePage })
 
@@ -56,8 +56,8 @@ function WordlePage() {
   }
 
   // Handle multiplayer game creation
-  const handleCreateMultiplayer = (mode: GameMode, playerName: string) => {
-    multiplayer.createGame(mode, playerName)
+  const handleCreateMultiplayer = (mode: GameMode, revealMode: RevealMode, playerName: string) => {
+    multiplayer.createGame(mode, revealMode, playerName)
   }
 
   // Handle multiplayer game join
@@ -106,17 +106,15 @@ function WordlePage() {
   if (view === 'select') {
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background">
-        <div className="p-4 flex items-center justify-between border-b border-border">
+        <div className="px-4 py-3 flex items-center justify-between border-b border-border">
           <Button variant="ghost" size="sm" asChild>
             <Link to="/">
-              <ArrowLeft className="w-4 h-4 mr-2" />
+              <ArrowLeft className="w-4 h-4 mr-1" />
               Back
             </Link>
           </Button>
-          <div className="text-center">
-            <h1 className="text-xl font-bold">Wordle</h1>
-          </div>
-          <div className="w-[72px]" /> {/* Spacer for centering */}
+          <h1 className="text-lg font-bold">Wordle</h1>
+          <div className="w-[60px]" /> {/* Spacer for centering */}
         </div>
         <GameModeSelector
           onSinglePlayer={handleSinglePlayer}
@@ -156,13 +154,13 @@ function WordlePage() {
 
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background flex flex-col">
-        <div className="p-4 flex items-center justify-between border-b border-border">
+        <div className="px-4 py-3 flex items-center justify-between border-b border-border">
           <Button variant="ghost" size="sm" onClick={handleBackToSelect}>
-            <ArrowLeft className="w-4 h-4 mr-2" />
+            <ArrowLeft className="w-4 h-4 mr-1" />
             Back
           </Button>
           <div className="text-center">
-            <h1 className="text-xl font-bold">Wordle</h1>
+            <h1 className="text-lg font-bold">Wordle</h1>
             {answerCount > 0 && (
               <p className="text-xs text-muted-foreground flex items-center justify-center gap-1">
                 <Database className="w-3 h-3" />
@@ -171,38 +169,35 @@ function WordlePage() {
             )}
           </div>
           <Button variant="ghost" size="sm" onClick={resetGame} disabled={isLoading}>
-            <RotateCcw className="w-4 h-4 mr-2" />
-            New Game
+            <RotateCcw className="w-4 h-4 mr-1" />
+            New
           </Button>
         </div>
 
         {isLoading ? (
-          <div className="flex-1 flex flex-col items-center justify-center gap-4">
-            <Loader2 className="w-10 h-10 animate-spin text-primary" />
-            <p className="text-muted-foreground">Loading dictionary...</p>
-            <p className="text-xs text-muted-foreground">First load fetches from API, then cached locally</p>
+          <div className="flex-1 flex flex-col items-center justify-center gap-3">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">Loading dictionary...</p>
           </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-between py-4 px-2 gap-4">
+          <div className="flex-1 flex flex-col items-center justify-center gap-6 py-4 px-4">
             {message && (
-              <div className="fixed top-24 left-1/2 -translate-x-1/2 bg-foreground text-background px-4 py-2 rounded-lg font-semibold z-50 animate-fade-in">
+              <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-foreground text-background px-4 py-2 rounded-lg font-semibold z-50 animate-fade-in">
                 {message}
               </div>
             )}
 
-            <div className="flex-1 flex items-center">
-              <Board
-                guesses={guesses}
-                currentGuess={currentGuess}
-                currentRow={currentRow}
-                shake={shake}
-                revealRow={revealRow}
-                maxGuesses={maxGuesses}
-                wordLength={wordLength}
-              />
-            </div>
+            <Board
+              guesses={guesses}
+              currentGuess={currentGuess}
+              currentRow={currentRow}
+              shake={shake}
+              revealRow={revealRow}
+              maxGuesses={maxGuesses}
+              wordLength={wordLength}
+            />
 
-            <div className="w-full px-2">
+            <div className="w-full max-w-lg">
               <Keyboard
                 usedLetters={usedLetters}
                 onKey={addLetter}
@@ -231,7 +226,7 @@ function WordlePage() {
                 )}
               </DialogDescription>
             </DialogHeader>
-            <div className="flex flex-col gap-3 mt-4">
+            <div className="flex flex-col gap-2 pt-2">
               <Button onClick={resetGame} className="w-full">
                 <RotateCcw className="w-4 h-4 mr-2" />
                 Play Again
@@ -250,15 +245,13 @@ function WordlePage() {
   if (view === 'multiplayer-lobby' && multiplayer.gameState && multiplayer.playerId) {
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background">
-        <div className="p-4 flex items-center justify-between border-b border-border">
+        <div className="px-4 py-3 flex items-center justify-between border-b border-border">
           <Button variant="ghost" size="sm" onClick={handleBackToSelect}>
-            <ArrowLeft className="w-4 h-4 mr-2" />
+            <ArrowLeft className="w-4 h-4 mr-1" />
             Back
           </Button>
-          <div className="text-center">
-            <h1 className="text-xl font-bold">Multiplayer Wordle</h1>
-          </div>
-          <div className="w-[72px]" />
+          <h1 className="text-lg font-bold">Multiplayer Wordle</h1>
+          <div className="w-[60px]" />
         </div>
         <MultiplayerLobby
           gameState={multiplayer.gameState}
@@ -284,6 +277,8 @@ function WordlePage() {
         answerWords={getAnswerWords()}
         waitingFor={multiplayer.waitingFor}
         isWaitingForOthers={multiplayer.isWaitingForOthers}
+        roundReveal={multiplayer.roundReveal}
+        onDismissReveal={multiplayer.dismissReveal}
       />
     )
   }

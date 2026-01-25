@@ -1,7 +1,8 @@
 import type * as Party from "partykit/server"
 
 // Game modes
-export type GameMode = "race" | "turns" | "hidden"
+export type GameMode = "race" | "classic"
+export type RevealMode = "after-round" | "at-end"
 
 // Player state
 export interface Player {
@@ -20,6 +21,7 @@ export interface Player {
 export interface GameState {
   roomCode: string
   mode: GameMode
+  revealMode: RevealMode // For classic mode - when to reveal guesses
   hostId: string
   targetWord: string
   players: Record<string, Player>
@@ -28,7 +30,7 @@ export interface GameState {
   winnerId: string | null
   startedAt: number | null
   finishedAt: number | null
-  currentTurn: number // For turns mode - which turn we're on (0-5)
+  currentTurn: number // For classic mode - which turn we're on (0-5)
 }
 
 // Message types from client
@@ -63,13 +65,14 @@ export interface PlayerResult {
 export interface PublicGameState {
   roomCode: string
   mode: GameMode
+  revealMode: RevealMode // For classic mode - when to reveal guesses
   hostId: string
   players: Record<string, Player>
   status: "waiting" | "playing" | "finished"
   maxPlayers: number
   winnerId: string | null
   targetWord?: string // Only sent when game starts
-  currentTurn: number // Current turn for turns mode
+  currentTurn: number // Current turn for classic mode
 }
 
 // Word list (subset for server - full list fetched client-side for validation)
@@ -170,6 +173,7 @@ export default class WordleParty implements Party.Server {
     const publicState: PublicGameState = {
       roomCode: this.state.roomCode,
       mode: this.state.mode,
+      revealMode: this.state.revealMode,
       hostId: this.state.hostId,
       players: this.state.players,
       status: this.state.status,
@@ -203,6 +207,7 @@ export default class WordleParty implements Party.Server {
     // Parse URL for room creation params
     const url = new URL(ctx.request.url)
     const mode = (url.searchParams.get("mode") as GameMode) || "race"
+    const revealMode = (url.searchParams.get("revealMode") as RevealMode) || "after-round"
     const isHost = url.searchParams.get("host") === "true"
 
     // Create new game if this is the host and no state exists
@@ -210,6 +215,7 @@ export default class WordleParty implements Party.Server {
       this.state = {
         roomCode: this.room.id,
         mode,
+        revealMode,
         hostId: conn.id,
         targetWord: getRandomWord(),
         players: {},
@@ -301,8 +307,8 @@ export default class WordleParty implements Party.Server {
           const player = this.state.players[sender.id]
           if (!player || player.completed) return
 
-          // In turns mode, block if player already submitted for this turn
-          if (this.state.mode === "turns" && player.readyForNextTurn) {
+          // In classic mode, block if player already submitted for this turn
+          if (this.state.mode === "classic" && player.readyForNextTurn) {
             this.send(sender, { type: "error", message: "Waiting for other players..." })
             return
           }
@@ -319,41 +325,42 @@ export default class WordleParty implements Party.Server {
               { type: "player-progress", playerId: sender.id, attempts: player.attempts },
               sender.id
             )
-          } else if (this.state.mode === "turns") {
-            // In turns mode, mark player as ready and check if all ready
+          } else if (this.state.mode === "classic") {
+            // Classic mode - behavior depends on revealMode
             player.readyForNextTurn = true
             await this.saveState()
 
-            const activePlayers = Object.values(this.state.players).filter(p => !p.completed)
-            const waitingFor = activePlayers.filter(p => !p.readyForNextTurn).map(p => p.name)
+            if (this.state.revealMode === "after-round") {
+              // After-round reveal: wait for all players, then reveal guesses
+              const activePlayers = Object.values(this.state.players).filter(p => !p.completed)
+              const waitingFor = activePlayers.filter(p => !p.readyForNextTurn).map(p => p.name)
 
-            if (waitingFor.length > 0) {
-              // Notify everyone who we're waiting for
-              this.broadcast({ type: "waiting-for-players", waitingFor })
-            } else {
-              // All players submitted - reveal guesses and move to next turn
-              const playerGuesses: Record<string, string[]> = {}
-              for (const p of activePlayers) {
-                const lastGuess = p.guesses[p.guesses.length - 1]
-                if (lastGuess) {
-                  playerGuesses[p.id] = lastGuess as unknown as string[]
+              if (waitingFor.length > 0) {
+                // Notify everyone who we're waiting for
+                this.broadcast({ type: "waiting-for-players", waitingFor })
+              } else {
+                // All players submitted - reveal guesses and move to next turn
+                const playerGuesses: Record<string, string[]> = {}
+                for (const p of activePlayers) {
+                  const lastGuess = p.guesses[p.guesses.length - 1]
+                  if (lastGuess) {
+                    playerGuesses[p.id] = lastGuess as unknown as string[]
+                  }
+                  p.readyForNextTurn = false // Reset for next turn
                 }
-                p.readyForNextTurn = false // Reset for next turn
+
+                this.state.currentTurn++
+                await this.saveState()
+
+                this.broadcast({
+                  type: "turn-complete",
+                  turn: this.state.currentTurn,
+                  playerGuesses,
+                })
+                this.broadcast({ type: "state", state: this.getPublicState() })
               }
-
-              this.state.currentTurn++
-              await this.saveState()
-
-              this.broadcast({
-                type: "turn-complete",
-                turn: this.state.currentTurn,
-                playerGuesses,
-              })
-              this.broadcast({ type: "state", state: this.getPublicState() })
             }
-          } else {
-            // Hidden/versus mode - just save, don't broadcast anything until complete
-            await this.saveState()
+            // at-end reveal: don't broadcast anything until game complete
           }
           break
         }
@@ -367,7 +374,7 @@ export default class WordleParty implements Party.Server {
           player.completed = true
           player.won = data.won
           player.attempts = data.attempts
-          player.readyForNextTurn = true // Mark as done for turns mode
+          player.readyForNextTurn = true // Mark as done for classic mode
           await this.saveState()
 
           // Mode-specific completion handling
@@ -400,8 +407,8 @@ export default class WordleParty implements Party.Server {
                 results,
               })
             }
-          } else if (this.state.mode === "turns") {
-            // In turns mode, broadcast completion
+          } else if (this.state.mode === "classic" && this.state.revealMode === "after-round") {
+            // In classic mode with after-round reveal, broadcast completion
             this.broadcast({
               type: "player-completed",
               playerId: sender.id,
@@ -417,7 +424,7 @@ export default class WordleParty implements Party.Server {
               this.broadcast({ type: "waiting-for-players", waitingFor })
             }
           }
-          // In hidden/versus mode, don't broadcast individual completions
+          // In classic mode with at-end reveal, don't broadcast individual completions
 
           // Check if all players completed (for all modes)
           const allCompleted = Object.values(this.state.players).every((p) => p.completed)

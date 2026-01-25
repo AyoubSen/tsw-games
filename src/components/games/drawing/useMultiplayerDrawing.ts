@@ -1,15 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import PartySocket from "partysocket"
 import { PARTYKIT_HOST, generateRoomCode } from "@/lib/partykit"
-import type { ServerMessage, PublicGameState, GameMode, RevealMode } from "../../../../party/wordle"
+import type {
+  ServerMessage,
+  PublicGameState,
+  Stroke,
+  Guess,
+} from "../../../../party/drawing"
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
-
-// Data for the round reveal modal
-export interface RoundReveal {
-  turn: number
-  playerGuesses: Record<string, string[]> // playerId -> [char, state][] serialized
-}
 
 export interface MultiplayerState {
   connectionStatus: ConnectionStatus
@@ -17,28 +16,25 @@ export interface MultiplayerState {
   playerId: string | null
   error: string | null
   isHost: boolean
-  waitingFor: string[] // Players we're waiting for in classic mode
-  isWaitingForOthers: boolean // True when current player has guessed and waiting
-  roundReveal: RoundReveal | null // Data for showing round reveal modal
+  strokes: Stroke[]
+  guesses: Guess[]
 }
 
-export function useMultiplayerWordle() {
+export function useMultiplayerDrawing() {
   const [state, setState] = useState<MultiplayerState>({
     connectionStatus: "disconnected",
     gameState: null,
     playerId: null,
     error: null,
     isHost: false,
-    waitingFor: [],
-    isWaitingForOthers: false,
-    roundReveal: null,
+    strokes: [],
+    guesses: [],
   })
 
   const socketRef = useRef<PartySocket | null>(null)
   const playerNameRef = useRef<string>("")
 
-  const connect = useCallback((roomCode: string, isHost: boolean, mode: GameMode, revealMode: RevealMode, playerName: string) => {
-    // Disconnect existing socket
+  const connect = useCallback((roomCode: string, isHost: boolean, playerName: string) => {
     if (socketRef.current) {
       socketRef.current.close()
     }
@@ -50,15 +46,16 @@ export function useMultiplayerWordle() {
       connectionStatus: "connecting",
       error: null,
       isHost,
+      strokes: [],
+      guesses: [],
     }))
 
     const socket = new PartySocket({
       host: PARTYKIT_HOST,
       room: roomCode,
+      party: "drawing",
       query: {
         host: isHost.toString(),
-        mode,
-        revealMode,
       },
     })
 
@@ -69,7 +66,6 @@ export function useMultiplayerWordle() {
         playerId: socket.id,
       }))
 
-      // Auto-join with player name
       socket.send(JSON.stringify({ type: "join", name: playerName }))
     })
 
@@ -106,6 +102,8 @@ export function useMultiplayerWordle() {
         setState((prev) => ({
           ...prev,
           gameState: message.state,
+          strokes: message.state.strokes,
+          guesses: message.state.guesses,
         }))
         break
 
@@ -140,59 +138,78 @@ export function useMultiplayerWordle() {
         })
         break
 
-      case "game-started":
+      case "round-started":
         setState((prev) => {
           if (!prev.gameState) return prev
           return {
             ...prev,
+            strokes: [],
+            guesses: [],
             gameState: {
               ...prev.gameState,
               status: "playing",
-              targetWord: message.targetWord,
+              currentDrawerId: message.drawerId,
+              currentWord: message.word,
+              wordLength: message.wordLength,
+              strokes: [],
+              guesses: [],
+              correctGuessers: [],
             },
           }
         })
         break
 
-      case "player-progress":
+      case "draw":
+        setState((prev) => ({
+          ...prev,
+          strokes: [...prev.strokes, message.stroke],
+        }))
+        break
+
+      case "clear":
+        setState((prev) => ({
+          ...prev,
+          strokes: [],
+        }))
+        break
+
+      case "guess":
+        setState((prev) => ({
+          ...prev,
+          guesses: [...prev.guesses, message.guess],
+        }))
+        break
+
+      case "correct-guess":
         setState((prev) => {
           if (!prev.gameState) return prev
-          const player = prev.gameState.players[message.playerId]
-          if (!player) return prev
           return {
             ...prev,
             gameState: {
               ...prev.gameState,
-              players: {
-                ...prev.gameState.players,
-                [message.playerId]: {
-                  ...player,
-                  attempts: message.attempts,
-                },
-              },
+              correctGuessers: [...prev.gameState.correctGuessers, message.playerId],
             },
           }
         })
         break
 
-      case "player-completed":
+      case "round-ended":
         setState((prev) => {
           if (!prev.gameState) return prev
-          const player = prev.gameState.players[message.playerId]
-          if (!player) return prev
+          // Update player scores from the scores object
+          const updatedPlayers = { ...prev.gameState.players }
+          for (const [id, score] of Object.entries(message.scores)) {
+            if (updatedPlayers[id]) {
+              updatedPlayers[id] = { ...updatedPlayers[id], score }
+            }
+          }
           return {
             ...prev,
             gameState: {
               ...prev.gameState,
-              players: {
-                ...prev.gameState.players,
-                [message.playerId]: {
-                  ...player,
-                  completed: true,
-                  won: message.won,
-                  attempts: message.attempts,
-                },
-              },
+              status: "round-end",
+              currentWord: message.word,
+              players: updatedPlayers,
             },
           }
         })
@@ -201,41 +218,22 @@ export function useMultiplayerWordle() {
       case "game-over":
         setState((prev) => {
           if (!prev.gameState) return prev
+          // Update player scores from results
+          const updatedPlayers = { ...prev.gameState.players }
+          for (const result of message.results) {
+            if (updatedPlayers[result.id]) {
+              updatedPlayers[result.id] = { ...updatedPlayers[result.id], score: result.score }
+            }
+          }
           return {
             ...prev,
             gameState: {
               ...prev.gameState,
               status: "finished",
-              winnerId: message.winnerId,
+              players: updatedPlayers,
             },
-            waitingFor: [],
           }
         })
-        break
-
-      case "waiting-for-players":
-        setState((prev) => {
-          // If current player is NOT in waitingFor list, they are waiting for others
-          const currentPlayerName = prev.gameState?.players[prev.playerId || ""]?.name
-          const isWaiting = currentPlayerName ? !message.waitingFor.includes(currentPlayerName) : false
-          return {
-            ...prev,
-            waitingFor: message.waitingFor,
-            isWaitingForOthers: isWaiting,
-          }
-        })
-        break
-
-      case "turn-complete":
-        setState((prev) => ({
-          ...prev,
-          waitingFor: [],
-          isWaitingForOthers: false,
-          roundReveal: {
-            turn: message.turn,
-            playerGuesses: message.playerGuesses,
-          },
-        }))
         break
 
       case "error":
@@ -259,27 +257,19 @@ export function useMultiplayerWordle() {
       playerId: null,
       error: null,
       isHost: false,
-      waitingFor: [],
-      isWaitingForOthers: false,
-      roundReveal: null,
+      strokes: [],
+      guesses: [],
     })
   }, [])
 
-  const dismissReveal = useCallback(() => {
-    setState((prev) => ({
-      ...prev,
-      roundReveal: null,
-    }))
-  }, [])
-
-  const createGame = useCallback((mode: GameMode, revealMode: RevealMode, playerName: string) => {
+  const createGame = useCallback((playerName: string) => {
     const roomCode = generateRoomCode()
-    connect(roomCode, true, mode, revealMode, playerName)
+    connect(roomCode, true, playerName)
     return roomCode
   }, [connect])
 
   const joinGame = useCallback((roomCode: string, playerName: string) => {
-    connect(roomCode.toUpperCase(), false, "race", "after-round", playerName) // Mode/revealMode don't matter for joining
+    connect(roomCode.toUpperCase(), false, playerName)
   }, [connect])
 
   const startGame = useCallback(() => {
@@ -288,19 +278,33 @@ export function useMultiplayerWordle() {
     }
   }, [state.isHost])
 
-  const sendGuess = useCallback((word: string, result: string[][]) => {
+  const sendStroke = useCallback((stroke: Stroke) => {
     if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "guess", word, result }))
+      socketRef.current.send(JSON.stringify({ type: "draw", stroke }))
+      // Also add to local state immediately for drawer
+      setState((prev) => ({
+        ...prev,
+        strokes: [...prev.strokes, stroke],
+      }))
     }
   }, [])
 
-  const sendComplete = useCallback((won: boolean, attempts: number) => {
+  const clearCanvas = useCallback(() => {
     if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "complete", won, attempts }))
+      socketRef.current.send(JSON.stringify({ type: "clear" }))
+      setState((prev) => ({
+        ...prev,
+        strokes: [],
+      }))
     }
   }, [])
 
-  // Cleanup on unmount
+  const sendGuess = useCallback((text: string) => {
+    if (socketRef.current && text.trim()) {
+      socketRef.current.send(JSON.stringify({ type: "guess", text: text.trim() }))
+    }
+  }, [])
+
   useEffect(() => {
     return () => {
       if (socketRef.current) {
@@ -314,9 +318,9 @@ export function useMultiplayerWordle() {
     createGame,
     joinGame,
     startGame,
+    sendStroke,
+    clearCanvas,
     sendGuess,
-    sendComplete,
     disconnect,
-    dismissReveal,
   }
 }

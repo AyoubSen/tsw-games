@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react"
 import { Copy, Check, Trophy, Users, Clock, X } from "lucide-react"
 import { Board } from "./Board"
 import { Keyboard } from "./Keyboard"
+import { MiniBoard } from "./MiniBoard"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -13,6 +14,7 @@ import {
 } from "@/components/ui/dialog"
 import type { PublicGameState } from "../../../../party/wordle"
 import type { Letter, LetterState } from "./useWordle"
+import type { RoundReveal } from "./useMultiplayerWordle"
 
 type UsedLetters = Record<string, LetterState>
 
@@ -26,6 +28,8 @@ interface MultiplayerGameProps {
   answerWords: string[]
   waitingFor: string[]
   isWaitingForOthers: boolean
+  roundReveal: RoundReveal | null
+  onDismissReveal: () => void
 }
 
 export function MultiplayerGame({
@@ -38,6 +42,8 @@ export function MultiplayerGame({
   answerWords,
   waitingFor,
   isWaitingForOthers,
+  roundReveal,
+  onDismissReveal,
 }: MultiplayerGameProps) {
   const [guesses, setGuesses] = useState<Letter[][]>(() => Array(6).fill(null).map(() => []))
   const [currentGuess, setCurrentGuess] = useState("")
@@ -228,14 +234,14 @@ export function MultiplayerGame({
   }
 
   const getModeLabel = () => {
-    switch (gameState.mode) {
-      case "race":
-        return "Race"
-      case "turns":
-        return "Turn Based"
-      case "hidden":
-        return "Versus"
+    if (gameState.mode === "race") {
+      return "Race"
     }
+    // Classic mode - show reveal timing
+    if (gameState.revealMode === "after-round") {
+      return "Classic (Rounds)"
+    }
+    return "Classic (Hidden)"
   }
 
   const winner = gameState.winnerId ? gameState.players[gameState.winnerId] : null
@@ -243,10 +249,10 @@ export function MultiplayerGame({
   return (
     <div className="min-h-[calc(100vh-73px)] bg-background flex flex-col">
       {/* Header */}
-      <div className="p-3 border-b border-border">
-        <div className="flex items-center justify-between mb-2">
+      <div className="px-4 py-3 border-b border-border space-y-2">
+        <div className="flex items-center justify-between">
           <Badge variant="secondary">{getModeLabel()}</Badge>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <code className="text-sm font-mono bg-muted px-2 py-1 rounded">
               {gameState.roomCode}
             </code>
@@ -265,7 +271,7 @@ export function MultiplayerGame({
         </div>
 
         {/* Players status bar */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        <div className="flex items-center gap-2 overflow-x-auto">
           <Users className="w-4 h-4 text-muted-foreground shrink-0" />
           {players.map((player) => (
             <div
@@ -297,11 +303,11 @@ export function MultiplayerGame({
           ))}
         </div>
 
-        {/* Waiting indicator for turns mode */}
-        {gameState.mode === "turns" && gameState.status === "playing" && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground mt-2">
+        {/* Waiting indicator for classic mode with after-round reveal */}
+        {gameState.mode === "classic" && gameState.revealMode === "after-round" && gameState.status === "playing" && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Clock className="w-4 h-4" />
-            <span>Turn {gameState.currentTurn + 1} of 6</span>
+            <span>Round {gameState.currentTurn + 1} of 6</span>
             {isWaitingForOthers && waitingFor.length > 0 && (
               <span className="text-yellow-500">
                 — Waiting for: {waitingFor.join(", ")}
@@ -318,21 +324,19 @@ export function MultiplayerGame({
         </div>
       )}
 
-      {/* Game board */}
-      <div className="flex-1 flex flex-col items-center justify-between py-4 px-2 gap-4">
-        <div className="flex-1 flex items-center">
-          <Board
-            guesses={guesses}
-            currentGuess={currentGuess}
-            currentRow={currentRow}
-            shake={shake}
-            revealRow={revealRow}
-            maxGuesses={maxGuesses}
-            wordLength={wordLength}
-          />
-        </div>
+      {/* Game board and keyboard */}
+      <div className="flex-1 flex flex-col items-center justify-center gap-6 py-4 px-4">
+        <Board
+          guesses={guesses}
+          currentGuess={currentGuess}
+          currentRow={currentRow}
+          shake={shake}
+          revealRow={revealRow}
+          maxGuesses={maxGuesses}
+          wordLength={wordLength}
+        />
 
-        <div className="w-full px-2">
+        <div className="w-full max-w-lg">
           <Keyboard
             usedLetters={usedLetters}
             onKey={addLetter}
@@ -363,7 +367,7 @@ export function MultiplayerGame({
           </DialogHeader>
 
           {/* Results table */}
-          <div className="space-y-2 mt-4">
+          <div className="space-y-2 pt-2">
             <p className="text-sm font-medium text-center">Results</p>
             <div className="space-y-1">
               {players
@@ -404,11 +408,39 @@ export function MultiplayerGame({
             </div>
           </div>
 
-          <div className="flex flex-col gap-2 mt-4">
-            <Button onClick={onLeave} className="w-full">
-              Back to Lobby
-            </Button>
+          <Button onClick={onLeave} className="w-full mt-4">
+            Back to Lobby
+          </Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* Round reveal modal - shows after each round in classic mode */}
+      <Dialog open={roundReveal !== null} onOpenChange={(open) => !open && onDismissReveal()}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-center">
+              Round {roundReveal?.turn} Complete
+            </DialogTitle>
+            <DialogDescription className="text-center">
+              Here's how everyone is doing
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-wrap justify-center gap-6 py-2">
+            {players.map((player) => (
+              <MiniBoard
+                key={player.id}
+                guesses={player.guesses as string[][]}
+                playerName={player.name}
+                isCurrentPlayer={player.id === playerId}
+                highlighted={true}
+              />
+            ))}
           </div>
+
+          <Button onClick={onDismissReveal} className="w-full mt-2">
+            Continue
+          </Button>
         </DialogContent>
       </Dialog>
     </div>

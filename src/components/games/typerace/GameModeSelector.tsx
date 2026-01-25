@@ -1,14 +1,14 @@
 import { useState } from "react"
-import { Users, User, Zap, Clock, ArrowLeft, Loader2 } from "lucide-react"
+import { Users, User, Zap, Trophy, ArrowLeft, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
-import type { GameMode, RevealMode } from "../../../../party/wordle"
+import type { GameMode } from "../../../../party/typerace"
 
 interface GameModeSelectorProps {
   onSinglePlayer: () => void
-  onCreateMultiplayer: (mode: GameMode, revealMode: RevealMode, playerName: string) => void
+  onCreateMultiplayer: (mode: GameMode, playerName: string) => void
   onJoinMultiplayer: (roomCode: string, playerName: string) => void
   isConnecting: boolean
   error: string | null
@@ -20,27 +20,14 @@ const MULTIPLAYER_MODES: { mode: GameMode; label: string; description: string; i
   {
     mode: "race",
     label: "Race",
-    description: "First to guess the word wins! Everyone plays simultaneously.",
+    description: "First to finish typing wins!",
     icon: <Zap className="w-5 h-5" />,
   },
   {
     mode: "classic",
     label: "Classic",
-    description: "Everyone gets 6 guesses. Fewest attempts wins.",
-    icon: <Clock className="w-5 h-5" />,
-  },
-]
-
-const REVEAL_OPTIONS: { value: RevealMode; label: string; description: string }[] = [
-  {
-    value: "after-round",
-    label: "Reveal after each round",
-    description: "See everyone's guesses after each round",
-  },
-  {
-    value: "at-end",
-    label: "Reveal at end",
-    description: "Results hidden until everyone finishes",
+    description: "Everyone finishes, highest WPM wins.",
+    icon: <Trophy className="w-5 h-5" />,
   },
 ]
 
@@ -55,7 +42,6 @@ export function GameModeSelector({
   const [playerName, setPlayerName] = useState("")
   const [roomCode, setRoomCode] = useState("")
   const [selectedMode, setSelectedMode] = useState<GameMode>("race")
-  const [revealMode, setRevealMode] = useState<RevealMode>("after-round")
 
   const handleBack = () => {
     if (step === "multiplayer-type") setStep("mode")
@@ -65,7 +51,7 @@ export function GameModeSelector({
 
   const handleCreateGame = () => {
     if (!playerName.trim()) return
-    onCreateMultiplayer(selectedMode, revealMode, playerName.trim())
+    onCreateMultiplayer(selectedMode, playerName.trim())
   }
 
   const handleJoinGame = () => {
@@ -78,7 +64,7 @@ export function GameModeSelector({
     return (
       <div className="flex flex-col items-center gap-4 p-4 max-w-md mx-auto">
         <div className="text-center space-y-1 py-2">
-          <h1 className="text-2xl font-bold">Wordle</h1>
+          <h1 className="text-2xl font-bold">Type Race</h1>
           <p className="text-sm text-muted-foreground">Choose how you want to play</p>
         </div>
 
@@ -93,7 +79,7 @@ export function GameModeSelector({
               </div>
               <div className="space-y-0.5">
                 <CardTitle className="text-base">Single Player</CardTitle>
-                <CardDescription className="text-sm">Classic Wordle - guess the word in 6 tries</CardDescription>
+                <CardDescription className="text-sm">Practice your typing speed</CardDescription>
               </div>
             </CardHeader>
           </Card>
@@ -108,7 +94,7 @@ export function GameModeSelector({
               </div>
               <div className="space-y-0.5">
                 <CardTitle className="text-base">Multiplayer</CardTitle>
-                <CardDescription className="text-sm">Compete with friends in real-time</CardDescription>
+                <CardDescription className="text-sm">Race against friends</CardDescription>
               </div>
             </CardHeader>
           </Card>
@@ -127,7 +113,7 @@ export function GameModeSelector({
         </Button>
 
         <div className="text-center space-y-1">
-          <h1 className="text-xl font-bold">Multiplayer Wordle</h1>
+          <h1 className="text-xl font-bold">Multiplayer Type Race</h1>
           <p className="text-sm text-muted-foreground">Create a new game or join an existing one</p>
         </div>
 
@@ -138,7 +124,7 @@ export function GameModeSelector({
           >
             <CardHeader className="p-4">
               <CardTitle className="text-base">Create Game</CardTitle>
-              <CardDescription className="text-sm">Start a new game and invite friends with a code</CardDescription>
+              <CardDescription className="text-sm">Start a new game and invite friends</CardDescription>
             </CardHeader>
           </Card>
 
@@ -204,40 +190,6 @@ export function GameModeSelector({
               </div>
             </div>
 
-            {/* Reveal Mode Toggle - only for Classic mode */}
-            {selectedMode === "classic" && (
-              <div className="space-y-2">
-                <label className="text-sm font-medium">When to reveal guesses</label>
-                <div className="grid gap-2">
-                  {REVEAL_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      onClick={() => setRevealMode(option.value)}
-                      className={cn(
-                        "flex items-start gap-3 p-3 rounded-lg border text-left transition-colors",
-                        revealMode === option.value
-                          ? "border-primary bg-primary/5"
-                          : "border-border hover:border-primary/50"
-                      )}
-                    >
-                      <div
-                        className={cn(
-                          "w-4 h-4 rounded-full border-2 mt-0.5 flex-shrink-0",
-                          revealMode === option.value
-                            ? "border-primary bg-primary"
-                            : "border-muted-foreground"
-                        )}
-                      />
-                      <div>
-                        <p className="font-medium text-sm">{option.label}</p>
-                        <p className="text-xs text-muted-foreground">{option.description}</p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* Player Name */}
             <div className="space-y-1.5">
               <label htmlFor="playerName" className="text-sm font-medium">
@@ -275,7 +227,7 @@ export function GameModeSelector({
     )
   }
 
-  // Step 3b: Join game - enter code and name
+  // Step 3b: Join game
   if (step === "join") {
     return (
       <div className="flex flex-col gap-4 p-4 max-w-md mx-auto">

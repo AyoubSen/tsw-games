@@ -1,10 +1,9 @@
 import { useState } from "react"
-import { Copy, Check, Users, Crown, Loader2, Play } from "lucide-react"
+import { Copy, Check, Users, Crown, Loader2, Play, Palette } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import type { PublicGameState } from "../../../../party/wordle"
+import type { PublicGameState } from "../../../../party/drawing"
 
 interface MultiplayerLobbyProps {
   gameState: PublicGameState
@@ -37,7 +36,10 @@ export function MultiplayerLobby({
     <div className="flex flex-col items-center p-4 max-w-md mx-auto">
       <Card className="w-full">
         <CardHeader className="text-center pb-2">
-          <CardTitle className="text-lg">Waiting for Players</CardTitle>
+          <CardTitle className="text-lg flex items-center justify-center gap-2">
+            <Palette className="w-5 h-5 text-primary" />
+            Waiting for Players
+          </CardTitle>
           <CardDescription className="text-sm">
             Share the invite code with your friends to join
           </CardDescription>
@@ -65,6 +67,16 @@ export function MultiplayerLobby({
             </div>
           </div>
 
+          {/* Game Info */}
+          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Badge variant="secondary" className="text-xs">
+              {gameState.roundTimeLimit}s per round
+            </Badge>
+            <Badge variant="secondary" className="text-xs">
+              {playerCount} rounds
+            </Badge>
+          </div>
+
           {/* Players List */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -72,7 +84,6 @@ export function MultiplayerLobby({
                 <Users className="w-4 h-4" />
                 Players ({playerCount}/{gameState.maxPlayers})
               </p>
-              <Badge variant="secondary" className="text-xs">{gameState.mode}</Badge>
             </div>
 
             <div className="space-y-1.5">
@@ -137,123 +148,6 @@ export function MultiplayerLobby({
               Leave Game
             </Button>
           </div>
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
-interface JoinCreateFormProps {
-  onCreateGame: (playerName: string) => void
-  onJoinGame: (roomCode: string, playerName: string) => void
-  isConnecting: boolean
-  error: string | null
-}
-
-export function JoinCreateForm({
-  onCreateGame,
-  onJoinGame,
-  isConnecting,
-  error,
-}: JoinCreateFormProps) {
-  const [mode, setMode] = useState<"create" | "join">("create")
-  const [playerName, setPlayerName] = useState("")
-  const [roomCode, setRoomCode] = useState("")
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!playerName.trim()) return
-
-    if (mode === "create") {
-      onCreateGame(playerName.trim())
-    } else {
-      if (!roomCode.trim()) return
-      onJoinGame(roomCode.trim(), playerName.trim())
-    }
-  }
-
-  return (
-    <div className="flex flex-col items-center gap-6 p-6 max-w-md mx-auto">
-      <Card className="w-full">
-        <CardHeader className="text-center">
-          <CardTitle>Multiplayer Wordle</CardTitle>
-          <CardDescription>
-            Race against your friends to guess the word first!
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {/* Mode Tabs */}
-          <div className="flex gap-2 mb-6">
-            <Button
-              variant={mode === "create" ? "default" : "outline"}
-              className="flex-1"
-              onClick={() => setMode("create")}
-            >
-              Create Game
-            </Button>
-            <Button
-              variant={mode === "join" ? "default" : "outline"}
-              className="flex-1"
-              onClick={() => setMode("join")}
-            >
-              Join Game
-            </Button>
-          </div>
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <label htmlFor="playerName" className="text-sm font-medium">
-                Your Name
-              </label>
-              <Input
-                id="playerName"
-                placeholder="Enter your name"
-                value={playerName}
-                onChange={(e) => setPlayerName(e.target.value)}
-                maxLength={20}
-                disabled={isConnecting}
-              />
-            </div>
-
-            {mode === "join" && (
-              <div className="space-y-2">
-                <label htmlFor="roomCode" className="text-sm font-medium">
-                  Invite Code
-                </label>
-                <Input
-                  id="roomCode"
-                  placeholder="Enter 6-character code"
-                  value={roomCode}
-                  onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                  maxLength={6}
-                  className="font-mono text-center text-lg tracking-widest uppercase"
-                  disabled={isConnecting}
-                />
-              </div>
-            )}
-
-            {error && (
-              <p className="text-sm text-destructive text-center">{error}</p>
-            )}
-
-            <Button
-              type="submit"
-              className="w-full"
-              size="lg"
-              disabled={isConnecting || !playerName.trim() || (mode === "join" && roomCode.length < 6)}
-            >
-              {isConnecting ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Connecting...
-                </>
-              ) : mode === "create" ? (
-                "Create Game"
-              ) : (
-                "Join Game"
-              )}
-            </Button>
-          </form>
         </CardContent>
       </Card>
     </div>

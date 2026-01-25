@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as GamesWordleRouteImport } from './routes/games/wordle'
+import { Route as GamesTyperaceRouteImport } from './routes/games/typerace'
+import { Route as GamesDrawingRouteImport } from './routes/games/drawing'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,30 +24,48 @@ const GamesWordleRoute = GamesWordleRouteImport.update({
   path: '/games/wordle',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GamesTyperaceRoute = GamesTyperaceRouteImport.update({
+  id: '/games/typerace',
+  path: '/games/typerace',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GamesDrawingRoute = GamesDrawingRouteImport.update({
+  id: '/games/drawing',
+  path: '/games/drawing',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/games/drawing': typeof GamesDrawingRoute
+  '/games/typerace': typeof GamesTyperaceRoute
   '/games/wordle': typeof GamesWordleRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/games/drawing': typeof GamesDrawingRoute
+  '/games/typerace': typeof GamesTyperaceRoute
   '/games/wordle': typeof GamesWordleRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/games/drawing': typeof GamesDrawingRoute
+  '/games/typerace': typeof GamesTyperaceRoute
   '/games/wordle': typeof GamesWordleRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/games/wordle'
+  fullPaths: '/' | '/games/drawing' | '/games/typerace' | '/games/wordle'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/games/wordle'
-  id: '__root__' | '/' | '/games/wordle'
+  to: '/' | '/games/drawing' | '/games/typerace' | '/games/wordle'
+  id: '__root__' | '/' | '/games/drawing' | '/games/typerace' | '/games/wordle'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  GamesDrawingRoute: typeof GamesDrawingRoute
+  GamesTyperaceRoute: typeof GamesTyperaceRoute
   GamesWordleRoute: typeof GamesWordleRoute
 }
 
@@ -65,11 +85,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GamesWordleRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/games/typerace': {
+      id: '/games/typerace'
+      path: '/games/typerace'
+      fullPath: '/games/typerace'
+      preLoaderRoute: typeof GamesTyperaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/games/drawing': {
+      id: '/games/drawing'
+      path: '/games/drawing'
+      fullPath: '/games/drawing'
+      preLoaderRoute: typeof GamesDrawingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  GamesDrawingRoute: GamesDrawingRoute,
+  GamesTyperaceRoute: GamesTyperaceRoute,
   GamesWordleRoute: GamesWordleRoute,
 }
 export const routeTree = rootRouteImport

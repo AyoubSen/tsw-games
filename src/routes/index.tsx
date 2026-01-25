@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { LetterText, Users, Zap, Play } from 'lucide-react'
+import { LetterText, Users, Zap, Play, Keyboard, Palette } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/lib/useTheme'
@@ -25,8 +25,26 @@ const games: Game[] = [
     description: 'Guess the 5-letter word in 6 tries. Green means correct, yellow means wrong position.',
     icon: <LetterText className="w-10 h-10" />,
     path: '/games/wordle',
-    players: '1 player',
+    players: '1-8 players',
     color: 'from-emerald-500 to-green-600',
+  },
+  {
+    id: 'typerace',
+    title: 'Type Race',
+    description: 'Race to type the phrase fastest! Test your typing speed and accuracy.',
+    icon: <Keyboard className="w-10 h-10" />,
+    path: '/games/typerace',
+    players: '1-8 players',
+    color: 'from-blue-500 to-cyan-600',
+  },
+  {
+    id: 'drawing',
+    title: 'Drawing',
+    description: 'Draw and guess! One player draws while others try to guess the word.',
+    icon: <Palette className="w-10 h-10" />,
+    path: '/games/drawing',
+    players: '2-8 players',
+    color: 'from-purple-500 to-pink-600',
     isNew: true,
   },
   {

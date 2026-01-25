@@ -1,17 +1,36 @@
 import { useState } from "react"
-import { Users, ArrowLeft, Loader2, Palette } from "lucide-react"
+import { Users, ArrowLeft, Loader2, Palette, Clock, RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { cn } from "@/lib/utils"
+
+export interface GameSettings {
+  roundTimeLimit: number // seconds
+  roundsPerPlayer: number // how many times each player draws
+}
 
 interface GameModeSelectorProps {
-  onCreateMultiplayer: (playerName: string) => void
+  onCreateMultiplayer: (playerName: string, settings: GameSettings) => void
   onJoinMultiplayer: (roomCode: string, playerName: string) => void
   isConnecting: boolean
   error: string | null
 }
 
 type Step = "mode" | "create" | "join"
+
+const TIME_OPTIONS = [
+  { value: 30, label: "30s" },
+  { value: 60, label: "60s" },
+  { value: 90, label: "90s" },
+  { value: 120, label: "2min" },
+]
+
+const ROUNDS_OPTIONS = [
+  { value: 1, label: "1" },
+  { value: 2, label: "2" },
+  { value: 3, label: "3" },
+]
 
 export function GameModeSelector({
   onCreateMultiplayer,
@@ -22,6 +41,8 @@ export function GameModeSelector({
   const [step, setStep] = useState<Step>("mode")
   const [playerName, setPlayerName] = useState("")
   const [roomCode, setRoomCode] = useState("")
+  const [roundTimeLimit, setRoundTimeLimit] = useState(60)
+  const [roundsPerPlayer, setRoundsPerPlayer] = useState(1)
 
   const handleBack = () => {
     if (step === "create" || step === "join") setStep("mode")
@@ -29,7 +50,7 @@ export function GameModeSelector({
 
   const handleCreateGame = () => {
     if (!playerName.trim()) return
-    onCreateMultiplayer(playerName.trim())
+    onCreateMultiplayer(playerName.trim(), { roundTimeLimit, roundsPerPlayer })
   }
 
   const handleJoinGame = () => {
@@ -90,7 +111,7 @@ export function GameModeSelector({
     )
   }
 
-  // Step 2a: Create game
+  // Step 2a: Create game with settings
   if (step === "create") {
     return (
       <div className="flex flex-col gap-4 p-4 max-w-md mx-auto">
@@ -101,11 +122,12 @@ export function GameModeSelector({
 
         <div className="text-center space-y-1">
           <h1 className="text-xl font-bold">Create Game</h1>
-          <p className="text-sm text-muted-foreground">Enter your name to create a game</p>
+          <p className="text-sm text-muted-foreground">Configure your game settings</p>
         </div>
 
         <Card className="w-full">
           <CardContent className="p-4 space-y-4">
+            {/* Player Name */}
             <div className="space-y-1.5">
               <label htmlFor="playerName" className="text-sm font-medium">
                 Your Name
@@ -119,6 +141,59 @@ export function GameModeSelector({
                 disabled={isConnecting}
                 autoFocus
               />
+            </div>
+
+            {/* Round Time Limit */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-2">
+                <Clock className="w-4 h-4" />
+                Time per Round
+              </label>
+              <div className="grid grid-cols-4 gap-2">
+                {TIME_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => setRoundTimeLimit(option.value)}
+                    disabled={isConnecting}
+                    className={cn(
+                      "py-2 px-3 rounded-lg border text-sm font-medium transition-colors",
+                      roundTimeLimit === option.value
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border hover:border-primary/50"
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Rounds per Player */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-2">
+                <RotateCcw className="w-4 h-4" />
+                Rounds per Player
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {ROUNDS_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => setRoundsPerPlayer(option.value)}
+                    disabled={isConnecting}
+                    className={cn(
+                      "py-2 px-3 rounded-lg border text-sm font-medium transition-colors",
+                      roundsPerPlayer === option.value
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border hover:border-primary/50"
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Each player will draw {roundsPerPlayer} time{roundsPerPlayer > 1 ? "s" : ""}
+              </p>
             </div>
 
             {error && <p className="text-sm text-destructive text-center">{error}</p>}

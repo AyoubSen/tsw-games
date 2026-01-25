@@ -7,6 +7,7 @@ import type {
   Stroke,
   Guess,
 } from "../../../../party/drawing"
+import type { GameSettings } from "./GameModeSelector"
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
 
@@ -34,7 +35,7 @@ export function useMultiplayerDrawing() {
   const socketRef = useRef<PartySocket | null>(null)
   const playerNameRef = useRef<string>("")
 
-  const connect = useCallback((roomCode: string, isHost: boolean, playerName: string) => {
+  const connect = useCallback((roomCode: string, isHost: boolean, playerName: string, settings?: GameSettings) => {
     if (socketRef.current) {
       socketRef.current.close()
     }
@@ -56,6 +57,10 @@ export function useMultiplayerDrawing() {
       party: "drawing",
       query: {
         host: isHost.toString(),
+        ...(settings && {
+          roundTimeLimit: settings.roundTimeLimit.toString(),
+          roundsPerPlayer: settings.roundsPerPlayer.toString(),
+        }),
       },
     })
 
@@ -262,9 +267,9 @@ export function useMultiplayerDrawing() {
     })
   }, [])
 
-  const createGame = useCallback((playerName: string) => {
+  const createGame = useCallback((playerName: string, settings: GameSettings) => {
     const roomCode = generateRoomCode()
-    connect(roomCode, true, playerName)
+    connect(roomCode, true, playerName, settings)
     return roomCode
   }, [connect])
 

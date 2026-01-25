@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { GameModeSelector } from '@/components/games/drawing/GameModeSelector'
+import { GameModeSelector, type GameSettings } from '@/components/games/drawing/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/drawing/MultiplayerLobby'
 import { MultiplayerGame } from '@/components/games/drawing/MultiplayerGame'
 import { useMultiplayerDrawing } from '@/components/games/drawing/useMultiplayerDrawing'
@@ -18,8 +18,8 @@ function DrawingPage() {
   const multiplayer = useMultiplayerDrawing()
 
   // Handle multiplayer game creation
-  const handleCreateMultiplayer = (playerName: string) => {
-    multiplayer.createGame(playerName)
+  const handleCreateMultiplayer = (playerName: string, settings: GameSettings) => {
+    multiplayer.createGame(playerName, settings)
   }
 
   // Handle multiplayer game join

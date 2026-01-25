@@ -24,6 +24,8 @@ export interface Player {
   hasDrawn: boolean
   hasGuessedCorrectly: boolean
   joinedAt: number
+  drawCount: number // How many times this player has drawn
+  lastGuessAt: number // Timestamp of last guess for cooldown
 }
 
 // Game state
@@ -37,6 +39,7 @@ export interface GameState {
   currentWord: string | null
   roundNumber: number
   totalRounds: number
+  roundsPerPlayer: number // How many times each player draws
   roundStartedAt: number | null
   roundTimeLimit: number // in seconds
   strokes: Stroke[]
@@ -154,6 +157,8 @@ export default class DrawingParty implements Party.Server {
     }
 
     const isDrawer = forPlayerId === this.state.currentDrawerId
+    // Show word to everyone during round-end, or to drawer during playing
+    const showWord = this.state.status === "round-end" || isDrawer
 
     return {
       roomCode: this.state.roomCode,
@@ -162,7 +167,7 @@ export default class DrawingParty implements Party.Server {
       status: this.state.status,
       maxPlayers: this.state.maxPlayers,
       currentDrawerId: this.state.currentDrawerId,
-      currentWord: isDrawer ? this.state.currentWord : null,
+      currentWord: showWord ? this.state.currentWord : null,
       wordLength: this.state.currentWord?.length || 0,
       roundNumber: this.state.roundNumber,
       totalRounds: this.state.totalRounds,
@@ -206,19 +211,25 @@ export default class DrawingParty implements Party.Server {
   async startNewRound() {
     if (!this.state) return
 
-    // Find next drawer
+    // Find next drawer - player with fewest draws who hasn't reached roundsPerPlayer
     const players = Object.values(this.state.players)
-    const eligibleDrawers = players.filter((p) => !p.hasDrawn)
+    const eligibleDrawers = players.filter((p) => p.drawCount < this.state!.roundsPerPlayer)
 
     if (eligibleDrawers.length === 0) {
-      // All players have drawn, game over
+      // All players have drawn their required rounds, game over
       await this.endGame()
       return
     }
 
-    // Pick first eligible drawer (by join order)
-    eligibleDrawers.sort((a, b) => a.joinedAt - b.joinedAt)
+    // Pick player with fewest draws, then by join order
+    eligibleDrawers.sort((a, b) => {
+      if (a.drawCount !== b.drawCount) return a.drawCount - b.drawCount
+      return a.joinedAt - b.joinedAt
+    })
     const drawer = eligibleDrawers[0]
+
+    // Increment drawer's draw count
+    drawer.drawCount++
 
     // Reset round state
     this.state.currentDrawerId = drawer.id
@@ -261,11 +272,6 @@ export default class DrawingParty implements Party.Server {
     if (this.roundTimer) {
       clearTimeout(this.roundTimer)
       this.roundTimer = null
-    }
-
-    // Mark drawer as having drawn
-    if (this.state.currentDrawerId && this.state.players[this.state.currentDrawerId]) {
-      this.state.players[this.state.currentDrawerId].hasDrawn = true
     }
 
     this.state.status = "round-end"
@@ -317,9 +323,10 @@ export default class DrawingParty implements Party.Server {
   async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     const url = new URL(ctx.request.url)
     const isHost = url.searchParams.get("host") === "true"
+    const roundTimeLimit = parseInt(url.searchParams.get("roundTimeLimit") || "60", 10)
+    const roundsPerPlayer = parseInt(url.searchParams.get("roundsPerPlayer") || "1", 10)
 
     if (isHost && !this.state) {
-      const playerCount = 1 // Will be set properly when players join
       this.state = {
         roomCode: this.room.id,
         hostId: conn.id,
@@ -329,9 +336,10 @@ export default class DrawingParty implements Party.Server {
         currentDrawerId: null,
         currentWord: null,
         roundNumber: 0,
-        totalRounds: playerCount, // Will be updated when game starts
+        totalRounds: 0, // Will be calculated when game starts
+        roundsPerPlayer: roundsPerPlayer,
         roundStartedAt: null,
-        roundTimeLimit: 60,
+        roundTimeLimit: roundTimeLimit,
         strokes: [],
         guesses: [],
         usedWords: [],
@@ -372,10 +380,13 @@ export default class DrawingParty implements Party.Server {
             hasDrawn: false,
             hasGuessedCorrectly: false,
             joinedAt: Date.now(),
+            drawCount: 0,
+            lastGuessAt: 0,
           }
 
           this.state.players[sender.id] = player
-          this.state.totalRounds = Object.keys(this.state.players).length
+          // Total rounds = number of players * rounds per player
+          this.state.totalRounds = Object.keys(this.state.players).length * this.state.roundsPerPlayer
           await this.saveState()
 
           this.broadcast({ type: "player-joined", player })
@@ -394,7 +405,8 @@ export default class DrawingParty implements Party.Server {
             return
           }
 
-          this.state.totalRounds = Object.keys(this.state.players).length
+          // Total rounds = number of players * rounds per player
+          this.state.totalRounds = Object.keys(this.state.players).length * this.state.roundsPerPlayer
           await this.saveState()
 
           await this.startNewRound()
@@ -431,6 +443,17 @@ export default class DrawingParty implements Party.Server {
           const player = this.state.players[sender.id]
           if (!player || player.hasGuessedCorrectly) return // Already guessed correctly
 
+          // Check 3-second cooldown
+          const now = Date.now()
+          const cooldownMs = 3000
+          if (player.lastGuessAt && now - player.lastGuessAt < cooldownMs) {
+            this.send(sender, { type: "error", message: "Please wait before guessing again" })
+            return
+          }
+
+          // Update last guess timestamp
+          player.lastGuessAt = now
+
           const guessText = data.text.trim().toLowerCase()
           const correctWord = this.state.currentWord?.toLowerCase()
           const isCorrect = guessText === correctWord
@@ -440,7 +463,7 @@ export default class DrawingParty implements Party.Server {
             playerName: player.name,
             text: data.text.trim(),
             isCorrect,
-            timestamp: Date.now(),
+            timestamp: now,
           }
 
           this.state.guesses.push(guess)

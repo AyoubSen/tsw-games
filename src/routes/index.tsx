@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { LetterText, Users, Zap, Play, Keyboard, Palette, Link2 } from 'lucide-react'
+import { LetterText, Users, Zap, Play, Keyboard, Palette, Link2, Grid3X3 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/lib/useTheme'
@@ -54,6 +54,15 @@ const games: Game[] = [
     path: '/games/wordchain',
     players: '2-8 players',
     color: 'from-orange-500 to-amber-600',
+  },
+  {
+    id: 'codenames',
+    title: 'Codenames',
+    description: 'Give one-word clues to help your team find secret agents!',
+    icon: <Grid3X3 className="w-10 h-10" />,
+    path: '/games/codenames',
+    players: '4-8 players',
+    color: 'from-rose-500 to-red-600',
     isNew: true,
   },
   {

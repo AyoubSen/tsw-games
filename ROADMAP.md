@@ -52,10 +52,15 @@ This document tracks planned improvements and new game ideas for the TSW Games p
 
 ### Low Priority / Fun Ideas
 
-- [ ] **Word Chain / Shiritori** - Each player says a word starting with the last letter of the previous word.
+- [x] **Word Chain / Shiritori** - Each player says a word starting with the last letter of the previous word.
 - [ ] **Code Breaker (Mastermind)** - Guess the secret color/number sequence.
 - [ ] **Would You Rather / Voting** - Everyone votes, see who's in the majority.
 - [ ] **Emoji Puzzle** - Guess the movie/song/phrase from emoji clues.
+
+### Social Deduction / Party Games
+
+- [ ] **Codenames** - Two teams compete to identify their agents using one-word clues. Spymaster gives clue + number, team guesses words on grid.
+- [ ] **Mafia / Werewolf** - Hidden roles, day/night cycle. Villagers try to find the werewolves, werewolves try to eliminate villagers.
 
 ---
 
@@ -81,3 +86,4 @@ _Move items here when done_
 - [x] TypeRace - Multiplayer (Race & Classic modes)
 - [x] TypeRace - WPM and accuracy tracking
 - [x] Drawing Game - Multiplayer draw and guess with real-time canvas sync
+- [x] Word Chain - Multiplayer word chaining with casual/hardcore modes and hearts system

@@ -5,7 +5,8 @@
   "parties": {
     "typerace": "party/typerace.ts",
     "drawing": "party/drawing.ts",
-    "wordchain": "party/wordchain.ts"
+    "wordchain": "party/wordchain.ts",
+    "codenames": "party/codenames.ts"
   },
   "compatibilityDate": "2024-01-01"
 }

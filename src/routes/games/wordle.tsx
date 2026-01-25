@@ -270,8 +270,10 @@ function WordlePage() {
       <MultiplayerGame
         gameState={multiplayer.gameState}
         playerId={multiplayer.playerId}
+        isHost={multiplayer.isHost}
         onGuess={multiplayer.sendGuess}
         onComplete={multiplayer.sendComplete}
+        onRestart={multiplayer.restartGame}
         onLeave={handleLeaveMultiplayer}
         validWords={getValidWordsSet()}
         answerWords={getAnswerWords()}

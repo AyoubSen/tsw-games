@@ -118,11 +118,13 @@ function DrawingPage() {
         <MultiplayerGame
           gameState={multiplayer.gameState}
           playerId={multiplayer.playerId}
+          isHost={multiplayer.isHost}
           strokes={multiplayer.strokes}
           guesses={multiplayer.guesses}
           onStroke={multiplayer.sendStroke}
           onClear={multiplayer.clearCanvas}
           onGuess={multiplayer.sendGuess}
+          onRestart={multiplayer.restartGame}
           onLeave={handleLeaveMultiplayer}
         />
       </div>

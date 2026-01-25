@@ -74,6 +74,7 @@ export type ClientMessage =
   | { type: "draw"; stroke: Stroke }
   | { type: "clear" }
   | { type: "guess"; text: string }
+  | { type: "restart" }
   | { type: "leave" }
 
 // Message types to client
@@ -88,6 +89,7 @@ export type ServerMessage =
   | { type: "correct-guess"; playerId: string; playerName: string }
   | { type: "round-ended"; word: string; scores: Record<string, number> }
   | { type: "game-over"; results: PlayerResult[] }
+  | { type: "game-restarted" }
   | { type: "error"; message: string }
 
 export interface PlayerResult {
@@ -511,6 +513,47 @@ export default class DrawingParty implements Party.Server {
             // Broadcast incorrect guess to all
             this.broadcast({ type: "guess", guess })
           }
+          break
+        }
+
+        case "restart": {
+          // Only host can restart, and only when game is finished
+          if (sender.id !== this.state.hostId) {
+            this.send(sender, { type: "error", message: "Only host can restart" })
+            return
+          }
+
+          if (this.state.status !== "finished") {
+            this.send(sender, { type: "error", message: "Game is not finished" })
+            return
+          }
+
+          // Reset game state to waiting, keeping players and settings
+          this.state.status = "waiting"
+          this.state.currentDrawerId = null
+          this.state.currentWord = null
+          this.state.roundNumber = 0
+          this.state.roundStartedAt = null
+          this.state.strokes = []
+          this.state.guesses = []
+          this.state.usedWords = []
+          this.state.correctGuessers = []
+
+          // Reset player states
+          for (const player of Object.values(this.state.players)) {
+            player.score = 0
+            player.hasDrawn = false
+            player.hasGuessedCorrectly = false
+            player.drawCount = 0
+            player.lastGuessAt = 0
+          }
+
+          // Recalculate total rounds
+          this.state.totalRounds = Object.keys(this.state.players).length * this.state.roundsPerPlayer
+
+          await this.saveState()
+          this.broadcast({ type: "game-restarted" })
+          this.broadcastState()
           break
         }
 

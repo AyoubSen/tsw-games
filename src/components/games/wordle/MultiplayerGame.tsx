@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
-import { Copy, Check, Trophy, Users, Clock, X } from "lucide-react"
+import { Copy, Check, Trophy, Users, Clock, X, RotateCcw } from "lucide-react"
 import { Board } from "./Board"
 import { Keyboard } from "./Keyboard"
 import { MiniBoard } from "./MiniBoard"
@@ -21,8 +21,10 @@ type UsedLetters = Record<string, LetterState>
 interface MultiplayerGameProps {
   gameState: PublicGameState
   playerId: string
+  isHost: boolean
   onGuess: (word: string, result: string[][]) => void
   onComplete: (won: boolean, attempts: number) => void
+  onRestart: () => void
   onLeave: () => void
   validWords: Set<string>
   answerWords: string[]
@@ -35,8 +37,10 @@ interface MultiplayerGameProps {
 export function MultiplayerGame({
   gameState,
   playerId,
+  isHost,
   onGuess,
   onComplete,
+  onRestart,
   onLeave,
   validWords,
   answerWords,
@@ -408,9 +412,21 @@ export function MultiplayerGame({
             </div>
           </div>
 
-          <Button onClick={onLeave} className="w-full mt-4">
-            Back to Lobby
-          </Button>
+          <div className="flex flex-col gap-2 mt-4">
+            {isHost ? (
+              <Button onClick={onRestart} className="w-full">
+                <RotateCcw className="w-4 h-4 mr-2" />
+                Play Again
+              </Button>
+            ) : (
+              <p className="text-sm text-center text-muted-foreground">
+                Waiting for host to start a new game...
+              </p>
+            )}
+            <Button onClick={onLeave} variant="outline" className="w-full">
+              Back to Menu
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 

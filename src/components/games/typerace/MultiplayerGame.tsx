@@ -10,17 +10,20 @@ import type { PublicGameState, Player } from "../../../../party/typerace"
 interface MultiplayerGameProps {
   gameState: PublicGameState
   playerId: string
-  isHost?: boolean
+  isHost: boolean
   onProgress: (progress: number, wpm: number, accuracy: number) => void
   onComplete: (wpm: number, accuracy: number) => void
+  onRestart: () => void
   onLeave: () => void
 }
 
 export function MultiplayerGame({
   gameState,
   playerId,
+  isHost,
   onProgress,
   onComplete,
+  onRestart,
   onLeave,
 }: MultiplayerGameProps) {
   const [typedText, setTypedText] = useState("")
@@ -204,10 +207,19 @@ export function MultiplayerGame({
 
       {/* Actions */}
       {isFinished && (
-        <div className="flex gap-2">
+        <div className="flex flex-col items-center gap-2">
+          {isHost ? (
+            <Button onClick={onRestart}>
+              <RotateCcw className="w-4 h-4 mr-2" />
+              Play Again
+            </Button>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Waiting for host to start a new game...
+            </p>
+          )}
           <Button variant="outline" onClick={onLeave}>
-            <RotateCcw className="w-4 h-4 mr-2" />
-            Leave Game
+            Back to Menu
           </Button>
         </div>
       )}

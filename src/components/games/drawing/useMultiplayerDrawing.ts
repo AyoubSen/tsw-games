@@ -241,6 +241,14 @@ export function useMultiplayerDrawing() {
         })
         break
 
+      case "game-restarted":
+        setState((prev) => ({
+          ...prev,
+          strokes: [],
+          guesses: [],
+        }))
+        break
+
       case "error":
         setState((prev) => ({
           ...prev,
@@ -310,6 +318,12 @@ export function useMultiplayerDrawing() {
     }
   }, [])
 
+  const restartGame = useCallback(() => {
+    if (socketRef.current && state.isHost) {
+      socketRef.current.send(JSON.stringify({ type: "restart" }))
+    }
+  }, [state.isHost])
+
   useEffect(() => {
     return () => {
       if (socketRef.current) {
@@ -326,6 +340,7 @@ export function useMultiplayerDrawing() {
     sendStroke,
     clearCanvas,
     sendGuess,
+    restartGame,
     disconnect,
   }
 }

@@ -40,6 +40,7 @@ export type ClientMessage =
   | { type: "guess"; word: string; result: string[][] }
   | { type: "complete"; won: boolean; attempts: number }
   | { type: "leave" }
+  | { type: "restart" }
 
 // Message types to client
 export type ServerMessage =
@@ -52,6 +53,7 @@ export type ServerMessage =
   | { type: "game-over"; winnerId: string | null; results: PlayerResult[] }
   | { type: "turn-complete"; turn: number; playerGuesses: Record<string, string[]> } // For turns mode
   | { type: "waiting-for-players"; waitingFor: string[] } // Players who haven't guessed yet
+  | { type: "game-restarted" }
   | { type: "error"; message: string }
 
 export interface PlayerResult {
@@ -472,6 +474,36 @@ export default class WordleParty implements Party.Server {
 
           await this.saveState()
           this.broadcast({ type: "player-left", playerId: sender.id })
+          this.broadcast({ type: "state", state: this.getPublicState() })
+          break
+        }
+
+        case "restart": {
+          if (sender.id !== this.state.hostId) {
+            this.send(sender, { type: "error", message: "Only host can restart" })
+            return
+          }
+
+          // Reset game state to waiting
+          this.state.status = "waiting"
+          this.state.targetWord = getRandomWord()
+          this.state.winnerId = null
+          this.state.startedAt = null
+          this.state.finishedAt = null
+          this.state.currentTurn = 0
+
+          // Reset player states
+          for (const player of Object.values(this.state.players)) {
+            player.attempts = 0
+            player.completed = false
+            player.won = false
+            player.guesses = []
+            player.currentGuess = 0
+            player.readyForNextTurn = false
+          }
+
+          await this.saveState()
+          this.broadcast({ type: "game-restarted" })
           this.broadcast({ type: "state", state: this.getPublicState() })
           break
         }

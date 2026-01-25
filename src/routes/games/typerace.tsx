@@ -157,6 +157,7 @@ function TypeRacePage() {
           isHost={multiplayer.isHost}
           onProgress={multiplayer.sendProgress}
           onComplete={multiplayer.sendComplete}
+          onRestart={multiplayer.restartGame}
           onLeave={handleLeaveMultiplayer}
         />
       </div>

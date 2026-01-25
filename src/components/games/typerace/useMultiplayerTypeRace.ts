@@ -203,6 +203,10 @@ export function useMultiplayerTypeRace() {
         })
         break
 
+      case "game-restarted":
+        // Reset will come through state message
+        break
+
       case "error":
         setState((prev) => ({
           ...prev,
@@ -270,6 +274,12 @@ export function useMultiplayerTypeRace() {
     }
   }, [])
 
+  const restartGame = useCallback(() => {
+    if (socketRef.current && state.isHost) {
+      socketRef.current.send(JSON.stringify({ type: "restart" }))
+    }
+  }, [state.isHost])
+
   useEffect(() => {
     return () => {
       if (socketRef.current) {
@@ -288,6 +298,7 @@ export function useMultiplayerTypeRace() {
     startGame,
     sendProgress,
     sendComplete,
+    restartGame,
     disconnect,
   }
 }

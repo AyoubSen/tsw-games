@@ -238,6 +238,16 @@ export function useMultiplayerWordle() {
         }))
         break
 
+      case "game-restarted":
+        // Reset will come through state message
+        setState((prev) => ({
+          ...prev,
+          waitingFor: [],
+          isWaitingForOthers: false,
+          roundReveal: null,
+        }))
+        break
+
       case "error":
         setState((prev) => ({
           ...prev,
@@ -300,6 +310,12 @@ export function useMultiplayerWordle() {
     }
   }, [])
 
+  const restartGame = useCallback(() => {
+    if (socketRef.current && state.isHost) {
+      socketRef.current.send(JSON.stringify({ type: "restart" }))
+    }
+  }, [state.isHost])
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -316,6 +332,7 @@ export function useMultiplayerWordle() {
     startGame,
     sendGuess,
     sendComplete,
+    restartGame,
     disconnect,
     dismissReveal,
   }

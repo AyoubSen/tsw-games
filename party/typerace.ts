@@ -36,6 +36,7 @@ export type ClientMessage =
   | { type: "progress"; progress: number; wpm: number; accuracy: number }
   | { type: "complete"; wpm: number; accuracy: number }
   | { type: "leave" }
+  | { type: "restart" }
 
 // Message types to client
 export type ServerMessage =
@@ -46,6 +47,7 @@ export type ServerMessage =
   | { type: "player-progress"; playerId: string; progress: number; wpm: number }
   | { type: "player-completed"; playerId: string; wpm: number; accuracy: number }
   | { type: "game-over"; winnerId: string | null; results: PlayerResult[] }
+  | { type: "game-restarted" }
   | { type: "error"; message: string }
 
 export interface PlayerResult {
@@ -343,6 +345,34 @@ export default class TypeRaceParty implements Party.Server {
 
           await this.saveState()
           this.broadcast({ type: "player-left", playerId: sender.id })
+          this.broadcast({ type: "state", state: this.getPublicState() })
+          break
+        }
+
+        case "restart": {
+          if (sender.id !== this.state.hostId) {
+            this.send(sender, { type: "error", message: "Only host can restart" })
+            return
+          }
+
+          // Reset game state to waiting
+          this.state.status = "waiting"
+          this.state.text = getRandomPhrase()
+          this.state.winnerId = null
+          this.state.startedAt = null
+          this.state.finishedAt = null
+
+          // Reset player states
+          for (const player of Object.values(this.state.players)) {
+            player.progress = 0
+            player.wpm = 0
+            player.accuracy = 100
+            player.completed = false
+            player.completedAt = null
+          }
+
+          await this.saveState()
+          this.broadcast({ type: "game-restarted" })
           this.broadcast({ type: "state", state: this.getPublicState() })
           break
         }

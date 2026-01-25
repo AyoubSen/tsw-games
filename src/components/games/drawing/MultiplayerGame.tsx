@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react"
-import { Clock, Trophy } from "lucide-react"
+import { Clock, Trophy, RotateCcw } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -20,22 +20,26 @@ import type { PublicGameState, Stroke, Guess } from "../../../../party/drawing"
 interface MultiplayerGameProps {
   gameState: PublicGameState
   playerId: string
+  isHost: boolean
   strokes: Stroke[]
   guesses: Guess[]
   onStroke: (stroke: Stroke) => void
   onClear: () => void
   onGuess: (text: string) => void
+  onRestart: () => void
   onLeave: () => void
 }
 
 export function MultiplayerGame({
   gameState,
   playerId,
+  isHost,
   strokes,
   guesses,
   onStroke,
   onClear,
   onGuess,
+  onRestart,
   onLeave,
 }: MultiplayerGameProps) {
   const [selectedColor, setSelectedColor] = useState("#000000")
@@ -237,9 +241,21 @@ export function MultiplayerGame({
               />
             </div>
 
-            <Button onClick={onLeave} className="w-full">
-              Back to Menu
-            </Button>
+            <div className="flex flex-col gap-2">
+              {isHost ? (
+                <Button onClick={onRestart} className="w-full">
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Play Again
+                </Button>
+              ) : (
+                <p className="text-sm text-center text-muted-foreground">
+                  Waiting for host to start a new game...
+                </p>
+              )}
+              <Button onClick={onLeave} variant="outline" className="w-full">
+                Back to Menu
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

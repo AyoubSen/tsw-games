@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react"
-import { Clock, Trophy, RotateCcw, Copy, Check } from "lucide-react"
+import { Clock, Trophy, RotateCcw, Copy, Check, Heart, Skull } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -42,6 +42,7 @@ export function MultiplayerGame({
     : null
   const myPlayer = gameState.players[playerId]
   const isEliminated = myPlayer?.eliminated || false
+  const isHardcore = gameState.gameMode === "hardcore"
 
   // Get the letter the next word must start with
   const mustStartWith = useMemo(() => {
@@ -71,15 +72,35 @@ export function MultiplayerGame({
   // Get sorted results for final screen
   const sortedResults = useMemo(() => {
     const players = Object.values(gameState.players)
-    // Winner first, then non-eliminated, then eliminated
-    return players.sort((a, b) => {
+    // Winner first, then by hearts remaining (desc), then eliminated
+    return [...players].sort((a, b) => {
       if (a.id === gameState.winnerId) return -1
       if (b.id === gameState.winnerId) return 1
       if (a.eliminated && !b.eliminated) return 1
       if (!a.eliminated && b.eliminated) return -1
-      return 0
+      // Sort by hearts remaining
+      return (b.hearts ?? 0) - (a.hearts ?? 0)
     })
   }, [gameState.players, gameState.winnerId])
+
+  // Game stats for the modal
+  const gameStats = useMemo(() => {
+    const words = gameState.wordChain
+    if (words.length === 0) return null
+
+    const longestWord = words.reduce((a, b) => a.length >= b.length ? a : b, "")
+    const shortestWord = words.reduce((a, b) => a.length <= b.length ? a : b, words[0])
+    const avgLength = (words.reduce((sum, w) => sum + w.length, 0) / words.length).toFixed(1)
+
+    return {
+      total: words.length,
+      longest: longestWord,
+      shortest: shortestWord,
+      avgLength,
+      firstWord: words[0],
+      lastWord: words[words.length - 1],
+    }
+  }, [gameState.wordChain])
 
   const winner = gameState.winnerId ? gameState.players[gameState.winnerId] : null
 
@@ -120,8 +141,33 @@ export function MultiplayerGame({
           </div>
         )}
 
-        <Badge variant="secondary" className="text-xs">
-          {gameState.wordChain.length} words
+        <div className="flex items-center gap-2">
+          {!isHardcore && (
+            <Badge variant="secondary" className="text-xs flex items-center gap-1">
+              <Heart className="w-3 h-3 text-red-500 fill-red-500" />
+              {myPlayer?.hearts ?? 0}
+            </Badge>
+          )}
+          <Badge variant="secondary" className="text-xs">
+            {gameState.wordChain.length} words
+          </Badge>
+        </div>
+      </div>
+
+      {/* Game Mode Indicator */}
+      <div className="flex justify-center">
+        <Badge variant={isHardcore ? "destructive" : "default"} className="text-xs">
+          {isHardcore ? (
+            <>
+              <Skull className="w-3 h-3 mr-1" />
+              Hardcore
+            </>
+          ) : (
+            <>
+              <Heart className="w-3 h-3 mr-1" />
+              Casual
+            </>
+          )}
         </Badge>
       </div>
 
@@ -193,12 +239,13 @@ export function MultiplayerGame({
           hostId={gameState.hostId}
           winnerId={gameState.winnerId}
           showReason={false}
+          maxHearts={gameState.maxHearts}
         />
       </div>
 
       {/* Game Over Dialog */}
       <Dialog open={isFinished}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-center text-2xl flex items-center justify-center gap-2">
               <Trophy className="w-6 h-6 text-yellow-500" />
@@ -206,76 +253,88 @@ export function MultiplayerGame({
             </DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4 py-4">
+          <div className="space-y-4 py-2">
             {/* Winner Announcement */}
             {winner && (
-              <div className="text-center">
-                <p className="text-sm text-muted-foreground">Winner</p>
-                <p className="text-xl font-bold text-primary">
+              <div className="text-center py-3 bg-yellow-500/10 rounded-lg border border-yellow-500/30">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide">Winner</p>
+                <p className="text-2xl font-bold text-yellow-600">
                   {winner.name}
                   {winner.id === playerId && " (You!)"}
                 </p>
               </div>
             )}
 
-            {/* Word Chain Stats */}
-            <div className="text-center">
-              <p className="text-sm text-muted-foreground">Words Chained</p>
-              <p className="text-3xl font-bold">{gameState.wordChain.length}</p>
-            </div>
+            {/* Game Stats */}
+            {gameStats && (
+              <div className="grid grid-cols-2 gap-2 text-center">
+                <div className="bg-muted/50 rounded-lg p-2">
+                  <p className="text-2xl font-bold">{gameStats.total}</p>
+                  <p className="text-xs text-muted-foreground">Words</p>
+                </div>
+                
+                <div className="bg-muted/50 rounded-lg p-2">
+                  <p className="text-lg font-bold">{gameStats.avgLength}</p>
+                  <p className="text-xs text-muted-foreground">Avg Length</p>
+                </div>
+              </div>
+            )}
 
-            {/* Final Word Chain */}
-            <div className="max-h-32 overflow-auto bg-muted/50 rounded-lg p-2">
-              <WordChain words={gameState.wordChain} />
-            </div>
+            {/* Chain Preview */}
+            {gameStats && (
+              <div className="text-center text-sm text-muted-foreground">
+                <span className="font-mono uppercase">{gameStats.firstWord}</span>
+                <span className="mx-2">→ ... →</span>
+                <span className="font-mono uppercase">{gameStats.lastWord}</span>
+              </div>
+            )}
 
             {/* Player Results */}
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-center">Results</p>
+            <div className="space-y-1.5 max-h-40 overflow-y-auto">
               {sortedResults.map((player, index) => (
                 <div
                   key={player.id}
-                  className={`flex items-center justify-between p-2 rounded-lg ${
+                  className={`flex items-center justify-between p-2 rounded-lg text-sm ${
                     player.id === gameState.winnerId
                       ? "bg-yellow-500/10 border border-yellow-500/30"
                       : player.eliminated
-                        ? "bg-destructive/10"
-                        : "bg-muted/50"
+                        ? "bg-destructive/5 opacity-60"
+                        : "bg-muted/30"
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium w-6">{index + 1}.</span>
-                    <span className="font-medium">{player.name}</span>
+                    <span className="font-medium w-5 text-muted-foreground">{index + 1}.</span>
+                    <span className="font-medium truncate max-w-[120px]">{player.name}</span>
                     {player.id === playerId && (
-                      <Badge variant="outline" className="text-xs">You</Badge>
+                      <span className="text-xs text-muted-foreground">(You)</span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     {player.id === gameState.winnerId && (
                       <Trophy className="w-4 h-4 text-yellow-500" />
                     )}
-                    {player.eliminated && (
-                      <span className="text-xs text-muted-foreground">
-                        {player.eliminatedReason === "timeout" ? "Timeout" :
-                         player.eliminatedReason === "invalid" ? "Invalid" :
-                         player.eliminatedReason === "repeated" ? "Repeated" :
-                         player.eliminatedReason === "wrong-letter" ? "Wrong letter" :
-                         "Out"}
+                    {!isHardcore && player.hearts !== undefined && (
+                      <span className="text-xs flex items-center gap-0.5">
+                        <Heart className="w-3 h-3 text-red-500 fill-red-500" />
+                        {player.hearts}
                       </span>
+                    )}
+                    {player.eliminated && (
+                      <Skull className="w-4 h-4 text-muted-foreground" />
                     )}
                   </div>
                 </div>
               ))}
             </div>
 
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2 pt-2">
               {isHost ? (
                 <Button onClick={onRestart} className="w-full">
                   <RotateCcw className="w-4 h-4 mr-2" />
                   Play Again
                 </Button>
               ) : (
-                <p className="text-sm text-center text-muted-foreground">
+                <p className="text-sm text-center text-muted-foreground py-2">
                   Waiting for host to start a new game...
                 </p>
               )}

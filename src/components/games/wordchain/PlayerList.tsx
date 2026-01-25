@@ -1,4 +1,4 @@
-import { Crown, Timer, XCircle, Trophy } from "lucide-react"
+import { Crown, Timer, XCircle, Trophy, Heart } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { Player } from "../../../../party/wordchain"
 
@@ -10,6 +10,7 @@ interface PlayerListProps {
   hostId: string
   winnerId?: string | null
   showReason?: boolean
+  maxHearts?: number
 }
 
 export function PlayerList({
@@ -20,6 +21,7 @@ export function PlayerList({
   hostId,
   winnerId,
   showReason = true,
+  maxHearts,
 }: PlayerListProps) {
   // Order by playerOrder
   const orderedPlayers = playerOrder
@@ -39,6 +41,27 @@ export function PlayerList({
       default:
         return "Eliminated"
     }
+  }
+
+  // Render hearts
+  const renderHearts = (hearts: number, max: number) => {
+    if (max <= 1) return null // Don't show hearts in hardcore mode
+
+    return (
+      <div className="flex items-center gap-0.5">
+        {Array.from({ length: max }).map((_, i) => (
+          <Heart
+            key={i}
+            className={cn(
+              "w-3 h-3",
+              i < hearts
+                ? "text-red-500 fill-red-500"
+                : "text-muted-foreground/30"
+            )}
+          />
+        ))}
+      </div>
+    )
   }
 
   return (
@@ -88,6 +111,12 @@ export function PlayerList({
             {isCurrentTurn && !player.eliminated && (
               <Timer className="w-4 h-4 text-primary animate-pulse" />
             )}
+
+            {/* Hearts */}
+            {!player.eliminated && maxHearts && maxHearts > 1 && (
+              renderHearts(player.hearts, maxHearts)
+            )}
+
             {player.eliminated && (
               <XCircle className="w-4 h-4 text-destructive" />
             )}

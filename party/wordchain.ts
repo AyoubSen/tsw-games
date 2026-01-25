@@ -8,6 +8,7 @@ export interface Player {
   eliminatedReason?: string // "timeout" | "invalid" | "repeated" | "wrong-letter"
   eliminatedWord?: string // The word that caused elimination
   joinedAt: number
+  hearts: number // Current hearts (lives)
 }
 
 // Game state
@@ -18,12 +19,16 @@ export interface GameState {
   status: "waiting" | "playing" | "finished"
   maxPlayers: number
 
+  // Game settings
+  gameMode: "casual" | "hardcore"
+  maxHearts: number // Hearts each player starts with
+  turnTimeLimit: number // seconds
+
   // Game-specific
   wordChain: string[]
   usedWords: string[] // Array for serialization (Set doesn't serialize)
   currentPlayerId: string | null
   turnStartedAt: number | null
-  turnTimeLimit: number // seconds
   winnerId: string | null
   playerOrder: string[] // Order of player IDs for turn rotation
 }
@@ -35,10 +40,12 @@ export interface PublicGameState {
   players: Record<string, Player>
   status: "waiting" | "playing" | "finished"
   maxPlayers: number
+  gameMode: "casual" | "hardcore"
+  maxHearts: number
+  turnTimeLimit: number
   wordChain: string[]
   currentPlayerId: string | null
   turnStartedAt: number | null
-  turnTimeLimit: number
   winnerId: string | null
   playerOrder: string[]
 }
@@ -59,6 +66,7 @@ export type ServerMessage =
   | { type: "game-started"; startingWord: string; firstPlayerId: string }
   | { type: "turn-started"; playerId: string; mustStartWith: string }
   | { type: "word-accepted"; playerId: string; word: string; nextPlayerId: string; mustStartWith: string }
+  | { type: "heart-lost"; playerId: string; reason: string; word?: string; heartsRemaining: number }
   | { type: "player-eliminated"; playerId: string; reason: string; word?: string }
   | { type: "game-over"; winnerId: string; wordChain: string[] }
   | { type: "game-restarted" }
@@ -123,10 +131,12 @@ export default class WordChainParty implements Party.Server {
       players: this.state.players,
       status: this.state.status,
       maxPlayers: this.state.maxPlayers,
+      gameMode: this.state.gameMode,
+      maxHearts: this.state.maxHearts,
+      turnTimeLimit: this.state.turnTimeLimit,
       wordChain: this.state.wordChain,
       currentPlayerId: this.state.currentPlayerId,
       turnStartedAt: this.state.turnStartedAt,
-      turnTimeLimit: this.state.turnTimeLimit,
       winnerId: this.state.winnerId,
       playerOrder: this.state.playerOrder,
     }
@@ -183,6 +193,33 @@ export default class WordChainParty implements Party.Server {
     return null
   }
 
+  // Handle a player making a mistake (wrong word, timeout, etc.)
+  handleMistake(playerId: string, reason: string, word?: string) {
+    if (!this.state) return
+
+    const player = this.state.players[playerId]
+    if (!player || player.eliminated) return
+
+    // In casual mode, lose a heart
+    if (this.state.gameMode === "casual" && player.hearts > 1) {
+      player.hearts -= 1
+
+      this.broadcast({
+        type: "heart-lost",
+        playerId,
+        reason,
+        word,
+        heartsRemaining: player.hearts,
+      })
+
+      // Move to next player's turn (player is not eliminated yet)
+      this.startTurn(this.getNextPlayerId(playerId))
+    } else {
+      // Hardcore mode OR player is on last heart - eliminate
+      this.eliminatePlayer(playerId, reason, word)
+    }
+  }
+
   eliminatePlayer(playerId: string, reason: string, word?: string) {
     if (!this.state) return
 
@@ -191,6 +228,7 @@ export default class WordChainParty implements Party.Server {
 
     player.eliminated = true
     player.eliminatedReason = reason
+    player.hearts = 0
     if (word) player.eliminatedWord = word
 
     this.broadcast({
@@ -263,7 +301,7 @@ export default class WordChainParty implements Party.Server {
       return
     }
 
-    this.eliminatePlayer(this.state.currentPlayerId, "timeout")
+    this.handleMistake(this.state.currentPlayerId, "timeout")
     await this.saveState()
   }
 
@@ -271,6 +309,8 @@ export default class WordChainParty implements Party.Server {
     const url = new URL(ctx.request.url)
     const isHost = url.searchParams.get("host") === "true"
     const turnTimeLimit = parseInt(url.searchParams.get("turnTimeLimit") || "15", 10)
+    const gameMode = (url.searchParams.get("gameMode") || "casual") as "casual" | "hardcore"
+    const maxHearts = parseInt(url.searchParams.get("maxHearts") || "3", 10)
 
     if (isHost && !this.state) {
       this.state = {
@@ -279,11 +319,13 @@ export default class WordChainParty implements Party.Server {
         players: {},
         status: "waiting",
         maxPlayers: 8,
+        gameMode,
+        maxHearts: gameMode === "hardcore" ? 1 : Math.max(1, Math.min(5, maxHearts)),
+        turnTimeLimit: Math.max(5, Math.min(60, turnTimeLimit)),
         wordChain: [],
         usedWords: [],
         currentPlayerId: null,
         turnStartedAt: null,
-        turnTimeLimit: Math.max(5, Math.min(60, turnTimeLimit)),
         winnerId: null,
         playerOrder: [],
       }
@@ -320,6 +362,7 @@ export default class WordChainParty implements Party.Server {
             name: data.name,
             eliminated: false,
             joinedAt: Date.now(),
+            hearts: this.state.maxHearts,
           }
 
           this.state.players[sender.id] = player
@@ -347,6 +390,14 @@ export default class WordChainParty implements Party.Server {
           this.state.status = "playing"
           this.state.wordChain = [startingWord]
           this.state.usedWords = [startingWord.toLowerCase()]
+
+          // Reset hearts for all players
+          for (const player of Object.values(this.state.players)) {
+            player.hearts = this.state.maxHearts
+            player.eliminated = false
+            delete player.eliminatedReason
+            delete player.eliminatedWord
+          }
 
           // Randomize player order
           this.state.playerOrder = [...this.state.playerOrder].sort(() => Math.random() - 0.5)
@@ -376,14 +427,14 @@ export default class WordChainParty implements Party.Server {
 
           // Validate minimum word length
           if (word.length < 2) {
-            this.eliminatePlayer(sender.id, "invalid", word)
+            this.handleMistake(sender.id, "invalid", word)
             await this.saveState()
             return
           }
 
           // Validate only letters
           if (!/^[a-z]+$/.test(word)) {
-            this.eliminatePlayer(sender.id, "invalid", word)
+            this.handleMistake(sender.id, "invalid", word)
             await this.saveState()
             return
           }
@@ -391,14 +442,14 @@ export default class WordChainParty implements Party.Server {
           // Validate starts with correct letter
           const mustStartWith = this.getLastLetter()
           if (word[0] !== mustStartWith) {
-            this.eliminatePlayer(sender.id, "wrong-letter", word)
+            this.handleMistake(sender.id, "wrong-letter", word)
             await this.saveState()
             return
           }
 
           // Validate not already used
           if (this.state.usedWords.includes(word)) {
-            this.eliminatePlayer(sender.id, "repeated", word)
+            this.handleMistake(sender.id, "repeated", word)
             await this.saveState()
             return
           }
@@ -406,7 +457,7 @@ export default class WordChainParty implements Party.Server {
           // Validate is a real English word using dictionary API
           const isValid = await isValidEnglishWord(word)
           if (!isValid) {
-            this.eliminatePlayer(sender.id, "invalid", word)
+            this.handleMistake(sender.id, "invalid", word)
             await this.saveState()
             return
           }
@@ -489,6 +540,7 @@ export default class WordChainParty implements Party.Server {
           // Reset player states
           for (const player of Object.values(this.state.players)) {
             player.eliminated = false
+            player.hearts = this.state.maxHearts
             delete player.eliminatedReason
             delete player.eliminatedWord
           }

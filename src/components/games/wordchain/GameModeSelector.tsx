@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Users, ArrowLeft, Loader2, Link2, Clock } from "lucide-react"
+import { Users, ArrowLeft, Loader2, Link2, Clock, Heart, Skull } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -22,6 +22,13 @@ const TIME_OPTIONS = [
   { value: 30, label: "30s" },
 ]
 
+const HEART_OPTIONS = [
+  { value: 1, label: "1" },
+  { value: 2, label: "2" },
+  { value: 3, label: "3" },
+  { value: 5, label: "5" },
+]
+
 export function GameModeSelector({
   onCreateMultiplayer,
   onJoinMultiplayer,
@@ -32,6 +39,8 @@ export function GameModeSelector({
   const [playerName, setPlayerName] = useState("")
   const [roomCode, setRoomCode] = useState("")
   const [turnTimeLimit, setTurnTimeLimit] = useState(15)
+  const [gameMode, setGameMode] = useState<"casual" | "hardcore">("casual")
+  const [maxHearts, setMaxHearts] = useState(3)
 
   const handleBack = () => {
     if (step === "create" || step === "join") setStep("mode")
@@ -39,7 +48,11 @@ export function GameModeSelector({
 
   const handleCreateGame = () => {
     if (!playerName.trim()) return
-    onCreateMultiplayer(playerName.trim(), { turnTimeLimit })
+    onCreateMultiplayer(playerName.trim(), {
+      turnTimeLimit,
+      gameMode,
+      maxHearts: gameMode === "casual" ? maxHearts : 1,
+    })
   }
 
   const handleJoinGame = () => {
@@ -131,6 +144,69 @@ export function GameModeSelector({
                 autoFocus
               />
             </div>
+
+            {/* Game Mode */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Game Mode</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setGameMode("casual")}
+                  disabled={isConnecting}
+                  className={cn(
+                    "flex flex-col items-center gap-1 py-3 px-3 rounded-lg border text-sm font-medium transition-colors",
+                    gameMode === "casual"
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border hover:border-primary/50"
+                  )}
+                >
+                  <Heart className="w-5 h-5" />
+                  <span>Casual</span>
+                  <span className="text-xs font-normal text-muted-foreground">Multiple lives</span>
+                </button>
+                <button
+                  onClick={() => setGameMode("hardcore")}
+                  disabled={isConnecting}
+                  className={cn(
+                    "flex flex-col items-center gap-1 py-3 px-3 rounded-lg border text-sm font-medium transition-colors",
+                    gameMode === "hardcore"
+                      ? "border-destructive bg-destructive/10 text-destructive"
+                      : "border-border hover:border-destructive/50"
+                  )}
+                >
+                  <Skull className="w-5 h-5" />
+                  <span>Hardcore</span>
+                  <span className="text-xs font-normal text-muted-foreground">One mistake = out</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Hearts (only for casual mode) */}
+            {gameMode === "casual" && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <Heart className="w-4 h-4 text-red-500" />
+                  Lives per Player
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {HEART_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => setMaxHearts(option.value)}
+                      disabled={isConnecting}
+                      className={cn(
+                        "py-2 px-3 rounded-lg border text-sm font-medium transition-colors flex items-center justify-center gap-1",
+                        maxHearts === option.value
+                          ? "border-red-500 bg-red-500/10 text-red-500"
+                          : "border-border hover:border-red-500/50"
+                      )}
+                    >
+                      <Heart className="w-3 h-3" />
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Turn Time Limit */}
             <div className="space-y-2">

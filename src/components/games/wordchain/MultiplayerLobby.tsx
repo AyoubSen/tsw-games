@@ -1,6 +1,7 @@
 import { useState } from "react"
-import { Copy, Check, Crown, Users, Play, LogOut, Timer } from "lucide-react"
+import { Copy, Check, Crown, Users, Play, LogOut, Timer, Heart, Skull } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import type { PublicGameState } from "../../../../party/wordchain"
 
@@ -58,11 +59,30 @@ export function MultiplayerLobby({
         </Card>
 
         {/* Game Settings */}
-        <div className="flex items-center justify-center gap-4 text-sm text-muted-foreground">
-          <div className="flex items-center gap-1">
-            <Timer className="w-4 h-4" />
-            <span>{gameState.turnTimeLimit}s per turn</span>
-          </div>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Badge variant={gameState.gameMode === "hardcore" ? "destructive" : "default"} className="text-sm py-1">
+            {gameState.gameMode === "hardcore" ? (
+              <>
+                <Skull className="w-3.5 h-3.5 mr-1" />
+                Hardcore
+              </>
+            ) : (
+              <>
+                <Heart className="w-3.5 h-3.5 mr-1" />
+                Casual
+              </>
+            )}
+          </Badge>
+          {gameState.gameMode === "casual" && (
+            <Badge variant="secondary" className="text-sm py-1">
+              <Heart className="w-3.5 h-3.5 mr-1 text-red-500 fill-red-500" />
+              {gameState.maxHearts} {gameState.maxHearts === 1 ? "life" : "lives"}
+            </Badge>
+          )}
+          <Badge variant="outline" className="text-sm py-1">
+            <Timer className="w-3.5 h-3.5 mr-1" />
+            {gameState.turnTimeLimit}s per turn
+          </Badge>
         </div>
 
         {/* Players */}

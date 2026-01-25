@@ -7,6 +7,8 @@ export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "er
 
 export interface GameSettings {
   turnTimeLimit: number // 10, 15, 20, 30 seconds
+  gameMode: "casual" | "hardcore"
+  maxHearts: number // 1-5 hearts per player
 }
 
 export interface MultiplayerState {
@@ -51,6 +53,8 @@ export function useMultiplayerWordchain() {
         host: isHost.toString(),
         ...(settings && {
           turnTimeLimit: settings.turnTimeLimit.toString(),
+          gameMode: settings.gameMode,
+          maxHearts: settings.maxHearts.toString(),
         }),
       },
     })
@@ -178,6 +182,27 @@ export function useMultiplayerWordchain() {
         })
         break
 
+      case "heart-lost":
+        setState((prev) => {
+          if (!prev.gameState) return prev
+          const player = prev.gameState.players[message.playerId]
+          if (!player) return prev
+          return {
+            ...prev,
+            gameState: {
+              ...prev.gameState,
+              players: {
+                ...prev.gameState.players,
+                [message.playerId]: {
+                  ...player,
+                  hearts: message.heartsRemaining,
+                },
+              },
+            },
+          }
+        })
+        break
+
       case "player-eliminated":
         setState((prev) => {
           if (!prev.gameState) return prev
@@ -194,6 +219,7 @@ export function useMultiplayerWordchain() {
                   eliminated: true,
                   eliminatedReason: message.reason,
                   eliminatedWord: message.word,
+                  hearts: 0,
                 },
               },
             },

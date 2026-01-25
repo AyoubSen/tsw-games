@@ -4,7 +4,8 @@
   "main": "party/wordle.ts",
   "parties": {
     "typerace": "party/typerace.ts",
-    "drawing": "party/drawing.ts"
+    "drawing": "party/drawing.ts",
+    "wordchain": "party/wordchain.ts"
   },
   "compatibilityDate": "2024-01-01"
 }

@@ -115,10 +115,12 @@ export function Canvas({
     const container = containerRef.current
     if (!canvas || !container) return
 
-    // Set canvas size
+    // Set canvas size - use larger dimensions for better drawing experience
     const resizeCanvas = () => {
       const rect = container.getBoundingClientRect()
-      const size = Math.min(rect.width, 400)
+      // Allow up to 600px on larger screens, minimum 300px
+      const maxSize = window.innerWidth >= 768 ? 600 : 500
+      const size = Math.min(rect.width - 16, maxSize)
       canvas.width = size
       canvas.height = size
       canvas.style.width = `${size}px`

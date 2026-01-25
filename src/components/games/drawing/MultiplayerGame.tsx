@@ -93,7 +93,7 @@ export function MultiplayerGame({
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-120px)] max-w-4xl mx-auto p-2 gap-2">
+    <div className="flex flex-col h-[calc(100vh-120px)] max-w-5xl mx-auto p-2 gap-2">
       {/* Header */}
       <div className="flex items-center justify-between px-2">
         <Badge variant="outline" className="text-xs">

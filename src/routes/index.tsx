@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { LetterText, Users, Zap, Play, Keyboard, Palette } from 'lucide-react'
+import { LetterText, Users, Zap, Play, Keyboard, Palette, Link2 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/lib/useTheme'
@@ -45,6 +45,15 @@ const games: Game[] = [
     path: '/games/drawing',
     players: '2-8 players',
     color: 'from-purple-500 to-pink-600',
+  },
+  {
+    id: 'wordchain',
+    title: 'Word Chain',
+    description: 'Chain any English words! Each word must start with the last letter of the previous word.',
+    icon: <Link2 className="w-10 h-10" />,
+    path: '/games/wordchain',
+    players: '2-8 players',
+    color: 'from-orange-500 to-amber-600',
     isNew: true,
   },
   {

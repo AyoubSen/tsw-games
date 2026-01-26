@@ -6,9 +6,13 @@ import type {
   PublicGameState,
   Team,
   PlayerRole,
+  GameMode,
+  GameSettings,
 } from "../../../../party/codenames"
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
+
+export type { GameMode, GameSettings }
 
 export interface MultiplayerState {
   connectionStatus: ConnectionStatus
@@ -32,7 +36,7 @@ export function useMultiplayerCodenames() {
   const socketRef = useRef<PartySocket | null>(null)
   const playerNameRef = useRef<string>("")
 
-  const connect = useCallback((roomCode: string, isHost: boolean, playerName: string) => {
+  const connect = useCallback((roomCode: string, isHost: boolean, playerName: string, settings?: GameSettings) => {
     if (socketRef.current) {
       socketRef.current.close()
     }
@@ -52,6 +56,11 @@ export function useMultiplayerCodenames() {
       party: "codenames",
       query: {
         host: isHost.toString(),
+        ...(settings && {
+          gameMode: settings.gameMode,
+          clueTimeLimit: settings.clueTimeLimit.toString(),
+          guessTimeLimit: settings.guessTimeLimit.toString(),
+        }),
       },
     })
 
@@ -228,9 +237,9 @@ export function useMultiplayerCodenames() {
     })
   }, [])
 
-  const createGame = useCallback((playerName: string) => {
+  const createGame = useCallback((playerName: string, settings: GameSettings) => {
     const roomCode = generateRoomCode()
-    connect(roomCode, true, playerName)
+    connect(roomCode, true, playerName, settings)
     return roomCode
   }, [connect])
 

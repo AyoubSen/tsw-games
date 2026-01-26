@@ -1,10 +1,12 @@
 import { cn } from "@/lib/utils"
+import { Skull, Clock } from "lucide-react"
 import { Board } from "./Board"
 import { TeamPanel } from "./TeamPanel"
 import { ClueInput } from "./ClueInput"
 import { ClueDisplay } from "./ClueDisplay"
 import { ClueHistory } from "./ClueHistory"
 import { GameOverModal } from "./GameOverModal"
+import { Timer } from "./Timer"
 import type { PublicGameState } from "../../../../party/codenames"
 
 interface MultiplayerGameProps {
@@ -34,6 +36,7 @@ export function MultiplayerGame({
 }: MultiplayerGameProps) {
   const players = Object.values(gameState.players)
   const currentPlayer = gameState.players[playerId]
+  const settings = gameState.settings
 
   const redPlayers = players.filter((p) => p.team === "red")
   const bluePlayers = players.filter((p) => p.team === "blue")
@@ -55,6 +58,10 @@ export function MultiplayerGame({
 
   // Can I end guessing?
   const canEndGuessing = isMyTeamsTurn && isGuessing && currentPlayer?.role === "guesser"
+
+  // Timer logic
+  const showClueTimer = isGivingClue && settings.clueTimeLimit > 0 && currentTurn?.phaseStartedAt
+  const showGuessTimer = isGuessing && settings.guessTimeLimit > 0 && currentTurn?.phaseStartedAt
 
   const getTurnMessage = () => {
     if (!currentTurn) return ""
@@ -88,6 +95,8 @@ export function MultiplayerGame({
   const cardsRemaining =
     currentTurn?.team === "red" ? gameState.redCardsRemaining : gameState.blueCardsRemaining
 
+  const hasSpeedMode = settings.clueTimeLimit > 0 || settings.guessTimeLimit > 0
+
   return (
     <div className="flex flex-col min-h-[calc(100vh-73px)] p-2 sm:p-4">
       {/* Game Over Modal */}
@@ -100,6 +109,20 @@ export function MultiplayerGame({
           onLeave={onLeave}
         />
       )}
+
+      {/* Game Mode Badges */}
+      <div className="flex items-center justify-center gap-2 mb-3">
+        {settings.gameMode === "hardcore" && (
+          <span className="px-2 py-1 bg-destructive/10 text-destructive text-xs rounded-full flex items-center gap-1">
+            <Skull className="w-3 h-3" /> Hardcore
+          </span>
+        )}
+        {hasSpeedMode && (
+          <span className="px-2 py-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs rounded-full flex items-center gap-1">
+            <Clock className="w-3 h-3" /> Speed Mode
+          </span>
+        )}
+      </div>
 
       {/* Top: Team Panels */}
       <div className="flex gap-2 sm:gap-4 mb-4">
@@ -123,8 +146,8 @@ export function MultiplayerGame({
         </div>
       </div>
 
-      {/* Turn Message */}
-      <div className="text-center mb-3">
+      {/* Turn Message + Timer */}
+      <div className="flex flex-col items-center gap-2 mb-3">
         <span
           className={cn(
             "text-sm font-medium",
@@ -135,6 +158,20 @@ export function MultiplayerGame({
         >
           {getTurnMessage()}
         </span>
+
+        {/* Timer */}
+        {showClueTimer && currentTurn && (
+          <Timer
+            startedAt={currentTurn.phaseStartedAt}
+            duration={settings.clueTimeLimit}
+          />
+        )}
+        {showGuessTimer && currentTurn && (
+          <Timer
+            startedAt={currentTurn.phaseStartedAt}
+            duration={settings.guessTimeLimit}
+          />
+        )}
       </div>
 
       {/* Error Message */}

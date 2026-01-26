@@ -6,6 +6,14 @@ export type PlayerRole = "spymaster" | "guesser"
 export type CardType = "red" | "blue" | "neutral" | "assassin"
 export type GamePhase = "waiting" | "team-selection" | "playing" | "finished"
 export type TurnPhase = "giving-clue" | "guessing"
+export type GameMode = "classic" | "hardcore"
+export type WinReason = "cards" | "assassin" | "wrong-guess" | "timeout"
+
+export interface GameSettings {
+  gameMode: GameMode
+  clueTimeLimit: number  // seconds, 0 = unlimited
+  guessTimeLimit: number // seconds, 0 = unlimited
+}
 
 export interface Player {
   id: string
@@ -36,6 +44,7 @@ export interface Turn {
   clue: Clue | null
   guessesRemaining: number
   guessedThisTurn: number[]
+  phaseStartedAt: number // timestamp for timer
 }
 
 export interface GameState {
@@ -43,6 +52,7 @@ export interface GameState {
   hostId: string
   players: Record<string, Player>
   status: GamePhase
+  settings: GameSettings
   board: Card[]
   startingTeam: Team
   currentTurn: Turn | null
@@ -50,7 +60,7 @@ export interface GameState {
   redCardsRemaining: number
   blueCardsRemaining: number
   winner: Team | null
-  winReason: "cards" | "assassin" | null
+  winReason: WinReason | null
 }
 
 // Public state sent to clients (hides card types for non-spymasters)
@@ -59,6 +69,7 @@ export interface PublicGameState {
   hostId: string
   players: Record<string, Player>
   status: GamePhase
+  settings: GameSettings
   board: PublicCard[]
   startingTeam: Team
   currentTurn: Turn | null
@@ -66,7 +77,7 @@ export interface PublicGameState {
   redCardsRemaining: number
   blueCardsRemaining: number
   winner: Team | null
-  winReason: "cards" | "assassin" | null
+  winReason: WinReason | null
 }
 
 export interface PublicCard {
@@ -98,7 +109,8 @@ export type ServerMessage =
   | { type: "clue-given"; clue: Clue }
   | { type: "card-revealed"; cardIndex: number; cardType: CardType; team: Team }
   | { type: "turn-ended"; nextTeam: Team; reason: string }
-  | { type: "game-over"; winner: Team; reason: "cards" | "assassin" }
+  | { type: "timer-tick"; timeRemaining: number; phase: TurnPhase }
+  | { type: "game-over"; winner: Team; reason: WinReason }
   | { type: "error"; message: string }
 
 // Word list (~400 words)
@@ -229,6 +241,7 @@ export default class CodenamesParty implements Party.Server {
       hostId: this.state.hostId,
       players: this.state.players,
       status: this.state.status,
+      settings: this.state.settings,
       board: publicBoard,
       startingTeam: this.state.startingTeam,
       currentTurn: this.state.currentTurn,
@@ -347,11 +360,26 @@ export default class CodenamesParty implements Party.Server {
 
     // Check turn flow
     if (card.type !== guessingTeam) {
-      // Wrong team's card or neutral - turn ends
+      // Wrong team's card or neutral
+
+      // In hardcore mode, any wrong guess = instant loss
+      if (this.state.settings.gameMode === "hardcore") {
+        const winner = guessingTeam === "red" ? "blue" : "red"
+        this.endGame(winner, "wrong-guess")
+        return
+      }
+
+      // Classic mode - just end turn
       this.switchTurn("wrong guess")
     } else {
       // Correct guess
       this.state.currentTurn.guessesRemaining--
+
+      // Reset guess timer if in speed mode
+      if (this.state.settings.guessTimeLimit > 0) {
+        this.state.currentTurn.phaseStartedAt = Date.now()
+        this.setGuessTimer()
+      }
 
       // Check if out of guesses (unless unlimited with count=0)
       if (
@@ -367,6 +395,9 @@ export default class CodenamesParty implements Party.Server {
   switchTurn(reason: string) {
     if (!this.state || !this.state.currentTurn) return
 
+    // Cancel any existing timer
+    this.room.storage.deleteAlarm()
+
     const nextTeam = this.state.currentTurn.team === "red" ? "blue" : "red"
 
     this.state.currentTurn = {
@@ -375,14 +406,73 @@ export default class CodenamesParty implements Party.Server {
       clue: null,
       guessesRemaining: 0,
       guessedThisTurn: [],
+      phaseStartedAt: Date.now(),
     }
 
     this.broadcast({ type: "turn-ended", nextTeam, reason })
     this.broadcastState()
+
+    // Set clue timer if in speed mode
+    if (this.state.settings.clueTimeLimit > 0) {
+      this.setClueTimer()
+    }
   }
 
-  endGame(winner: Team, reason: "cards" | "assassin") {
+  setClueTimer() {
+    if (!this.state || this.state.settings.clueTimeLimit === 0) return
+    const timeout = this.state.settings.clueTimeLimit * 1000
+    this.room.storage.setAlarm(Date.now() + timeout)
+  }
+
+  setGuessTimer() {
+    if (!this.state || this.state.settings.guessTimeLimit === 0) return
+    const timeout = this.state.settings.guessTimeLimit * 1000
+    this.room.storage.setAlarm(Date.now() + timeout)
+  }
+
+  async onAlarm() {
+    if (!this.state || this.state.status !== "playing" || !this.state.currentTurn) {
+      return
+    }
+
+    const turn = this.state.currentTurn
+    const now = Date.now()
+    const elapsed = now - turn.phaseStartedAt
+
+    if (turn.phase === "giving-clue") {
+      // Clue timer expired - skip turn
+      const timeLimit = this.state.settings.clueTimeLimit * 1000
+      if (elapsed >= timeLimit - 500) {
+        // In hardcore mode, timeout = loss
+        if (this.state.settings.gameMode === "hardcore") {
+          const winner = turn.team === "red" ? "blue" : "red"
+          this.endGame(winner, "timeout")
+        } else {
+          this.switchTurn("time expired")
+        }
+        await this.saveState()
+      }
+    } else if (turn.phase === "guessing") {
+      // Guess timer expired - end guessing phase
+      const timeLimit = this.state.settings.guessTimeLimit * 1000
+      if (elapsed >= timeLimit - 500) {
+        // In hardcore mode with no guesses made, it's a loss
+        if (this.state.settings.gameMode === "hardcore" && turn.guessedThisTurn.length === 0) {
+          const winner = turn.team === "red" ? "blue" : "red"
+          this.endGame(winner, "timeout")
+        } else {
+          this.switchTurn("time expired")
+        }
+        await this.saveState()
+      }
+    }
+  }
+
+  endGame(winner: Team, reason: WinReason) {
     if (!this.state) return
+
+    // Cancel any pending timer
+    this.room.storage.deleteAlarm()
 
     this.state.status = "finished"
     this.state.winner = winner
@@ -397,6 +487,11 @@ export default class CodenamesParty implements Party.Server {
     const url = new URL(ctx.request.url)
     const isHost = url.searchParams.get("host") === "true"
 
+    // Parse game settings from query params
+    const gameMode = (url.searchParams.get("gameMode") || "classic") as GameMode
+    const clueTimeLimit = parseInt(url.searchParams.get("clueTimeLimit") || "0", 10)
+    const guessTimeLimit = parseInt(url.searchParams.get("guessTimeLimit") || "0", 10)
+
     if (isHost && !this.state) {
       // Randomly select starting team
       const startingTeam: Team = Math.random() < 0.5 ? "red" : "blue"
@@ -406,6 +501,11 @@ export default class CodenamesParty implements Party.Server {
         hostId: conn.id,
         players: {},
         status: "waiting",
+        settings: {
+          gameMode,
+          clueTimeLimit: Math.max(0, Math.min(120, clueTimeLimit)),
+          guessTimeLimit: Math.max(0, Math.min(60, guessTimeLimit)),
+        },
         board: [],
         startingTeam,
         currentTurn: null,
@@ -540,12 +640,18 @@ export default class CodenamesParty implements Party.Server {
             clue: null,
             guessesRemaining: 0,
             guessedThisTurn: [],
+            phaseStartedAt: Date.now(),
           }
 
           await this.saveState()
 
           this.broadcast({ type: "game-started", startingTeam: this.state.startingTeam })
           this.broadcastState()
+
+          // Start clue timer if in speed mode
+          if (this.state.settings.clueTimeLimit > 0) {
+            this.setClueTimer()
+          }
           break
         }
 
@@ -592,6 +698,9 @@ export default class CodenamesParty implements Party.Server {
             return
           }
 
+          // Cancel clue timer
+          this.room.storage.deleteAlarm()
+
           const clue: Clue = {
             word: clueWord,
             count: data.count,
@@ -602,6 +711,7 @@ export default class CodenamesParty implements Party.Server {
 
           this.state.currentTurn.clue = clue
           this.state.currentTurn.phase = "guessing"
+          this.state.currentTurn.phaseStartedAt = Date.now()
           // +1 guess allowed (or unlimited if count=0)
           this.state.currentTurn.guessesRemaining = data.count === 0 ? 999 : data.count + 1
           this.state.clueHistory.push(clue)
@@ -610,6 +720,11 @@ export default class CodenamesParty implements Party.Server {
 
           this.broadcast({ type: "clue-given", clue })
           this.broadcastState()
+
+          // Start guess timer if in speed mode
+          if (this.state.settings.guessTimeLimit > 0) {
+            this.setGuessTimer()
+          }
           break
         }
 
@@ -684,6 +799,9 @@ export default class CodenamesParty implements Party.Server {
             this.send(sender, { type: "error", message: "Only host can restart" })
             return
           }
+
+          // Cancel any pending timer
+          this.room.storage.deleteAlarm()
 
           // Keep players but reset their team/role
           for (const player of Object.values(this.state.players)) {

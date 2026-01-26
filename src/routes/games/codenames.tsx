@@ -6,7 +6,7 @@ import { GameModeSelector } from '@/components/games/codenames/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/codenames/MultiplayerLobby'
 import { TeamSelector } from '@/components/games/codenames/TeamSelector'
 import { MultiplayerGame } from '@/components/games/codenames/MultiplayerGame'
-import { useMultiplayerCodenames } from '@/components/games/codenames/useMultiplayerCodenames'
+import { useMultiplayerCodenames, type GameSettings } from '@/components/games/codenames/useMultiplayerCodenames'
 import type { Team, PlayerRole } from '../../../party/codenames'
 
 export const Route = createFileRoute('/games/codenames')({ component: CodenamesPage })
@@ -19,8 +19,8 @@ function CodenamesPage() {
   const multiplayer = useMultiplayerCodenames()
 
   // Handle multiplayer game creation
-  const handleCreateMultiplayer = (playerName: string) => {
-    multiplayer.createGame(playerName)
+  const handleCreateMultiplayer = (playerName: string, settings: GameSettings) => {
+    multiplayer.createGame(playerName, settings)
   }
 
   // Handle multiplayer game join

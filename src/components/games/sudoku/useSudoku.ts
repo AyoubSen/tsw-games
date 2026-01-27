@@ -3,6 +3,7 @@ import sudoku from 'sudoku'
 
 export type Difficulty = 'easy' | 'medium' | 'hard' | 'expert'
 export type GameStatus = 'playing' | 'won' | 'paused'
+export type GameMode = 'normal' | 'hardcore'
 
 export interface Cell {
   value: number | null
@@ -15,6 +16,7 @@ export interface SudokuState {
   board: Cell[][]
   solution: (number | null)[]
   difficulty: Difficulty
+  gameMode: GameMode
   selectedCell: [number, number] | null
   history: Cell[][][]
   timer: number
@@ -94,6 +96,7 @@ export function useSudoku() {
       board: initializeBoard(puzzle),
       solution,
       difficulty: 'medium',
+      gameMode: 'normal',
       selectedCell: null,
       history: [],
       timer: 0,
@@ -190,9 +193,13 @@ export function useSudoku() {
 
       const newHistory = [...prev.history, cloneBoard(prev.board)]
       const newBoard = cloneBoard(prev.board)
-      newBoard[row][col].value = null
-      newBoard[row][col].notes.clear()
-      newBoard[row][col].isError = false
+      // Create a completely fresh cell object to ensure React detects the change
+      newBoard[row][col] = {
+        value: null,
+        isInitial: false,
+        notes: new Set<number>(),
+        isError: false,
+      }
 
       return {
         ...prev,
@@ -264,12 +271,42 @@ export function useSudoku() {
     })
   }, [])
 
-  const newGame = useCallback((difficulty: Difficulty) => {
+  const clearAll = useCallback(() => {
+    setState(prev => {
+      if (prev.gameStatus !== 'playing') return prev
+
+      const newHistory = [...prev.history, cloneBoard(prev.board)]
+      const newBoard = cloneBoard(prev.board)
+
+      // Clear all non-initial cells with fresh cell objects
+      for (let row = 0; row < 9; row++) {
+        for (let col = 0; col < 9; col++) {
+          if (!newBoard[row][col].isInitial) {
+            newBoard[row][col] = {
+              value: null,
+              isInitial: false,
+              notes: new Set<number>(),
+              isError: false,
+            }
+          }
+        }
+      }
+
+      return {
+        ...prev,
+        board: newBoard,
+        history: newHistory,
+      }
+    })
+  }, [])
+
+  const newGame = useCallback((difficulty: Difficulty, gameMode: GameMode = 'normal') => {
     const { puzzle, solution } = generatePuzzleWithDifficulty(difficulty)
     setState({
       board: initializeBoard(puzzle),
       solution,
       difficulty,
+      gameMode,
       selectedCell: null,
       history: [],
       timer: 0,
@@ -297,6 +334,7 @@ export function useSudoku() {
     selectCell,
     setNumber,
     clearCell,
+    clearAll,
     toggleNotesMode,
     getHint,
     undo,

@@ -5,9 +5,10 @@ interface SudokuBoardProps {
   selectedCell: [number, number] | null
   onCellSelect: (row: number, col: number) => void
   disabled?: boolean
+  hardcoreMode?: boolean
 }
 
-export function SudokuBoard({ board, selectedCell, onCellSelect, disabled }: SudokuBoardProps) {
+export function SudokuBoard({ board, selectedCell, onCellSelect, disabled, hardcoreMode }: SudokuBoardProps) {
   const selectedValue = selectedCell ? board[selectedCell[0]][selectedCell[1]].value : null
 
   return (
@@ -39,11 +40,14 @@ export function SudokuBoard({ board, selectedCell, onCellSelect, disabled }: Sud
                 transition-colors duration-100
                 ${borderRight}
                 ${borderBottom}
-                ${isSelected ? 'bg-primary/40 ring-2 ring-primary ring-inset' : ''}
-                ${!isSelected && (isInSameRow || isInSameCol || isInSameBox) ? 'bg-primary/10' : ''}
-                ${isHighlighted ? 'bg-primary/35 font-bold' : ''}
-                ${cell.isInitial ? 'text-foreground font-semibold' : 'text-primary'}
-                ${cell.isError ? 'text-destructive bg-destructive/20 font-bold' : ''}
+                ${isSelected ? 'ring-2 ring-primary ring-inset' : ''}
+                ${cell.isError && !hardcoreMode
+                  ? 'text-destructive bg-destructive/20 font-bold'
+                  : `${isSelected ? 'bg-primary/40' : ''}
+                     ${!isSelected && (isInSameRow || isInSameCol || isInSameBox) ? 'bg-primary/10' : ''}
+                     ${isHighlighted ? 'bg-primary/35 font-bold' : ''}
+                     ${cell.isInitial ? 'text-foreground font-semibold' : 'text-primary'}`
+                }
                 ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-primary/15'}
               `}
             >

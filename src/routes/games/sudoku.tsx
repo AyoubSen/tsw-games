@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft, Clock, RotateCcw, Trophy, Pause, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -7,7 +7,7 @@ import { SudokuBoard } from '@/components/games/sudoku/SudokuBoard'
 import { NumberPad } from '@/components/games/sudoku/NumberPad'
 import { MultiplayerLobby } from '@/components/games/sudoku/MultiplayerLobby'
 import { MultiplayerGame } from '@/components/games/sudoku/MultiplayerGame'
-import { useSudoku, type Difficulty } from '@/components/games/sudoku/useSudoku'
+import { useSudoku, type Difficulty, type GameMode } from '@/components/games/sudoku/useSudoku'
 import { useMultiplayerSudoku } from '@/components/games/sudoku/useMultiplayerSudoku'
 
 export const Route = createFileRoute('/games/sudoku')({ component: SudokuPage })
@@ -37,8 +37,8 @@ function SudokuPage() {
   const multiplayer = useMultiplayerSudoku()
 
   // Handle single player start
-  const handleStartSinglePlayer = (difficulty: Difficulty) => {
-    game.newGame(difficulty)
+  const handleStartSinglePlayer = (difficulty: Difficulty, gameMode: GameMode) => {
+    game.newGame(difficulty, gameMode)
     setView('single')
   }
 
@@ -80,6 +80,43 @@ function SudokuPage() {
     setView('select')
   }
 
+  // Keyboard handler for single player
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (view !== 'single' || game.gameStatus !== 'playing') return
+
+    // Numbers 1-9 (both regular and numpad)
+    const num = parseInt(e.key)
+    if (num >= 1 && num <= 9) {
+      e.preventDefault()
+      game.setNumber(num)
+    }
+    // Delete or Backspace to clear
+    else if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault()
+      game.clearCell()
+    }
+    // Arrow keys to navigate
+    else if (e.key.startsWith('Arrow') && game.selectedCell) {
+      e.preventDefault()
+      const [row, col] = game.selectedCell
+      let newRow = row
+      let newCol = col
+
+      if (e.key === 'ArrowUp') newRow = Math.max(0, row - 1)
+      else if (e.key === 'ArrowDown') newRow = Math.min(8, row + 1)
+      else if (e.key === 'ArrowLeft') newCol = Math.max(0, col - 1)
+      else if (e.key === 'ArrowRight') newCol = Math.min(8, col + 1)
+
+      game.selectCell(newRow, newCol)
+    }
+  }, [view, game])
+
+  // Add keyboard listener
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [handleKeyDown])
+
   // Mode selection view
   if (view === 'select') {
     return (
@@ -119,7 +156,7 @@ function SudokuPage() {
           </Button>
           <div className="flex items-center gap-4">
             <span className="text-sm text-muted-foreground">
-              {DIFFICULTY_LABELS[game.difficulty]}
+              {DIFFICULTY_LABELS[game.difficulty]} {game.gameMode === 'hardcore' && '(Hardcore)'}
             </span>
             <div className="flex items-center gap-1.5 font-mono text-lg">
               <Clock className="w-4 h-4" />
@@ -138,7 +175,7 @@ function SudokuPage() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => game.newGame(game.difficulty)}
+              onClick={() => game.newGame(game.difficulty, game.gameMode)}
             >
               <RotateCcw className="w-4 h-4" />
             </Button>
@@ -157,7 +194,7 @@ function SudokuPage() {
                 Completed in {formatTime(game.timer)}
                 {game.hintsUsed > 0 && ` with ${game.hintsUsed} hint${game.hintsUsed > 1 ? 's' : ''}`}
               </p>
-              <Button onClick={() => game.newGame(game.difficulty)} className="mt-3">
+              <Button onClick={() => game.newGame(game.difficulty, game.gameMode)} className="mt-3">
                 Play Again
               </Button>
             </div>
@@ -181,6 +218,7 @@ function SudokuPage() {
               selectedCell={game.selectedCell}
               onCellSelect={game.selectCell}
               disabled={isPaused || isWon}
+              hardcoreMode={game.gameMode === 'hardcore'}
             />
           </div>
 
@@ -193,6 +231,7 @@ function SudokuPage() {
           <NumberPad
             onNumberSelect={game.setNumber}
             onClear={game.clearCell}
+            onClearAll={game.clearAll}
             onToggleNotes={game.toggleNotesMode}
             onHint={game.getHint}
             onUndo={game.undo}

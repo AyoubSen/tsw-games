@@ -1,12 +1,12 @@
 import { useState } from 'react'
-import { User, Users } from 'lucide-react'
+import { User, Users, Eye, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import type { Difficulty } from './useSudoku'
+import type { Difficulty, GameMode } from './useSudoku'
 
 interface GameModeSelectorProps {
-  onStartSinglePlayer: (difficulty: Difficulty) => void
+  onStartSinglePlayer: (difficulty: Difficulty, gameMode: GameMode) => void
   onCreateMultiplayer: (playerName: string, difficulty: Difficulty) => void
   onJoinMultiplayer: (roomCode: string, playerName: string) => void
   isConnecting: boolean
@@ -28,12 +28,13 @@ export function GameModeSelector({
   error,
 }: GameModeSelectorProps) {
   const [selectedDifficulty, setSelectedDifficulty] = useState<Difficulty>('medium')
+  const [selectedGameMode, setSelectedGameMode] = useState<GameMode>('normal')
   const [mode, setMode] = useState<'select' | 'single' | 'create' | 'join'>('select')
   const [playerName, setPlayerName] = useState('')
   const [roomCode, setRoomCode] = useState('')
 
   const handleStartSinglePlayer = () => {
-    onStartSinglePlayer(selectedDifficulty)
+    onStartSinglePlayer(selectedDifficulty, selectedGameMode)
   }
 
   const handleCreateGame = (e: React.FormEvent) => {
@@ -104,27 +105,72 @@ export function GameModeSelector({
       <div className="max-w-md mx-auto p-6 space-y-6">
         <div className="text-center mb-4">
           <h2 className="text-2xl font-bold mb-2">Single Player</h2>
-          <p className="text-muted-foreground">Select difficulty level</p>
+          <p className="text-muted-foreground">Select game mode and difficulty</p>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          {DIFFICULTIES.map(diff => (
+        {/* Game Mode Selection */}
+        <div>
+          <label className="block text-sm font-medium mb-2">Game Mode</label>
+          <div className="grid grid-cols-2 gap-3">
             <button
               type="button"
-              key={diff.value}
-              onClick={() => setSelectedDifficulty(diff.value)}
+              onClick={() => setSelectedGameMode('normal')}
               className={`
                 p-4 rounded-lg border-2 text-left transition-all
-                ${selectedDifficulty === diff.value
+                ${selectedGameMode === 'normal'
                   ? 'border-primary bg-primary/5'
                   : 'border-border hover:border-primary/50'
                 }
               `}
             >
-              <div className="font-semibold">{diff.label}</div>
-              <div className="text-xs text-muted-foreground">{diff.description}</div>
+              <div className="flex items-center gap-2">
+                <Eye className="w-4 h-4" />
+                <span className="font-semibold">Normal</span>
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">Shows mistakes in red</div>
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={() => setSelectedGameMode('hardcore')}
+              className={`
+                p-4 rounded-lg border-2 text-left transition-all
+                ${selectedGameMode === 'hardcore'
+                  ? 'border-primary bg-primary/5'
+                  : 'border-border hover:border-primary/50'
+                }
+              `}
+            >
+              <div className="flex items-center gap-2">
+                <EyeOff className="w-4 h-4" />
+                <span className="font-semibold">Hardcore</span>
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">No error feedback</div>
+            </button>
+          </div>
+        </div>
+
+        {/* Difficulty Selection */}
+        <div>
+          <label className="block text-sm font-medium mb-2">Difficulty</label>
+          <div className="grid grid-cols-2 gap-3">
+            {DIFFICULTIES.map(diff => (
+              <button
+                type="button"
+                key={diff.value}
+                onClick={() => setSelectedDifficulty(diff.value)}
+                className={`
+                  p-4 rounded-lg border-2 text-left transition-all
+                  ${selectedDifficulty === diff.value
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:border-primary/50'
+                  }
+                `}
+              >
+                <div className="font-semibold">{diff.label}</div>
+                <div className="text-xs text-muted-foreground">{diff.description}</div>
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="flex gap-3">

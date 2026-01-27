@@ -166,8 +166,12 @@ export function MultiplayerGame({
     setHistory(prev => [...prev, cloneBoard(board)])
     setBoard(prev => {
       const newBoard = cloneBoard(prev)
-      newBoard[row][col].value = null
-      newBoard[row][col].notes.clear()
+      newBoard[row][col] = {
+        value: null,
+        isInitial: false,
+        notes: new Set<number>(),
+        isError: false,
+      }
       return newBoard
     })
   }, [selectedCell, board, gameState.status])
@@ -182,8 +186,29 @@ export function MultiplayerGame({
     })
   }, [history.length, gameState.status])
 
+  const clearAll = useCallback(() => {
+    if (gameState.status !== 'playing') return
+
+    setHistory(prev => [...prev, cloneBoard(board)])
+    setBoard(prev => {
+      const newBoard = cloneBoard(prev)
+      for (let row = 0; row < 9; row++) {
+        for (let col = 0; col < 9; col++) {
+          if (!newBoard[row][col].isInitial) {
+            newBoard[row][col] = {
+              value: null,
+              isInitial: false,
+              notes: new Set<number>(),
+              isError: false,
+            }
+          }
+        }
+      }
+      return newBoard
+    })
+  }, [board, gameState.status])
+
   const players = Object.values(gameState.players).sort((a, b) => b.progress - a.progress)
-  const currentPlayer = gameState.players[playerId]
   const winner = gameState.winnerId ? gameState.players[gameState.winnerId] : null
   const isFinished = gameState.status === 'finished'
 
@@ -305,6 +330,7 @@ export function MultiplayerGame({
       <NumberPad
         onNumberSelect={setNumber}
         onClear={clearCell}
+        onClearAll={clearAll}
         onToggleNotes={() => setNotesMode(prev => !prev)}
         onUndo={undo}
         notesMode={notesMode}

@@ -1,9 +1,10 @@
-import { Pencil, Lightbulb, Undo2, Eraser } from 'lucide-react'
+import { Pencil, Lightbulb, Undo2, Eraser, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface NumberPadProps {
   onNumberSelect: (num: number) => void
   onClear: () => void
+  onClearAll: () => void
   onToggleNotes: () => void
   onHint?: () => void
   onUndo: () => void
@@ -16,6 +17,7 @@ interface NumberPadProps {
 export function NumberPad({
   onNumberSelect,
   onClear,
+  onClearAll,
   onToggleNotes,
   onHint,
   onUndo,
@@ -72,6 +74,17 @@ export function NumberPad({
         >
           <Eraser className="w-4 h-4" />
           Clear
+        </Button>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onClearAll}
+          disabled={disabled}
+          className="gap-1.5"
+        >
+          <Trash2 className="w-4 h-4" />
+          Clear All
         </Button>
 
         <Button

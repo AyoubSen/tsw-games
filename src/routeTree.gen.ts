@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as GamesWordleRouteImport } from './routes/games/wordle'
 import { Route as GamesWordchainRouteImport } from './routes/games/wordchain'
 import { Route as GamesTyperaceRouteImport } from './routes/games/typerace'
+import { Route as GamesSudokuRouteImport } from './routes/games/sudoku'
 import { Route as GamesDrawingRouteImport } from './routes/games/drawing'
 import { Route as GamesCodenamesRouteImport } from './routes/games/codenames'
 
@@ -36,6 +37,11 @@ const GamesTyperaceRoute = GamesTyperaceRouteImport.update({
   path: '/games/typerace',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GamesSudokuRoute = GamesSudokuRouteImport.update({
+  id: '/games/sudoku',
+  path: '/games/sudoku',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GamesDrawingRoute = GamesDrawingRouteImport.update({
   id: '/games/drawing',
   path: '/games/drawing',
@@ -51,6 +57,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
+  '/games/sudoku': typeof GamesSudokuRoute
   '/games/typerace': typeof GamesTyperaceRoute
   '/games/wordchain': typeof GamesWordchainRoute
   '/games/wordle': typeof GamesWordleRoute
@@ -59,6 +66,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
+  '/games/sudoku': typeof GamesSudokuRoute
   '/games/typerace': typeof GamesTyperaceRoute
   '/games/wordchain': typeof GamesWordchainRoute
   '/games/wordle': typeof GamesWordleRoute
@@ -68,6 +76,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
+  '/games/sudoku': typeof GamesSudokuRoute
   '/games/typerace': typeof GamesTyperaceRoute
   '/games/wordchain': typeof GamesWordchainRoute
   '/games/wordle': typeof GamesWordleRoute
@@ -78,6 +87,7 @@ export interface FileRouteTypes {
     | '/'
     | '/games/codenames'
     | '/games/drawing'
+    | '/games/sudoku'
     | '/games/typerace'
     | '/games/wordchain'
     | '/games/wordle'
@@ -86,6 +96,7 @@ export interface FileRouteTypes {
     | '/'
     | '/games/codenames'
     | '/games/drawing'
+    | '/games/sudoku'
     | '/games/typerace'
     | '/games/wordchain'
     | '/games/wordle'
@@ -94,6 +105,7 @@ export interface FileRouteTypes {
     | '/'
     | '/games/codenames'
     | '/games/drawing'
+    | '/games/sudoku'
     | '/games/typerace'
     | '/games/wordchain'
     | '/games/wordle'
@@ -103,6 +115,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   GamesCodenamesRoute: typeof GamesCodenamesRoute
   GamesDrawingRoute: typeof GamesDrawingRoute
+  GamesSudokuRoute: typeof GamesSudokuRoute
   GamesTyperaceRoute: typeof GamesTyperaceRoute
   GamesWordchainRoute: typeof GamesWordchainRoute
   GamesWordleRoute: typeof GamesWordleRoute
@@ -138,6 +151,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GamesTyperaceRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/games/sudoku': {
+      id: '/games/sudoku'
+      path: '/games/sudoku'
+      fullPath: '/games/sudoku'
+      preLoaderRoute: typeof GamesSudokuRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/games/drawing': {
       id: '/games/drawing'
       path: '/games/drawing'
@@ -159,6 +179,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   GamesCodenamesRoute: GamesCodenamesRoute,
   GamesDrawingRoute: GamesDrawingRoute,
+  GamesSudokuRoute: GamesSudokuRoute,
   GamesTyperaceRoute: GamesTyperaceRoute,
   GamesWordchainRoute: GamesWordchainRoute,
   GamesWordleRoute: GamesWordleRoute,

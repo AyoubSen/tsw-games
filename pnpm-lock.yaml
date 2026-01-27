@@ -65,6 +65,9 @@ importers:
       react-dom:
         specifier: ^19.2.0
         version: 19.2.3(react@19.2.3)
+      sudoku:
+        specifier: ^0.0.3
+        version: 0.0.3
       tailwind-merge:
         specifier: ^3.4.0
         version: 3.4.0
@@ -4003,6 +4006,9 @@ packages:
 
   strip-literal@3.1.0:
     resolution: {integrity: sha512-8r3mkIM/2+PpjHoOtiAW8Rg3jJLHaV7xPwG+YRGrv6FP0wwk/toTpATxWYOW0BKdWwl82VT2tFYi5DlROa0Mxg==}
+
+  sudoku@0.0.3:
+    resolution: {integrity: sha512-8UU9b39qCJzncdgGT2jbSjAaNdFNJasoZcgKWt7pZ5zVA6Way8yIP9kR8aS2TA/KOwehu0a5uS43eQxrW4hCIA==}
 
   supports-color@7.2.0:
     resolution: {integrity: sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw==}
@@ -8605,6 +8611,8 @@ snapshots:
   strip-literal@3.1.0:
     dependencies:
       js-tokens: 9.0.1
+
+  sudoku@0.0.3: {}
 
   supports-color@7.2.0:
     dependencies:

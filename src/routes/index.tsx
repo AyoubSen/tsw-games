@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { LetterText, Users, Zap, Play, Keyboard, Palette, Link2, Grid3X3 } from 'lucide-react'
+import { LetterText, Users, Zap, Play, Keyboard, Palette, Link2, Grid3X3, Grid2X2 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/lib/useTheme'
@@ -63,6 +63,15 @@ const games: Game[] = [
     path: '/games/codenames',
     players: '4-8 players',
     color: 'from-rose-500 to-red-600',
+  },
+  {
+    id: 'sudoku',
+    title: 'Sudoku',
+    description: 'Classic number puzzle. Fill the grid so every row, column, and box has 1-9.',
+    icon: <Grid2X2 className="w-10 h-10" />,
+    path: '/games/sudoku',
+    players: '1-8 players',
+    color: 'from-indigo-500 to-violet-600',
     isNew: true,
   },
   {

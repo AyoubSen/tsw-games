@@ -89,6 +89,7 @@ export function useWordle() {
   const [message, setMessage] = useState<string | null>(null)
   const [answerCount, setAnswerCount] = useState(0)
   const [validCount, setValidCount] = useState(0)
+  const [revealedWord, setRevealedWord] = useState<string | null>(null)
 
   // Use ref to track if we're in the middle of resetting
   const isResetting = useRef(false)
@@ -178,6 +179,7 @@ export function useWordle() {
       setGameStatus('won')
     } else if (lost) {
       showMessage(targetWord, 3000)
+      setRevealedWord(targetWord)
       setGameStatus('lost')
     }
 
@@ -192,6 +194,7 @@ export function useWordle() {
     isResetting.current = true
 
     // Reset all state
+    setRevealedWord(null)
     setTargetWord(getRandomWord())
     setGuesses(Array(MAX_GUESSES).fill(null).map(() => []))
     setCurrentGuess('')
@@ -265,6 +268,7 @@ export function useWordle() {
     message,
     answerCount,
     validCount,
+    revealedWord,
     addLetter,
     removeLetter,
     submitGuess,

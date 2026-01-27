@@ -146,7 +146,7 @@ function WordlePage() {
       resetGame,
       maxGuesses,
       wordLength,
-      targetWord,
+      revealedWord,
     } = singlePlayer
 
     const showDialog = gameStatus === 'won' || gameStatus === 'lost'
@@ -221,7 +221,7 @@ function WordlePage() {
                   </span>
                 ) : (
                   <span>
-                    The word was <strong className="text-foreground">{targetWord}</strong>
+                    The word was <strong className="text-foreground">{revealedWord}</strong>
                   </span>
                 )}
               </DialogDescription>

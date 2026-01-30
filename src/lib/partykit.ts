@@ -1,10 +1,18 @@
 import PartySocket from "partysocket"
 
 // PartyKit host - use localhost in dev, or your deployed URL from env
-export const PARTYKIT_HOST =
-  typeof window !== "undefined" && window.location.hostname === "localhost"
-    ? "localhost:1999"
-    : import.meta.env.VITE_PARTYKIT_HOST
+const getPartyKitHost = () => {
+  if (typeof window !== "undefined" && window.location.hostname === "localhost") {
+    return "localhost:1999"
+  }
+  const envHost = import.meta.env.VITE_PARTYKIT_HOST
+  if (!envHost) {
+    console.error("VITE_PARTYKIT_HOST environment variable is not set!")
+  }
+  return envHost || ""
+}
+
+export const PARTYKIT_HOST = getPartyKitHost()
 
 export function createPartySocket(roomId: string, isHost: boolean, mode: string) {
   return new PartySocket({

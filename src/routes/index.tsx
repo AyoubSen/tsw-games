@@ -75,6 +75,16 @@ const games: Game[] = [
     isNew: true,
   },
   {
+    id: 'poker',
+    title: 'Texas Hold\'em',
+    description: 'Play poker with friends! Bet, bluff, and win all the chips.',
+    icon: <span className="text-3xl">♠</span>,
+    path: '/games/poker',
+    players: '2-8 players',
+    color: 'from-emerald-600 to-teal-700',
+    isNew: true,
+  },
+  {
     id: 'coming-soon',
     title: 'More Coming',
     description: 'New games are being added. Stay tuned!',

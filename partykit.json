@@ -7,7 +7,8 @@
     "drawing": "party/drawing.ts",
     "wordchain": "party/wordchain.ts",
     "codenames": "party/codenames.ts",
-    "sudoku": "party/sudoku.ts"
+    "sudoku": "party/sudoku.ts",
+    "poker": "party/poker.ts"
   },
   "compatibilityDate": "2024-01-01"
 }

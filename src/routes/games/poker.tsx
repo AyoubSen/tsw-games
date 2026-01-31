@@ -5,8 +5,6 @@ import { Button } from '@/components/ui/button'
 import { GameModeSelector } from '@/components/games/poker/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/poker/MultiplayerLobby'
 import { MultiplayerGame } from '@/components/games/poker/MultiplayerGame'
-import { GameModeSelector as GameModeSelectorV2 } from '@/components/games/poker/v2/GameModeSelectorV2'
-import { MultiplayerLobby as MultiplayerLobbyV2 } from '@/components/games/poker/v2/MultiplayerLobbyV2'
 import { MultiplayerGame as MultiplayerGameV2 } from '@/components/games/poker/v2/MultiplayerGameV2'
 import { useMultiplayerPoker, type PokerSettings } from '@/components/games/poker/useMultiplayerPoker'
 import { cn } from '@/lib/utils'
@@ -95,36 +93,22 @@ function PokerPage() {
   }
 
   const isV2 = uiVersion === 'v2'
-  const bgClass = isV2 ? "min-h-[calc(100vh-73px)] bg-[#0f1520]" : "min-h-[calc(100vh-73px)] bg-background"
 
-  const headerBar = (leftButton: React.ReactNode) => (
-    <div className={cn(
-      "px-4 py-3 flex items-center justify-between border-b",
-      isV2 ? "border-zinc-800 bg-[#0f1520]" : "border-border"
-    )}>
-      {leftButton}
-      <div className="flex items-center gap-2">
-        <VersionToggle version={uiVersion} onChange={setUiVersion} />
-      </div>
-      <h1 className={cn("text-lg font-bold", isV2 && "text-white")}>Texas Hold'em</h1>
-      <div className="w-[60px]" />
-    </div>
-  )
-
-  // View 1: Mode Selection
+  // View 1: Mode Selection (always v1)
   if (effectiveView === 'select') {
-    const SelectComponent = isV2 ? GameModeSelectorV2 : GameModeSelector
     return (
-      <div className={bgClass}>
-        {headerBar(
-          <Button variant="ghost" size="sm" asChild className={isV2 ? "text-zinc-400 hover:text-white" : ""}>
+      <div className="min-h-[calc(100vh-73px)] bg-background">
+        <div className="px-4 py-3 flex items-center justify-between border-b border-border">
+          <Button variant="ghost" size="sm" asChild>
             <Link to="/">
               <ArrowLeft className="w-4 h-4 mr-1" />
               Back
             </Link>
           </Button>
-        )}
-        <SelectComponent
+          <h1 className="text-lg font-bold">Texas Hold'em</h1>
+          <div className="w-[60px]" />
+        </div>
+        <GameModeSelector
           onCreateMultiplayer={handleCreateMultiplayer}
           onJoinMultiplayer={handleJoinMultiplayer}
           isConnecting={multiplayer.connectionStatus === 'connecting'}
@@ -134,18 +118,19 @@ function PokerPage() {
     )
   }
 
-  // View 2: Lobby
+  // View 2: Lobby (always v1)
   if (effectiveView === 'lobby' && multiplayer.gameState && multiplayer.playerId) {
-    const LobbyComponent = isV2 ? MultiplayerLobbyV2 : MultiplayerLobby
     return (
-      <div className={bgClass}>
-        {headerBar(
-          <Button variant="ghost" size="sm" onClick={handleLeaveMultiplayer} className={isV2 ? "text-zinc-400 hover:text-white" : ""}>
+      <div className="min-h-[calc(100vh-73px)] bg-background">
+        <div className="px-4 py-3 flex items-center justify-between border-b border-border">
+          <Button variant="ghost" size="sm" onClick={handleLeaveMultiplayer}>
             <ArrowLeft className="w-4 h-4 mr-1" />
             Leave
           </Button>
-        )}
-        <LobbyComponent
+          <h1 className="text-lg font-bold">Texas Hold'em</h1>
+          <div className="w-[60px]" />
+        </div>
+        <MultiplayerLobby
           gameState={multiplayer.gameState}
           playerId={multiplayer.playerId}
           isHost={multiplayer.isHost}
@@ -156,17 +141,25 @@ function PokerPage() {
     )
   }
 
-  // View 3: Game
+  // View 3: Game (toggle between v1 and v2)
   if (effectiveView === 'game' && multiplayer.gameState && multiplayer.playerId) {
     const GameComponent = isV2 ? MultiplayerGameV2 : MultiplayerGame
     return (
-      <div className={bgClass}>
-        {headerBar(
+      <div className={isV2 ? "min-h-[calc(100vh-73px)] bg-[#0f1520]" : "min-h-[calc(100vh-73px)] bg-background"}>
+        <div className={cn(
+          "px-4 py-3 flex items-center justify-between border-b",
+          isV2 ? "border-zinc-800 bg-[#0f1520]" : "border-border"
+        )}>
           <Button variant="ghost" size="sm" onClick={handleLeaveMultiplayer} className={isV2 ? "text-zinc-400 hover:text-white" : ""}>
             <ArrowLeft className="w-4 h-4 mr-1" />
             Leave
           </Button>
-        )}
+          <div className="flex items-center gap-2">
+            <VersionToggle version={uiVersion} onChange={setUiVersion} />
+          </div>
+          <h1 className={cn("text-lg font-bold", isV2 && "text-white")}>Texas Hold'em</h1>
+          <div className="w-[60px]" />
+        </div>
         <GameComponent
           gameState={multiplayer.gameState}
           playerId={multiplayer.playerId}

@@ -15,6 +15,7 @@ import { Route as GamesWordchainRouteImport } from './routes/games/wordchain'
 import { Route as GamesTyperaceRouteImport } from './routes/games/typerace'
 import { Route as GamesSudokuRouteImport } from './routes/games/sudoku'
 import { Route as GamesPokerRouteImport } from './routes/games/poker'
+import { Route as GamesMafiaRouteImport } from './routes/games/mafia'
 import { Route as GamesDrawingRouteImport } from './routes/games/drawing'
 import { Route as GamesCodenamesRouteImport } from './routes/games/codenames'
 
@@ -48,6 +49,11 @@ const GamesPokerRoute = GamesPokerRouteImport.update({
   path: '/games/poker',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GamesMafiaRoute = GamesMafiaRouteImport.update({
+  id: '/games/mafia',
+  path: '/games/mafia',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GamesDrawingRoute = GamesDrawingRouteImport.update({
   id: '/games/drawing',
   path: '/games/drawing',
@@ -63,6 +69,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
+  '/games/mafia': typeof GamesMafiaRoute
   '/games/poker': typeof GamesPokerRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/typerace': typeof GamesTyperaceRoute
@@ -73,6 +80,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
+  '/games/mafia': typeof GamesMafiaRoute
   '/games/poker': typeof GamesPokerRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/typerace': typeof GamesTyperaceRoute
@@ -84,6 +92,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
+  '/games/mafia': typeof GamesMafiaRoute
   '/games/poker': typeof GamesPokerRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/typerace': typeof GamesTyperaceRoute
@@ -96,6 +105,7 @@ export interface FileRouteTypes {
     | '/'
     | '/games/codenames'
     | '/games/drawing'
+    | '/games/mafia'
     | '/games/poker'
     | '/games/sudoku'
     | '/games/typerace'
@@ -106,6 +116,7 @@ export interface FileRouteTypes {
     | '/'
     | '/games/codenames'
     | '/games/drawing'
+    | '/games/mafia'
     | '/games/poker'
     | '/games/sudoku'
     | '/games/typerace'
@@ -116,6 +127,7 @@ export interface FileRouteTypes {
     | '/'
     | '/games/codenames'
     | '/games/drawing'
+    | '/games/mafia'
     | '/games/poker'
     | '/games/sudoku'
     | '/games/typerace'
@@ -127,6 +139,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   GamesCodenamesRoute: typeof GamesCodenamesRoute
   GamesDrawingRoute: typeof GamesDrawingRoute
+  GamesMafiaRoute: typeof GamesMafiaRoute
   GamesPokerRoute: typeof GamesPokerRoute
   GamesSudokuRoute: typeof GamesSudokuRoute
   GamesTyperaceRoute: typeof GamesTyperaceRoute
@@ -178,6 +191,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GamesPokerRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/games/mafia': {
+      id: '/games/mafia'
+      path: '/games/mafia'
+      fullPath: '/games/mafia'
+      preLoaderRoute: typeof GamesMafiaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/games/drawing': {
       id: '/games/drawing'
       path: '/games/drawing'
@@ -199,6 +219,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   GamesCodenamesRoute: GamesCodenamesRoute,
   GamesDrawingRoute: GamesDrawingRoute,
+  GamesMafiaRoute: GamesMafiaRoute,
   GamesPokerRoute: GamesPokerRoute,
   GamesSudokuRoute: GamesSudokuRoute,
   GamesTyperaceRoute: GamesTyperaceRoute,

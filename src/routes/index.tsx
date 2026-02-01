@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { LetterText, Users, Zap, Play, Keyboard, Palette, Link2, Grid3X3, Grid2X2 } from 'lucide-react'
+import { LetterText, Users, Zap, Play, Keyboard, Palette, Link2, Grid3X3, Grid2X2, Moon } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/lib/useTheme'
@@ -82,6 +82,16 @@ const games: Game[] = [
     path: '/games/poker',
     players: '2-8 players',
     color: 'from-emerald-600 to-teal-700',
+    isNew: true,
+  },
+  {
+    id: 'mafia',
+    title: 'Mafia',
+    description: 'Social deduction game. Find the werewolves before they eliminate the village!',
+    icon: <Moon className="w-10 h-10" />,
+    path: '/games/mafia',
+    players: '5-12 players',
+    color: 'from-slate-700 to-zinc-900',
     isNew: true,
   },
   {

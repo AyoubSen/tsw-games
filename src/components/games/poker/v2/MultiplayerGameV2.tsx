@@ -4,6 +4,7 @@ import { HandRankDisplay } from "./HandRankDisplayV2"
 import { HandResultOverlay } from "./HandResultOverlayV2"
 import { GameOverModal } from "./GameOverModalV2"
 import { PlayingCard } from "./PlayingCardV2"
+import { PokerHandGuide } from "./PokerHandGuideV2"
 import type { PublicGameState } from "../../../../../party/poker"
 
 interface MultiplayerGameProps {
@@ -171,6 +172,9 @@ export function MultiplayerGame({
           />
         </div>
       )}
+
+      {/* Hand Rankings Guide */}
+      <PokerHandGuide />
 
       <style>{`
         @keyframes turnPulse {

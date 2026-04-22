@@ -84,20 +84,69 @@ const STARTING_WORDS = [
   "horse", "image", "joker", "knife", "lemon",
 ]
 
+const WORDLE_ANSWERS_URL =
+  "https://gist.githubusercontent.com/cfreshman/a03ef2cba789d8cf00c08f767e0fad7b/raw/wordle-answers-alphabetical.txt"
+const WORDLE_ALLOWED_URL =
+  "https://gist.githubusercontent.com/cfreshman/cdcdf777450c5b5301e439061d29694c/raw/wordle-allowed-guesses.txt"
+
+const COMMON_FALLBACK_WORDS = new Set([
+  ...STARTING_WORDS,
+  "tight",
+])
+
+let fallbackWordListPromise: Promise<Set<string>> | null = null
+
 function getRandomStartingWord(): string {
   return STARTING_WORDS[Math.floor(Math.random() * STARTING_WORDS.length)]
 }
 
+async function fetchWordList(url: string): Promise<string[]> {
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`Failed to fetch fallback word list: ${response.status}`)
+  }
+
+  const text = await response.text()
+  return text
+    .split(/[\n,]+/)
+    .map((word) => word.trim().toLowerCase())
+    .filter((word) => word.length === 5 && /^[a-z]+$/.test(word))
+}
+
+async function getFallbackWordList(): Promise<Set<string>> {
+  if (!fallbackWordListPromise) {
+    fallbackWordListPromise = Promise.all([
+      fetchWordList(WORDLE_ANSWERS_URL),
+      fetchWordList(WORDLE_ALLOWED_URL),
+    ])
+      .then(([answers, allowed]) => {
+        const words = new Set(COMMON_FALLBACK_WORDS)
+        for (const word of answers) words.add(word)
+        for (const word of allowed) words.add(word)
+        return words
+      })
+      .catch((error) => {
+        console.error("Fallback word list error:", error)
+        return new Set(COMMON_FALLBACK_WORDS)
+      })
+  }
+
+  return fallbackWordListPromise
+}
+
 // Validate word using Free Dictionary API
 async function isValidEnglishWord(word: string): Promise<boolean> {
+  const normalizedWord = word.toLowerCase()
+  const fallbackWords = await getFallbackWordList()
+
   try {
     const response = await fetch(
-      `https://api.dictionaryapi.dev/api/v2/entries/en/${word.toLowerCase()}`
+      `https://api.dictionaryapi.dev/api/v2/entries/en/${normalizedWord}`
     )
-    return response.ok
+    return response.ok || fallbackWords.has(normalizedWord)
   } catch (error) {
     console.error("Dictionary API error:", error)
-    // On error, be permissive
+    // Keep gameplay moving if the external dictionary is down.
     return true
   }
 }

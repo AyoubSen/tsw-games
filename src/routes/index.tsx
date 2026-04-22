@@ -1,230 +1,170 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { LetterText, Users, Zap, Play, Keyboard, Palette, Link2, Grid3X3, Grid2X2, Moon } from 'lucide-react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { useSettings } from '@/lib/useTheme'
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { Play, Users, Zap } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+	Card,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+} from "@/components/ui/card";
+import { liveGames, plannedGames } from "@/lib/gameCatalog";
+import { useSettings } from "@/lib/useTheme";
 
-export const Route = createFileRoute('/')({ component: HomePage })
+export const Route = createFileRoute("/")({ component: HomePage });
 
-interface Game {
-  id: string
-  title: string
-  description: string
-  icon: React.ReactNode
-  path: string
-  players: string
-  color: string
-  isNew?: boolean
-  comingSoon?: boolean
+function CardsLayout() {
+	return (
+		<div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+			{liveGames.map((game) => (
+				<Card
+					key={game.id}
+					className="relative overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5"
+				>
+					{game.isNew && (
+						<div className="absolute top-3 right-3 rounded bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground">
+							NEW
+						</div>
+					)}
+					<CardHeader>
+						<div
+							className={`mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br ${game.color} text-white shadow-lg`}
+						>
+							{game.icon}
+						</div>
+						<CardTitle>{game.title}</CardTitle>
+						<CardDescription>{game.description}</CardDescription>
+					</CardHeader>
+					<CardContent>
+						<div className="flex items-center justify-between gap-3">
+							<span className="text-sm text-muted-foreground">
+								{game.players}
+							</span>
+							<Button asChild>
+								<Link to={game.path}>Play</Link>
+							</Button>
+						</div>
+					</CardContent>
+				</Card>
+			))}
+		</div>
+	);
 }
 
-const games: Game[] = [
-  {
-    id: 'wordle',
-    title: 'Wordle',
-    description: 'Guess the 5-letter word in 6 tries. Green means correct, yellow means wrong position.',
-    icon: <LetterText className="w-10 h-10" />,
-    path: '/games/wordle',
-    players: '1-8 players',
-    color: 'from-emerald-500 to-green-600',
-  },
-  {
-    id: 'typerace',
-    title: 'Type Race',
-    description: 'Race to type the phrase fastest! Test your typing speed and accuracy.',
-    icon: <Keyboard className="w-10 h-10" />,
-    path: '/games/typerace',
-    players: '1-8 players',
-    color: 'from-blue-500 to-cyan-600',
-  },
-  {
-    id: 'drawing',
-    title: 'Drawing',
-    description: 'Draw and guess! One player draws while others try to guess the word.',
-    icon: <Palette className="w-10 h-10" />,
-    path: '/games/drawing',
-    players: '2-8 players',
-    color: 'from-purple-500 to-pink-600',
-  },
-  {
-    id: 'wordchain',
-    title: 'Word Chain',
-    description: 'Chain any English words! Each word must start with the last letter of the previous word.',
-    icon: <Link2 className="w-10 h-10" />,
-    path: '/games/wordchain',
-    players: '2-8 players',
-    color: 'from-orange-500 to-amber-600',
-  },
-  {
-    id: 'codenames',
-    title: 'Codenames',
-    description: 'Give one-word clues to help your team find secret agents!',
-    icon: <Grid3X3 className="w-10 h-10" />,
-    path: '/games/codenames',
-    players: '4-8 players',
-    color: 'from-rose-500 to-red-600',
-  },
-  {
-    id: 'sudoku',
-    title: 'Sudoku',
-    description: 'Classic number puzzle. Fill the grid so every row, column, and box has 1-9.',
-    icon: <Grid2X2 className="w-10 h-10" />,
-    path: '/games/sudoku',
-    players: '1-8 players',
-    color: 'from-indigo-500 to-violet-600',
-    isNew: true,
-  },
-  {
-    id: 'poker',
-    title: 'Texas Hold\'em',
-    description: 'Play poker with friends! Bet, bluff, and win all the chips.',
-    icon: <span className="text-3xl">♠</span>,
-    path: '/games/poker',
-    players: '2-8 players',
-    color: 'from-emerald-600 to-teal-700',
-    isNew: true,
-  },
-  {
-    id: 'mafia',
-    title: 'Mafia',
-    description: 'Social deduction game. Find the werewolves before they eliminate the village!',
-    icon: <Moon className="w-10 h-10" />,
-    path: '/games/mafia',
-    players: '5-12 players',
-    color: 'from-slate-700 to-zinc-900',
-    isNew: true,
-  },
-  {
-    id: 'coming-soon',
-    title: 'More Coming',
-    description: 'New games are being added. Stay tuned!',
-    icon: <span className="text-3xl">?</span>,
-    path: '#',
-    players: 'TBD',
-    color: 'from-zinc-500 to-zinc-600',
-    comingSoon: true,
-  },
-]
-
-function CardsLayout({ games }: { games: Game[] }) {
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {games.map((game) => (
-        <Card
-          key={game.id}
-          className={`relative overflow-hidden transition-all duration-300 ${
-            game.comingSoon
-              ? 'border-dashed opacity-60'
-              : 'hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-1'
-          }`}
-        >
-          {game.isNew && (
-            <div className="absolute top-3 right-3 px-2 py-0.5 bg-primary text-primary-foreground text-xs font-medium rounded">
-              NEW
-            </div>
-          )}
-          <CardHeader>
-            <div className={`w-16 h-16 rounded-2xl bg-gradient-to-br ${game.color} flex items-center justify-center text-white mb-3 shadow-lg`}>
-              {game.icon}
-            </div>
-            <CardTitle className={game.comingSoon ? 'text-muted-foreground' : ''}>
-              {game.title}
-            </CardTitle>
-            <CardDescription>{game.description}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">{game.players}</span>
-              {game.comingSoon ? (
-                <Button disabled variant="secondary">Soon</Button>
-              ) : (
-                <Button asChild>
-                  <Link to={game.path}>Play</Link>
-                </Button>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  )
+function GridLayout() {
+	return (
+		<div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+			{liveGames.map((game) => (
+				<Link
+					key={game.id}
+					to={game.path}
+					className="group relative flex flex-col items-center rounded-2xl border p-6 transition-all duration-300 hover:-translate-y-1 hover:border-primary/50 hover:bg-accent/50"
+				>
+					{game.isNew && (
+						<div className="absolute -top-2 -right-2 rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold text-primary-foreground">
+							NEW
+						</div>
+					)}
+					<div
+						className={`mb-3 flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br ${game.color} text-white shadow-md transition-transform group-hover:scale-110`}
+					>
+						<span className="scale-75">{game.icon}</span>
+					</div>
+					<span className="text-center font-semibold">{game.title}</span>
+					<span className="mt-1 text-xs text-muted-foreground">
+						{game.players}
+					</span>
+					<div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-primary/90 opacity-0 transition-opacity group-hover:opacity-100">
+						<Play className="h-8 w-8 fill-current text-primary-foreground" />
+					</div>
+				</Link>
+			))}
+		</div>
+	);
 }
 
-function GridLayout({ games }: { games: Game[] }) {
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-      {games.map((game) => (
-        <Link
-          key={game.id}
-          to={game.comingSoon ? '/' : game.path}
-          className={`group relative flex flex-col items-center p-6 rounded-2xl border transition-all duration-300 ${
-            game.comingSoon
-              ? 'border-dashed opacity-50 cursor-not-allowed'
-              : 'hover:border-primary/50 hover:bg-accent/50 hover:-translate-y-1'
-          }`}
-          onClick={(e) => game.comingSoon && e.preventDefault()}
-        >
-          {game.isNew && (
-            <div className="absolute -top-2 -right-2 px-2 py-0.5 bg-primary text-primary-foreground text-[10px] font-bold rounded-full">
-              NEW
-            </div>
-          )}
-          <div className={`w-14 h-14 rounded-xl bg-gradient-to-br ${game.color} flex items-center justify-center text-white mb-3 shadow-md group-hover:scale-110 transition-transform`}>
-            <span className="scale-75">{game.icon}</span>
-          </div>
-          <span className={`font-semibold text-center ${game.comingSoon ? 'text-muted-foreground' : ''}`}>
-            {game.title}
-          </span>
-          <span className="text-xs text-muted-foreground mt-1">{game.players}</span>
-          {!game.comingSoon && (
-            <div className="absolute inset-0 flex items-center justify-center bg-primary/90 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity">
-              <Play className="w-8 h-8 text-primary-foreground" fill="currentColor" />
-            </div>
-          )}
-        </Link>
-      ))}
-    </div>
-  )
+function UpcomingSection() {
+	return (
+		<section className="mt-14">
+			<div className="mb-6 flex items-center justify-between gap-4">
+				<div>
+					<h2 className="text-xl font-semibold">Coming Next</h2>
+					<p className="text-sm text-muted-foreground">
+						Roadmapped ideas that would fit this multiplayer party setup well.
+					</p>
+				</div>
+				<span className="text-sm text-muted-foreground">
+					{plannedGames.length} ideas queued
+				</span>
+			</div>
+
+			<div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+				{plannedGames.map((game) => (
+					<Card key={game.id} className="border-dashed bg-card/70">
+						<CardHeader>
+							<div
+								className={`mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br ${game.color} text-white shadow-md`}
+							>
+								<span className="scale-90">{game.icon}</span>
+							</div>
+							<div className="flex items-center justify-between gap-3">
+								<CardTitle className="text-base">{game.title}</CardTitle>
+								<span className="rounded-full bg-accent px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+									Planned
+								</span>
+							</div>
+							<CardDescription>{game.description}</CardDescription>
+						</CardHeader>
+						<CardContent className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+							<span>{game.players}</span>
+							<span className="capitalize">{game.category}</span>
+						</CardContent>
+					</Card>
+				))}
+			</div>
+		</section>
+	);
 }
 
 function HomePage() {
-  const { layout } = useSettings()
+	const { layout } = useSettings();
 
-  return (
-    <div className="min-h-[calc(100vh-73px)] bg-background">
-      <section className="py-12 md:py-16 px-6 text-center">
-        <div className="max-w-3xl mx-auto">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-primary via-primary to-primary/60 bg-clip-text text-transparent">
-            TSW Games
-          </h1>
-          <p className="text-lg md:text-xl text-muted-foreground mb-6">
-            Mini games for the boys (and the girls, of course!)
-          </p>
-          <div className="flex items-center justify-center gap-6 text-sm text-muted-foreground">
-            <div className="flex items-center gap-2">
-              <Zap className="w-4 h-4 text-yellow-500" />
-              <span>Quick to play</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-blue-500" />
-              <span>Multiplayer</span>
-            </div>
-          </div>
-        </div>
-      </section>
+	return (
+		<div className="min-h-[calc(100vh-73px)] bg-background">
+			<section className="px-6 py-12 text-center md:py-16">
+				<div className="mx-auto max-w-3xl">
+					<h1 className="mb-4 bg-gradient-to-r from-primary via-primary to-primary/60 bg-clip-text text-4xl font-bold text-transparent md:text-5xl">
+						TSW Games
+					</h1>
+					<p className="mb-6 text-lg text-muted-foreground md:text-xl">
+						Fast multiplayer games for the crew, from quick word rounds to full
+						social deduction nights.
+					</p>
+					<div className="flex items-center justify-center gap-6 text-sm text-muted-foreground">
+						<div className="flex items-center gap-2">
+							<Zap className="h-4 w-4 text-yellow-500" />
+							<span>Quick to play</span>
+						</div>
+						<div className="flex items-center gap-2">
+							<Users className="h-4 w-4 text-blue-500" />
+							<span>Built for groups</span>
+						</div>
+					</div>
+				</div>
+			</section>
 
-      <section className="px-6 pb-16 max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-semibold">Games</h2>
-          <span className="text-sm text-muted-foreground">{games.filter(g => !g.comingSoon).length} available</span>
-        </div>
+			<section className="mx-auto max-w-6xl px-6 pb-16">
+				<div className="mb-6 flex items-center justify-between">
+					<h2 className="text-xl font-semibold">Games</h2>
+					<span className="text-sm text-muted-foreground">
+						{liveGames.length} available
+					</span>
+				</div>
 
-        {layout === 'cards' ? (
-          <CardsLayout games={games} />
-        ) : (
-          <GridLayout games={games} />
-        )}
-      </section>
-    </div>
-  )
+				{layout === "cards" ? <CardsLayout /> : <GridLayout />}
+
+				<UpcomingSection />
+			</section>
+		</div>
+	);
 }

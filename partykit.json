@@ -6,6 +6,7 @@
     "typerace": "party/typerace.ts",
     "drawing": "party/drawing.ts",
     "wordchain": "party/wordchain.ts",
+    "wordscramble": "party/word-scramble.ts",
     "codenames": "party/codenames.ts",
     "sudoku": "party/sudoku.ts",
     "poker": "party/poker.ts",

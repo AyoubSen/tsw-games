@@ -15,30 +15,6 @@ interface BettingControlsProps {
   onAllIn: () => void
 }
 
-// Chip denomination button
-function ChipButton({ label, onClick, active }: {
-  label: string
-  onClick: () => void
-  active: boolean
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "relative w-10 h-10 rounded-full flex items-center justify-center text-[10px] font-bold transition-all",
-        "shadow-md border-2",
-        active
-          ? "border-yellow-400 bg-gradient-to-br from-yellow-500 to-yellow-700 text-white scale-110"
-          : "border-zinc-500 bg-gradient-to-br from-zinc-600 to-zinc-800 text-zinc-200 hover:border-yellow-500/50 hover:scale-105"
-      )}
-    >
-      {/* Inner ring */}
-      <div className="absolute inset-[3px] rounded-full border border-dashed border-white/30 pointer-events-none" />
-      <span className="relative z-10">{label}</span>
-    </button>
-  )
-}
-
 export function BettingControls({
   canAct,
   currentBet,
@@ -70,7 +46,7 @@ export function BettingControls({
     items.push({ label: "Min", value: minRaiseTotal })
     const halfPot = currentBetToMatch + Math.floor(pot / 2)
     if (halfPot > minRaiseTotal && halfPot < maxRaise) {
-      items.push({ label: "1/2", value: halfPot })
+      items.push({ label: "1/2 Pot", value: halfPot })
     }
     const fullPot = currentBetToMatch + pot
     if (fullPot > minRaiseTotal && fullPot < maxRaise) {
@@ -84,36 +60,32 @@ export function BettingControls({
 
   if (!canAct) return null
 
-  // Calculate slider percentage for gradient track
   const sliderPercent = maxRaise > minRaiseTotal
     ? ((clampedRaise - minRaiseTotal) / (maxRaise - minRaiseTotal)) * 100
     : 0
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5">
       {/* Raise panel */}
       {showRaiseSlider && canRaise && (
         <div
-          className="rounded-xl p-4 space-y-3"
+          className="rounded-xl p-3.5 space-y-3"
           style={{
-            background: "linear-gradient(180deg, rgba(30,30,40,0.95), rgba(20,20,30,0.98))",
-            border: "1px solid rgba(255,255,255,0.1)",
+            background: "rgba(20,20,30,0.95)",
+            border: "1px solid rgba(255,255,255,0.08)",
           }}
         >
           <div className="flex items-center justify-between">
-            <span className="text-sm text-zinc-400">Raise to:</span>
-            <span className="font-mono font-bold text-lg text-white">{clampedRaise}</span>
+            <span className="text-xs text-zinc-500">Raise to</span>
+            <span className="font-mono font-bold text-base text-white">{clampedRaise}</span>
           </div>
 
-          {/* Gradient slider */}
+          {/* Slider */}
           <div className="relative">
-            <div className="h-2 rounded-full bg-zinc-700 overflow-hidden">
+            <div className="h-1.5 rounded-full bg-zinc-700/80 overflow-hidden">
               <div
-                className="h-full rounded-full transition-all duration-100"
-                style={{
-                  width: `${sliderPercent}%`,
-                  background: `linear-gradient(90deg, #22c55e, #eab308 50%, #ef4444)`,
-                }}
+                className="h-full rounded-full bg-zinc-400 transition-all duration-100"
+                style={{ width: `${sliderPercent}%` }}
               />
             </div>
             <input
@@ -128,15 +100,21 @@ export function BettingControls({
             />
           </div>
 
-          {/* Chip denomination buttons */}
-          <div className="flex gap-2 justify-center">
+          {/* Preset buttons */}
+          <div className="flex gap-1.5">
             {presets.map((p) => (
-              <ChipButton
+              <button
                 key={p.label}
-                label={p.label}
                 onClick={() => setRaiseAmount(p.value)}
-                active={clampedRaise === p.value}
-              />
+                className={cn(
+                  "flex-1 py-1.5 rounded-md text-[11px] font-medium transition-colors",
+                  clampedRaise === p.value
+                    ? "bg-white/10 text-white"
+                    : "bg-white/[0.03] text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.06]"
+                )}
+              >
+                {p.label}
+              </button>
             ))}
           </div>
 
@@ -150,13 +128,13 @@ export function BettingControls({
                 }
                 setShowRaiseSlider(false)
               }}
-              className="flex-1 py-2.5 rounded-lg font-bold text-sm text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 transition-all shadow-lg"
+              className="flex-1 py-2 rounded-lg font-semibold text-sm text-white bg-blue-600 hover:bg-blue-500 transition-colors"
             >
               Raise to {clampedRaise}
             </button>
             <button
               onClick={() => setShowRaiseSlider(false)}
-              className="px-4 py-2.5 rounded-lg text-sm text-zinc-400 border border-zinc-600 hover:border-zinc-500 transition-colors"
+              className="px-4 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
             >
               Cancel
             </button>
@@ -166,19 +144,17 @@ export function BettingControls({
 
       {/* Main action buttons */}
       <div className="flex gap-2 justify-center">
-        {/* Fold - Red */}
         <button
           onClick={onFold}
-          className="flex-1 max-w-[130px] py-3 rounded-lg font-bold text-sm text-white transition-all shadow-lg bg-gradient-to-b from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 border border-red-500/50 active:scale-95"
+          className="flex-1 max-w-[120px] py-2.5 rounded-lg font-semibold text-sm text-white bg-red-600/80 hover:bg-red-600 transition-colors"
         >
           Fold
         </button>
 
-        {/* Check/Call - Green */}
         {canCheck ? (
           <button
             onClick={onCheck}
-            className="flex-1 max-w-[130px] py-3 rounded-lg font-bold text-sm text-white transition-all shadow-lg bg-gradient-to-b from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 border border-emerald-500/50 active:scale-95"
+            className="flex-1 max-w-[120px] py-2.5 rounded-lg font-semibold text-sm text-white bg-emerald-600/80 hover:bg-emerald-600 transition-colors"
           >
             Check
           </button>
@@ -191,33 +167,28 @@ export function BettingControls({
                 onCall()
               }
             }}
-            className="flex-1 max-w-[130px] py-3 rounded-lg font-bold text-sm text-white transition-all shadow-lg bg-gradient-to-b from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 border border-emerald-500/50 active:scale-95"
+            className="flex-1 max-w-[120px] py-2.5 rounded-lg font-semibold text-sm text-white bg-emerald-600/80 hover:bg-emerald-600 transition-colors"
           >
-            <span>Call</span>
-            <span className="block text-emerald-200 text-xs font-mono">
-              {callAmount >= myChips ? "(All-In)" : callAmount}
-            </span>
+            Call {callAmount >= myChips ? "(All-In)" : callAmount}
           </button>
         ) : null}
 
-        {/* Raise - Blue */}
         {canRaise && !showRaiseSlider && (
           <button
             onClick={() => {
               setRaiseAmount(minRaiseTotal)
               setShowRaiseSlider(true)
             }}
-            className="flex-1 max-w-[130px] py-3 rounded-lg font-bold text-sm text-white transition-all shadow-lg bg-gradient-to-b from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 border border-blue-500/50 active:scale-95"
+            className="flex-1 max-w-[120px] py-2.5 rounded-lg font-semibold text-sm text-white bg-blue-600/80 hover:bg-blue-600 transition-colors"
           >
             Raise
           </button>
         )}
 
-        {/* All-In (when can't raise normally) */}
         {!canRaise && myChips > 0 && (
           <button
             onClick={onAllIn}
-            className="flex-1 max-w-[160px] py-3 rounded-lg font-bold text-sm text-white transition-all shadow-lg bg-gradient-to-r from-red-700 via-red-600 to-red-700 hover:from-red-600 hover:via-red-500 hover:to-red-600 border border-red-500/50 active:scale-95"
+            className="flex-1 max-w-[140px] py-2.5 rounded-lg font-semibold text-sm text-white bg-red-600/80 hover:bg-red-600 transition-colors"
           >
             All-In ({myChips})
           </button>

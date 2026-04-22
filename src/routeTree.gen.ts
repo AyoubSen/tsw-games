@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as GamesWordleRouteImport } from './routes/games/wordle'
 import { Route as GamesWordchainRouteImport } from './routes/games/wordchain'
+import { Route as GamesWordScrambleRouteImport } from './routes/games/word-scramble'
 import { Route as GamesTyperaceRouteImport } from './routes/games/typerace'
 import { Route as GamesSudokuRouteImport } from './routes/games/sudoku'
 import { Route as GamesPokerRouteImport } from './routes/games/poker'
@@ -32,6 +33,11 @@ const GamesWordleRoute = GamesWordleRouteImport.update({
 const GamesWordchainRoute = GamesWordchainRouteImport.update({
   id: '/games/wordchain',
   path: '/games/wordchain',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GamesWordScrambleRoute = GamesWordScrambleRouteImport.update({
+  id: '/games/word-scramble',
+  path: '/games/word-scramble',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GamesTyperaceRoute = GamesTyperaceRouteImport.update({
@@ -73,6 +79,7 @@ export interface FileRoutesByFullPath {
   '/games/poker': typeof GamesPokerRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/typerace': typeof GamesTyperaceRoute
+  '/games/word-scramble': typeof GamesWordScrambleRoute
   '/games/wordchain': typeof GamesWordchainRoute
   '/games/wordle': typeof GamesWordleRoute
 }
@@ -84,6 +91,7 @@ export interface FileRoutesByTo {
   '/games/poker': typeof GamesPokerRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/typerace': typeof GamesTyperaceRoute
+  '/games/word-scramble': typeof GamesWordScrambleRoute
   '/games/wordchain': typeof GamesWordchainRoute
   '/games/wordle': typeof GamesWordleRoute
 }
@@ -96,6 +104,7 @@ export interface FileRoutesById {
   '/games/poker': typeof GamesPokerRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/typerace': typeof GamesTyperaceRoute
+  '/games/word-scramble': typeof GamesWordScrambleRoute
   '/games/wordchain': typeof GamesWordchainRoute
   '/games/wordle': typeof GamesWordleRoute
 }
@@ -109,6 +118,7 @@ export interface FileRouteTypes {
     | '/games/poker'
     | '/games/sudoku'
     | '/games/typerace'
+    | '/games/word-scramble'
     | '/games/wordchain'
     | '/games/wordle'
   fileRoutesByTo: FileRoutesByTo
@@ -120,6 +130,7 @@ export interface FileRouteTypes {
     | '/games/poker'
     | '/games/sudoku'
     | '/games/typerace'
+    | '/games/word-scramble'
     | '/games/wordchain'
     | '/games/wordle'
   id:
@@ -131,6 +142,7 @@ export interface FileRouteTypes {
     | '/games/poker'
     | '/games/sudoku'
     | '/games/typerace'
+    | '/games/word-scramble'
     | '/games/wordchain'
     | '/games/wordle'
   fileRoutesById: FileRoutesById
@@ -143,6 +155,7 @@ export interface RootRouteChildren {
   GamesPokerRoute: typeof GamesPokerRoute
   GamesSudokuRoute: typeof GamesSudokuRoute
   GamesTyperaceRoute: typeof GamesTyperaceRoute
+  GamesWordScrambleRoute: typeof GamesWordScrambleRoute
   GamesWordchainRoute: typeof GamesWordchainRoute
   GamesWordleRoute: typeof GamesWordleRoute
 }
@@ -168,6 +181,13 @@ declare module '@tanstack/react-router' {
       path: '/games/wordchain'
       fullPath: '/games/wordchain'
       preLoaderRoute: typeof GamesWordchainRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/games/word-scramble': {
+      id: '/games/word-scramble'
+      path: '/games/word-scramble'
+      fullPath: '/games/word-scramble'
+      preLoaderRoute: typeof GamesWordScrambleRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/games/typerace': {
@@ -223,6 +243,7 @@ const rootRouteChildren: RootRouteChildren = {
   GamesPokerRoute: GamesPokerRoute,
   GamesSudokuRoute: GamesSudokuRoute,
   GamesTyperaceRoute: GamesTyperaceRoute,
+  GamesWordScrambleRoute: GamesWordScrambleRoute,
   GamesWordchainRoute: GamesWordchainRoute,
   GamesWordleRoute: GamesWordleRoute,
 }

@@ -55,16 +55,19 @@ export function MultiplayerGame({
 
       {/* Hand info bar */}
       <div className="flex items-center justify-between mb-2 px-2">
-        <div className="text-xs text-muted-foreground">
-          Hand #{gameState.handNumber}
+        <div className="text-xs text-muted-foreground flex items-center gap-2">
+          <span>Hand #{gameState.handNumber}</span>
           {gameState.bettingRound !== "pre-flop" && gameState.bettingRound !== "showdown" && (
-            <span className="ml-2 uppercase font-medium text-foreground">
+            <span className="uppercase font-medium text-foreground">
               {gameState.bettingRound}
             </span>
           )}
         </div>
-        <div className="text-xs text-muted-foreground">
-          Blinds: {gameState.settings.smallBlind}/{gameState.settings.smallBlind * 2}
+        <div className="flex items-center gap-3">
+          <PokerHandGuide />
+          <div className="text-xs text-muted-foreground">
+            Blinds: {gameState.settings.smallBlind}/{gameState.settings.smallBlind * 2}
+          </div>
         </div>
       </div>
 
@@ -135,8 +138,6 @@ export function MultiplayerGame({
         </div>
       )}
 
-      {/* Hand Rankings Guide */}
-      <PokerHandGuide />
     </div>
   )
 }

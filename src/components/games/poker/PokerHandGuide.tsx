@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { ChevronDown, ChevronUp, HelpCircle } from "lucide-react"
+import { HelpCircle, X } from "lucide-react"
 
 const HAND_RANKINGS = [
   {
@@ -68,50 +68,71 @@ export function PokerHandGuide() {
   const [isOpen, setIsOpen] = useState(false)
 
   return (
-    <div className="w-full max-w-md mx-auto mt-3">
+    <>
       <button
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center justify-center gap-1.5 mx-auto text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg"
+        onClick={() => setIsOpen(true)}
+        className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-md bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors"
       >
         <HelpCircle size={13} />
         <span>Hand Rankings</span>
-        {isOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
       </button>
 
       {isOpen && (
-        <div className="mt-2 rounded-xl overflow-hidden border border-border bg-card">
-          <div className="px-3 py-2 text-[10px] text-muted-foreground border-b border-border flex justify-between">
-            <span>Best hand at the top</span>
-            <span>Uses best 5 of 7 cards</span>
-          </div>
-          <div className="divide-y divide-border">
-            {HAND_RANKINGS.map((hand) => (
-              <div
-                key={hand.rank}
-                className="flex items-center gap-3 px-3 py-1.5"
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          onClick={() => setIsOpen(false)}
+        >
+          <div className="absolute inset-0 bg-black/70" />
+
+          <div
+            className="relative w-full max-w-sm rounded-xl overflow-hidden shadow-2xl bg-card border border-border"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+              <h2 className="text-sm font-bold text-foreground">Hand Rankings</h2>
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
               >
-                <span className="w-4 text-[10px] font-bold text-right text-muted-foreground shrink-0">
-                  {hand.rank}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-foreground">
-                      {hand.name}
-                    </span>
-                    <span className="text-[10px] font-mono text-muted-foreground tracking-wider">
-                      {hand.example}
-                    </span>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="px-4 py-1.5 text-[10px] text-muted-foreground flex justify-between border-b border-border">
+              <span>Best hand at the top</span>
+              <span>Uses best 5 of 7 cards</span>
+            </div>
+
+            <div className="divide-y divide-border max-h-[60vh] overflow-y-auto">
+              {HAND_RANKINGS.map((hand) => (
+                <div
+                  key={hand.rank}
+                  className="flex items-center gap-3 px-4 py-2"
+                >
+                  <span className="w-5 text-xs font-bold text-right text-muted-foreground shrink-0">
+                    {hand.rank}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-foreground">
+                        {hand.name}
+                      </span>
+                      <span className="text-[11px] font-mono text-muted-foreground tracking-wider">
+                        {hand.example}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-tight">
+                      {hand.description}
+                    </p>
                   </div>
-                  <p className="text-[10px] text-muted-foreground leading-tight">
-                    {hand.description}
-                  </p>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
       )}
-    </div>
+    </>
   )
 }

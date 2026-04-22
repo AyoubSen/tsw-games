@@ -52,19 +52,8 @@ export function MultiplayerGame({
   return (
     <div
       className="flex flex-col min-h-[calc(100vh-73px)] p-2 sm:p-4"
-      style={{
-        background: `
-          repeating-linear-gradient(
-            0deg,
-            rgba(0,0,0,0) 0px,
-            rgba(0,0,0,0.03) 2px,
-            rgba(0,0,0,0) 4px
-          ),
-          linear-gradient(180deg, #0f1520, #0a1015)
-        `,
-      }}
+      style={{ background: "linear-gradient(180deg, #0f1520, #0a1015)" }}
     >
-      {/* Game Over Modal */}
       {showGameOver && (
         <GameOverModal
           players={gameState.players}
@@ -74,40 +63,33 @@ export function MultiplayerGame({
         />
       )}
 
-      {/* Hand info bar */}
-      <div className="flex items-center justify-between mb-2 px-2">
-        <div className="text-xs text-zinc-500">
-          <span className="text-zinc-400 font-medium">Hand #{gameState.handNumber}</span>
+      {/* Top bar */}
+      <div className="flex items-center justify-between mb-3 px-1">
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-zinc-500 font-mono">Hand {gameState.handNumber}</span>
           {gameState.bettingRound !== "pre-flop" && gameState.bettingRound !== "showdown" && (
-            <span
-              className="ml-2 uppercase font-bold text-xs px-2 py-0.5 rounded"
-              style={{
-                background: "rgba(234,179,8,0.1)",
-                color: "#fbbf24",
-              }}
-            >
+            <span className="text-zinc-400 font-medium">
               {ROUND_LABELS[gameState.bettingRound] || gameState.bettingRound}
             </span>
           )}
+          <span className="text-zinc-600">|</span>
+          <span className="text-zinc-500 font-mono">{gameState.settings.smallBlind}/{gameState.settings.smallBlind * 2}</span>
         </div>
-        <div className="text-xs text-zinc-500">
-          Blinds: <span className="text-zinc-400 font-mono">{gameState.settings.smallBlind}/{gameState.settings.smallBlind * 2}</span>
-        </div>
+        <PokerHandGuide />
       </div>
 
-      {/* Error */}
       {error && (
         <div className="text-center mb-2">
           <span className="text-sm text-red-400 bg-red-900/20 px-3 py-1 rounded-lg">{error}</span>
         </div>
       )}
 
-      {/* Poker Table */}
+      {/* Table */}
       <PokerTable gameState={gameState} playerId={playerId} />
 
-      {/* My hole cards (larger display) */}
+      {/* Your cards */}
       {myPlayer && gameState.myHoleCards.length === 2 && !myPlayer.folded && (
-        <div className="flex flex-col items-center gap-1 mt-3">
+        <div className="flex flex-col items-center gap-1.5 mt-4">
           <div className="flex gap-2">
             <PlayingCard card={gameState.myHoleCards[0]} size="lg" />
             <PlayingCard card={gameState.myHoleCards[1]} size="lg" />
@@ -115,7 +97,6 @@ export function MultiplayerGame({
           <HandRankDisplay
             holeCards={gameState.myHoleCards}
             communityCards={gameState.communityCards}
-            className="mt-1"
           />
         </div>
       )}
@@ -124,26 +105,16 @@ export function MultiplayerGame({
       {gameState.handInProgress && (
         <div className="text-center mt-2">
           {isMyTurn ? (
-            <span
-              className="inline-block text-sm font-bold px-4 py-1.5 rounded-full"
-              style={{
-                background: "rgba(234,179,8,0.15)",
-                color: "#fbbf24",
-                boxShadow: "0 0 12px rgba(234,179,8,0.2)",
-                animation: "turnPulse 1.5s ease-in-out infinite",
-              }}
-            >
-              Your Turn!
-            </span>
+            <span className="text-sm font-semibold text-amber-400">Your Turn</span>
           ) : gameState.currentPlayerId ? (
-            <span className="text-sm text-zinc-500">
-              Waiting for <span className="text-zinc-300">{gameState.players[gameState.currentPlayerId]?.name || "..."}</span>
+            <span className="text-xs text-zinc-600">
+              Waiting for {gameState.players[gameState.currentPlayerId]?.name || "..."}
             </span>
           ) : null}
         </div>
       )}
 
-      {/* Hand result overlay */}
+      {/* Hand result */}
       {showHandResult && (
         <div className="mt-3">
           <HandResultOverlay
@@ -154,7 +125,7 @@ export function MultiplayerGame({
         </div>
       )}
 
-      {/* Betting Controls */}
+      {/* Betting */}
       {canAct && myPlayer && (
         <div className="mt-3 max-w-md mx-auto w-full">
           <BettingControls
@@ -172,16 +143,6 @@ export function MultiplayerGame({
           />
         </div>
       )}
-
-      {/* Hand Rankings Guide */}
-      <PokerHandGuide />
-
-      <style>{`
-        @keyframes turnPulse {
-          0%, 100% { box-shadow: 0 0 12px rgba(234,179,8,0.2); }
-          50% { box-shadow: 0 0 20px rgba(234,179,8,0.4); }
-        }
-      `}</style>
     </div>
   )
 }

@@ -1,8 +1,13 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
 	ArrowLeft,
+	Check,
+	Clock3,
+	Copy,
 	Crown,
 	Database,
+	Eye,
+	EyeOff,
 	Lightbulb,
 	Loader2,
 	Play,
@@ -35,12 +40,54 @@ import {
 	isWordsLoaded,
 	loadWords,
 } from "@/lib/wordService";
+import type {
+	ClaimVisibility,
+	GameSettings,
+	ScrambleDifficulty,
+} from "../../../party/word-scramble";
 
 export const Route = createFileRoute("/games/word-scramble")({
 	component: WordScramblePage,
 });
 
 type GameView = "select" | "single" | "multiplayer-lobby" | "multiplayer-game";
+
+const ROUND_TIME_OPTIONS = [
+	{ value: 45, label: "45s" },
+	{ value: 60, label: "60s" },
+	{ value: 90, label: "90s" },
+	{ value: 120, label: "120s" },
+];
+
+const DIFFICULTY_OPTIONS: Array<{
+	value: ScrambleDifficulty;
+	label: string;
+	description: string;
+}> = [
+	{ value: "easy", label: "Easy", description: "2-3 answers" },
+	{ value: "normal", label: "Normal", description: "3-4 answers" },
+	{ value: "hard", label: "Hard", description: "4-5 answers" },
+];
+
+const CLAIM_VISIBILITY_OPTIONS: Array<{
+	value: ClaimVisibility;
+	label: string;
+	description: string;
+	icon: typeof Eye;
+}> = [
+	{
+		value: "hidden",
+		label: "Hidden",
+		description: "Only show your own words until the round ends",
+		icon: EyeOff,
+	},
+	{
+		value: "public",
+		label: "Public",
+		description: "Show the claim feed as words are found",
+		icon: Eye,
+	},
+];
 
 function getScrambledTiles(
 	scrambled: string,
@@ -74,10 +121,16 @@ function WordScramblePage() {
 
 	const [playerName, setPlayerName] = useState("");
 	const [joinRoomCode, setJoinRoomCode] = useState("");
+	const [roundTimeLimit, setRoundTimeLimit] = useState(60);
+	const [difficulty, setDifficulty] = useState<ScrambleDifficulty>("normal");
+	const [claimVisibility, setClaimVisibility] =
+		useState<ClaimVisibility>("hidden");
 	const [multiplayerGuess, setMultiplayerGuess] = useState("");
 	const [multiplayerMessage, setMultiplayerMessage] = useState<string | null>(
 		null,
 	);
+	const [copiedRoomCode, setCopiedRoomCode] = useState(false);
+	const [now, setNow] = useState(Date.now());
 
 	const multiplayer = useMultiplayerWordScramble();
 
@@ -151,6 +204,19 @@ function WordScramblePage() {
 		}
 	}, [multiplayer.error]);
 
+	useEffect(() => {
+		if (multiplayer.gameState?.status !== "playing") {
+			return;
+		}
+
+		setNow(Date.now());
+		const timer = window.setInterval(() => {
+			setNow(Date.now());
+		}, 250);
+
+		return () => window.clearInterval(timer);
+	}, [multiplayer.gameState?.status]);
+
 	const singleRemainingSolutions = useMemo(() => {
 		if (!singlePuzzle) {
 			return [];
@@ -165,6 +231,17 @@ function WordScramblePage() {
 		singlePuzzle !== null && singleRemainingSolutions.length === 0;
 
 	const multiplayerPuzzle = multiplayer.gameState?.puzzle ?? null;
+	const multiplayerSettings = multiplayer.gameState?.settings ?? null;
+	const timeRemaining =
+		multiplayer.gameState?.status === "playing" &&
+		multiplayer.gameState.startedAt &&
+		multiplayerSettings
+			? Math.max(
+					0,
+					multiplayerSettings.roundTimeLimit -
+						Math.floor((now - multiplayer.gameState.startedAt) / 1000),
+				)
+			: 0;
 	const multiplayerRemainingSolutions = useMemo(() => {
 		if (!multiplayerPuzzle || !multiplayer.gameState) {
 			return [];
@@ -188,6 +265,16 @@ function WordScramblePage() {
 			),
 		[multiplayer.gameState],
 	);
+
+	const winnerNames = useMemo(() => {
+		if (!multiplayer.gameState) {
+			return [];
+		}
+
+		return multiplayer.gameState.winnerIds
+			.map((winnerId) => multiplayer.gameState?.players[winnerId]?.name)
+			.filter((name): name is string => Boolean(name));
+	}, [multiplayer.gameState]);
 
 	const handleBackToSelect = () => {
 		if (multiplayer.connectionStatus !== "disconnected") {
@@ -260,8 +347,28 @@ function WordScramblePage() {
 			return;
 		}
 
-		multiplayer.createGame(playerName.trim());
+		const settings: GameSettings = {
+			roundTimeLimit,
+			difficulty,
+			claimVisibility,
+		};
+
+		multiplayer.createGame(playerName.trim(), settings);
 		setMultiplayerMessage(null);
+	};
+
+	const handleCopyRoomCode = async () => {
+		if (!multiplayer.gameState) {
+			return;
+		}
+
+		try {
+			await navigator.clipboard.writeText(multiplayer.gameState.roomCode);
+			setCopiedRoomCode(true);
+			window.setTimeout(() => setCopiedRoomCode(false), 1600);
+		} catch {
+			setMultiplayerMessage("Could not copy the room code.");
+		}
 	};
 
 	const handleJoinMultiplayer = () => {
@@ -388,6 +495,79 @@ function WordScramblePage() {
 								<Button onClick={handleJoinMultiplayer} variant="outline">
 									Join Room
 								</Button>
+							</div>
+							<div className="space-y-2">
+								<p className="text-sm font-medium flex items-center gap-2">
+									<Clock3 className="w-4 h-4" />
+									Round Time
+								</p>
+								<div className="grid grid-cols-4 gap-2">
+									{ROUND_TIME_OPTIONS.map((option) => (
+										<button
+											key={option.value}
+											type="button"
+											onClick={() => setRoundTimeLimit(option.value)}
+											className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+												roundTimeLimit === option.value
+													? "border-primary bg-primary/10 text-primary"
+													: "border-border hover:border-primary/50"
+											}`}
+										>
+											{option.label}
+										</button>
+									))}
+								</div>
+							</div>
+							<div className="space-y-2">
+								<p className="text-sm font-medium">Difficulty</p>
+								<div className="grid grid-cols-3 gap-2">
+									{DIFFICULTY_OPTIONS.map((option) => (
+										<button
+											key={option.value}
+											type="button"
+											onClick={() => setDifficulty(option.value)}
+											className={`rounded-lg border px-3 py-3 text-sm font-medium transition-colors ${
+												difficulty === option.value
+													? "border-primary bg-primary/10 text-primary"
+													: "border-border hover:border-primary/50"
+											}`}
+										>
+											<div>{option.label}</div>
+											<div className="mt-1 text-[11px] font-normal text-muted-foreground">
+												{option.description}
+											</div>
+										</button>
+									))}
+								</div>
+							</div>
+							<div className="space-y-2">
+								<p className="text-sm font-medium">Claim Visibility</p>
+								<div className="grid gap-2 sm:grid-cols-2">
+									{CLAIM_VISIBILITY_OPTIONS.map((option) => {
+										const Icon = option.icon;
+
+										return (
+											<button
+												key={option.value}
+												type="button"
+												onClick={() => setClaimVisibility(option.value)}
+												className={`rounded-lg border px-3 py-3 text-left text-sm font-medium transition-colors ${
+													claimVisibility === option.value
+														? "border-primary bg-primary/10 text-primary"
+														: "border-border hover:border-primary/50"
+												}`}
+											>
+												<span className="flex items-center gap-2">
+													<Icon className="h-4 w-4" />
+													{option.label}
+												</span>
+												<span className="mt-1 block text-[11px] font-normal text-muted-foreground">
+													{option.description}
+												</span>
+											</button>
+										);
+									})}
+								</div>
 							</div>
 							<Button className="w-full" onClick={handleCreateMultiplayer}>
 								Create Multiplayer Room
@@ -667,7 +847,7 @@ function WordScramblePage() {
 								>
 									<div className="flex items-center gap-2">
 										<span className="font-medium">{player.name}</span>
-										{player.id === multiplayer.gameState.hostId && (
+										{player.id === multiplayer.gameState?.hostId && (
 											<Crown className="h-4 w-4 text-yellow-500" />
 										)}
 									</div>
@@ -684,11 +864,47 @@ function WordScramblePage() {
 							<CardTitle>Match Controls</CardTitle>
 						</CardHeader>
 						<CardContent className="space-y-3">
-							<div className="rounded-2xl bg-accent/40 p-4 text-sm">
-								<p className="font-semibold">Room Code</p>
-								<p className="mt-2 text-2xl font-black tracking-[0.25em]">
-									{multiplayer.gameState.roomCode}
+							<div className="rounded-2xl border px-4 py-3 text-sm text-muted-foreground">
+								<p>
+									Time:{" "}
+									<span className="font-medium text-foreground">
+										{multiplayer.gameState.settings.roundTimeLimit}s
+									</span>
 								</p>
+								<p className="mt-1">
+									Difficulty:{" "}
+									<span className="font-medium capitalize text-foreground">
+										{multiplayer.gameState.settings.difficulty}
+									</span>
+								</p>
+								<p className="mt-1">
+									Claims:{" "}
+									<span className="font-medium capitalize text-foreground">
+										{multiplayer.gameState.settings.claimVisibility}
+									</span>
+								</p>
+							</div>
+							<div className="rounded-2xl bg-accent/40 p-4 text-sm">
+								<div className="flex items-start justify-between gap-3">
+									<div>
+										<p className="font-semibold">Room Code</p>
+										<p className="mt-2 text-2xl font-black tracking-[0.25em]">
+											{multiplayer.gameState.roomCode}
+										</p>
+									</div>
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										onClick={handleCopyRoomCode}
+									>
+										{copiedRoomCode ? (
+											<Check className="h-4 w-4" />
+										) : (
+											<Copy className="h-4 w-4" />
+										)}
+									</Button>
+								</div>
 							</div>
 							<Button
 								className="w-full"
@@ -723,10 +939,23 @@ function WordScramblePage() {
 		multiplayerPuzzle
 	) {
 		const currentPlayer = multiplayer.gameState.players[multiplayer.playerId];
-		const winner =
-			(multiplayer.gameState.winnerId &&
-				multiplayer.gameState.players[multiplayer.gameState.winnerId]) ||
-			null;
+		const claimsArePublic =
+			multiplayer.gameState.settings.claimVisibility === "public";
+		const shouldRevealAllClaims =
+			claimsArePublic || multiplayer.gameState.status === "finished";
+		const lastClaimOwnerId = multiplayer.lastClaimedWord
+			? multiplayer.gameState.claimedWords[multiplayer.lastClaimedWord]
+			: null;
+		const lastClaimOwner = lastClaimOwnerId
+			? multiplayer.gameState.players[lastClaimOwnerId]
+			: null;
+		const getClaimLabel = (word: string, playerId: string) => {
+			if (shouldRevealAllClaims || playerId === multiplayer.playerId) {
+				return word.toUpperCase();
+			}
+
+			return "CLAIMED";
+		};
 
 		return (
 			<div className="min-h-[calc(100vh-73px)] bg-background">
@@ -771,12 +1000,44 @@ function WordScramblePage() {
 							{multiplayer.gameState.status === "finished" && (
 								<div className="rounded-2xl border bg-primary/8 px-4 py-4">
 									<p className="text-sm font-semibold">
-										{winner
-											? `${winner.name} wins the round.`
-											: "Round finished."}
+										{winnerNames.length > 1
+											? `Tie between ${winnerNames.join(", ")}.`
+											: winnerNames[0]
+												? `${winnerNames[0]} wins the round.`
+												: "Round finished."}
 									</p>
 								</div>
 							)}
+
+							<div className="grid gap-3 sm:grid-cols-3">
+								<div className="rounded-2xl border bg-card px-4 py-3">
+									<p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										<Clock3 className="h-4 w-4" />
+										Time Left
+									</p>
+									<p className="mt-2 text-3xl font-black tabular-nums">
+										{multiplayer.gameState.status === "playing"
+											? `${timeRemaining}s`
+											: "0s"}
+									</p>
+								</div>
+								<div className="rounded-2xl border bg-card px-4 py-3">
+									<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										Claim Mode
+									</p>
+									<p className="mt-2 text-lg font-black capitalize">
+										{multiplayer.gameState.settings.claimVisibility}
+									</p>
+								</div>
+								<div className="rounded-2xl border bg-card px-4 py-3">
+									<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										Difficulty
+									</p>
+									<p className="mt-2 text-lg font-black capitalize">
+										{multiplayer.gameState.settings.difficulty}
+									</p>
+								</div>
+							</div>
 
 							<div className="flex flex-wrap items-center justify-center gap-3">
 								{getScrambledTiles(multiplayerPuzzle.scrambled).map((tile) => (
@@ -830,7 +1091,20 @@ function WordScramblePage() {
 
 							{multiplayer.lastClaimedWord && (
 								<div className="rounded-xl border border-dashed px-4 py-3 text-sm text-muted-foreground">
-									Last claimed: {multiplayer.lastClaimedWord.toUpperCase()}
+									{shouldRevealAllClaims ||
+									lastClaimOwnerId === multiplayer.playerId ? (
+										<>
+											Last claimed: {multiplayer.lastClaimedWord.toUpperCase()}
+											{lastClaimOwner ? ` by ${lastClaimOwner.name}` : ""}
+										</>
+									) : (
+										<>
+											{lastClaimOwner?.name ?? "Someone"} claimed a word.
+											<span className="ml-1">
+												Words are hidden in this room.
+											</span>
+										</>
+									)}
 								</div>
 							)}
 
@@ -849,8 +1123,8 @@ function WordScramblePage() {
 														key={word}
 														className="rounded-full bg-primary/10 px-3 py-1 text-sm font-semibold text-primary"
 													>
-														{word.toUpperCase()} ·{" "}
-														{multiplayer.gameState.players[playerId]?.name ??
+														{getClaimLabel(word, playerId)} ·{" "}
+														{multiplayer.gameState?.players[playerId]?.name ??
 															"?"}
 													</span>
 												))
@@ -886,6 +1160,26 @@ function WordScramblePage() {
 								<CardTitle>Your Score</CardTitle>
 							</CardHeader>
 							<CardContent>
+								<div className="mb-3 rounded-2xl border px-4 py-3 text-sm text-muted-foreground">
+									<p>
+										Time:{" "}
+										<span className="font-medium text-foreground">
+											{multiplayer.gameState.settings.roundTimeLimit}s
+										</span>
+									</p>
+									<p className="mt-1">
+										Difficulty:{" "}
+										<span className="font-medium capitalize text-foreground">
+											{multiplayer.gameState.settings.difficulty}
+										</span>
+									</p>
+									<p className="mt-1">
+										Claims:{" "}
+										<span className="font-medium capitalize text-foreground">
+											{multiplayer.gameState.settings.claimVisibility}
+										</span>
+									</p>
+								</div>
 								<div className="rounded-2xl bg-accent/40 p-4">
 									<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 										Current

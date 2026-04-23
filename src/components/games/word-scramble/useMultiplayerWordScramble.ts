@@ -2,6 +2,7 @@ import PartySocket from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { generateRoomCode, PARTYKIT_HOST } from "@/lib/partykit";
 import type {
+	GameSettings,
 	PublicGameState,
 	ServerMessage,
 } from "../../../../party/word-scramble";
@@ -97,6 +98,7 @@ export function useMultiplayerWordScramble() {
 							startedAt: message.startTime,
 							finishedAt: null,
 							winnerId: null,
+							winnerIds: [],
 							players: Object.fromEntries(
 								Object.entries(previous.gameState.players).map(
 									([id, player]) => [
@@ -159,6 +161,7 @@ export function useMultiplayerWordScramble() {
 							...previous.gameState,
 							status: "finished",
 							winnerId: message.winnerId,
+							winnerIds: message.winnerIds,
 							claimedWords: message.claimedWords,
 						},
 					};
@@ -182,7 +185,12 @@ export function useMultiplayerWordScramble() {
 	}, []);
 
 	const connect = useCallback(
-		(roomCode: string, isHost: boolean, playerName: string) => {
+		(
+			roomCode: string,
+			isHost: boolean,
+			playerName: string,
+			settings?: GameSettings,
+		) => {
 			if (socketRef.current) {
 				socketRef.current.close();
 			}
@@ -201,6 +209,11 @@ export function useMultiplayerWordScramble() {
 				party: "wordscramble",
 				query: {
 					host: isHost.toString(),
+					...(settings && {
+						roundTimeLimit: settings.roundTimeLimit.toString(),
+						difficulty: settings.difficulty,
+						claimVisibility: settings.claimVisibility,
+					}),
 				},
 			});
 
@@ -260,9 +273,9 @@ export function useMultiplayerWordScramble() {
 	}, []);
 
 	const createGame = useCallback(
-		(playerName: string) => {
+		(playerName: string, settings: GameSettings) => {
 			const roomCode = generateRoomCode();
-			connect(roomCode, true, playerName);
+			connect(roomCode, true, playerName, settings);
 			return roomCode;
 		},
 		[connect],

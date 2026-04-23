@@ -14,6 +14,15 @@ export interface Player {
 	joinedAt: number;
 }
 
+export type ScrambleDifficulty = "easy" | "normal" | "hard";
+export type ClaimVisibility = "hidden" | "public";
+
+export interface GameSettings {
+	roundTimeLimit: number;
+	difficulty: ScrambleDifficulty;
+	claimVisibility: ClaimVisibility;
+}
+
 export interface GameState {
 	roomCode: string;
 	hostId: string;
@@ -23,8 +32,10 @@ export interface GameState {
 	puzzle: WordScramblePuzzle | null;
 	claimedWords: Record<string, string>;
 	winnerId: string | null;
+	winnerIds: string[];
 	startedAt: number | null;
 	finishedAt: number | null;
+	settings: GameSettings;
 }
 
 export interface PublicGameState {
@@ -36,8 +47,10 @@ export interface PublicGameState {
 	puzzle: WordScramblePuzzle | null;
 	claimedWords: Record<string, string>;
 	winnerId: string | null;
+	winnerIds: string[];
 	startedAt: number | null;
 	finishedAt: number | null;
+	settings: GameSettings;
 }
 
 export type ClientMessage =
@@ -53,7 +66,12 @@ export type ServerMessage =
 	| { type: "player-left"; playerId: string }
 	| { type: "game-started"; puzzle: WordScramblePuzzle; startTime: number }
 	| { type: "word-claimed"; playerId: string; word: string; score: number }
-	| { type: "game-over"; winnerId: string | null; claimedWords: Record<string, string> }
+	| {
+			type: "game-over";
+			winnerId: string | null;
+			winnerIds: string[];
+			claimedWords: Record<string, string>;
+	  }
 	| { type: "game-restarted" }
 	| { type: "error"; message: string };
 
@@ -61,6 +79,12 @@ const WORDLE_ANSWERS_URL =
 	"https://gist.githubusercontent.com/cfreshman/a03ef2cba789d8cf00c08f767e0fad7b/raw/wordle-answers-alphabetical.txt";
 
 let puzzlePoolPromise: Promise<WordScramblePuzzle[]> | null = null;
+
+const DIFFICULTY_RANGES: Record<ScrambleDifficulty, [number, number]> = {
+	easy: [2, 3],
+	normal: [3, 4],
+	hard: [4, 5],
+};
 
 async function fetchWordList(url: string): Promise<string[]> {
 	const response = await fetch(url);
@@ -98,16 +122,33 @@ async function getPuzzlePool(): Promise<WordScramblePuzzle[]> {
 	return puzzlePoolPromise;
 }
 
-function getWinnerId(players: Record<string, Player>): string | null {
-	const ranking = Object.values(players).sort((left, right) => {
-		if (right.score !== left.score) {
-			return right.score - left.score;
-		}
+function getWinnerIds(players: Record<string, Player>): string[] {
+	const playerList = Object.values(players);
+	const bestScore = Math.max(...playerList.map((player) => player.score), 0);
 
-		return left.joinedAt - right.joinedAt;
-	});
+	return playerList
+		.filter((player) => player.score === bestScore)
+		.sort((left, right) => left.joinedAt - right.joinedAt)
+		.map((player) => player.id);
+}
 
-	return ranking[0]?.id ?? null;
+function getSingleWinnerId(winnerIds: string[]): string | null {
+	return winnerIds.length === 1 ? winnerIds[0] : null;
+}
+
+function pickPuzzleForDifficulty(
+	pool: WordScramblePuzzle[],
+	difficulty: ScrambleDifficulty,
+	previousSignature?: string | null,
+): WordScramblePuzzle | null {
+	const [minAnswers, maxAnswers] = DIFFICULTY_RANGES[difficulty];
+	const eligible = pool.filter(
+		(puzzle) =>
+			puzzle.solutions.length >= minAnswers &&
+			puzzle.solutions.length <= maxAnswers,
+	);
+
+	return pickNextWordScramblePuzzle(eligible, previousSignature);
 }
 
 export default class WordScrambleParty implements Party.Server {
@@ -118,6 +159,15 @@ export default class WordScrambleParty implements Party.Server {
 	async onStart() {
 		const stored = await this.room.storage.get<GameState>("state");
 		if (stored) {
+			stored.winnerIds ??= stored.winnerId ? [stored.winnerId] : [];
+			stored.settings ??= {
+				roundTimeLimit: 60,
+				difficulty: "normal",
+				claimVisibility: "hidden",
+			};
+			stored.settings.roundTimeLimit ??= 60;
+			stored.settings.difficulty ??= "normal";
+			stored.settings.claimVisibility ??= "hidden";
 			this.state = stored;
 		}
 	}
@@ -142,8 +192,10 @@ export default class WordScrambleParty implements Party.Server {
 			puzzle: this.state.puzzle,
 			claimedWords: this.state.claimedWords,
 			winnerId: this.state.winnerId,
+			winnerIds: this.state.winnerIds,
 			startedAt: this.state.startedAt,
 			finishedAt: this.state.finishedAt,
+			settings: this.state.settings,
 		};
 	}
 
@@ -165,6 +217,22 @@ export default class WordScrambleParty implements Party.Server {
 		const isHost = url.searchParams.get("host") === "true";
 
 		if (isHost && !this.state) {
+			const roundTimeLimit = Math.max(
+				30,
+				Math.min(120, Number.parseInt(url.searchParams.get("roundTimeLimit") || "60", 10)),
+			);
+			const requestedDifficulty = url.searchParams.get("difficulty");
+			const difficulty: ScrambleDifficulty =
+				requestedDifficulty === "easy" ||
+				requestedDifficulty === "normal" ||
+				requestedDifficulty === "hard"
+					? requestedDifficulty
+					: "normal";
+			const claimVisibility: ClaimVisibility =
+				url.searchParams.get("claimVisibility") === "public"
+					? "public"
+					: "hidden";
+
 			this.state = {
 				roomCode: this.room.id,
 				hostId: connection.id,
@@ -174,8 +242,14 @@ export default class WordScrambleParty implements Party.Server {
 				puzzle: null,
 				claimedWords: {},
 				winnerId: null,
+				winnerIds: [],
 				startedAt: null,
 				finishedAt: null,
+				settings: {
+					roundTimeLimit,
+					difficulty,
+					claimVisibility,
+				},
 			};
 			await this.saveState();
 		}
@@ -235,8 +309,9 @@ export default class WordScrambleParty implements Party.Server {
 					}
 
 					const puzzlePool = await getPuzzlePool();
-					const nextPuzzle = pickNextWordScramblePuzzle(
+					const nextPuzzle = pickPuzzleForDifficulty(
 						puzzlePool,
+						this.state.settings.difficulty,
 						this.state.puzzle?.signature ?? null,
 					);
 
@@ -252,6 +327,7 @@ export default class WordScrambleParty implements Party.Server {
 					this.state.puzzle = nextPuzzle;
 					this.state.claimedWords = {};
 					this.state.winnerId = null;
+					this.state.winnerIds = [];
 					this.state.startedAt = Date.now();
 					this.state.finishedAt = null;
 
@@ -267,6 +343,9 @@ export default class WordScrambleParty implements Party.Server {
 						puzzle: nextPuzzle,
 						startTime: this.state.startedAt,
 					});
+					this.room.storage.setAlarm(
+						Date.now() + this.state.settings.roundTimeLimit * 1000,
+					);
 					this.broadcast({ type: "state", state: this.getPublicState() });
 					break;
 				}
@@ -331,12 +410,15 @@ export default class WordScrambleParty implements Party.Server {
 					) {
 						this.state.status = "finished";
 						this.state.finishedAt = Date.now();
-						this.state.winnerId = getWinnerId(this.state.players);
+						this.state.winnerIds = getWinnerIds(this.state.players);
+						this.state.winnerId = getSingleWinnerId(this.state.winnerIds);
+						this.room.storage.deleteAlarm();
 						await this.saveState();
 
 						this.broadcast({
 							type: "game-over",
 							winnerId: this.state.winnerId,
+							winnerIds: this.state.winnerIds,
 							claimedWords: this.state.claimedWords,
 						});
 					}
@@ -370,9 +452,11 @@ export default class WordScrambleParty implements Party.Server {
 					this.state.status = "waiting";
 					this.state.claimedWords = {};
 					this.state.winnerId = null;
+					this.state.winnerIds = [];
 					this.state.startedAt = null;
 					this.state.finishedAt = null;
 					this.state.puzzle = null;
+					this.room.storage.deleteAlarm();
 
 					for (const player of Object.values(this.state.players)) {
 						player.score = 0;
@@ -388,6 +472,26 @@ export default class WordScrambleParty implements Party.Server {
 		} catch (error) {
 			console.error("Error processing Word Scramble message:", error);
 		}
+	}
+
+	async onAlarm() {
+		if (!this.state || this.state.status !== "playing") {
+			return;
+		}
+
+		this.state.status = "finished";
+		this.state.finishedAt = Date.now();
+		this.state.winnerIds = getWinnerIds(this.state.players);
+		this.state.winnerId = getSingleWinnerId(this.state.winnerIds);
+		await this.saveState();
+
+		this.broadcast({
+			type: "game-over",
+			winnerId: this.state.winnerId,
+			winnerIds: this.state.winnerIds,
+			claimedWords: this.state.claimedWords,
+		});
+		this.broadcast({ type: "state", state: this.getPublicState() });
 	}
 
 	async onClose(connection: Party.Connection) {

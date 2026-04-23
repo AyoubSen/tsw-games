@@ -9,7 +9,6 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { liveGames, plannedGames } from "@/lib/gameCatalog";
-import { useSettings } from "@/lib/useTheme";
 
 export const Route = createFileRoute("/")({ component: HomePage });
 
@@ -127,8 +126,6 @@ function UpcomingSection() {
 }
 
 function HomePage() {
-	const { layout } = useSettings();
-
 	return (
 		<div className="min-h-[calc(100vh-73px)] bg-background">
 			<section className="px-6 py-12 text-center md:py-16">
@@ -161,7 +158,12 @@ function HomePage() {
 					</span>
 				</div>
 
-				{layout === "cards" ? <CardsLayout /> : <GridLayout />}
+				<div className="home-layout home-layout-cards">
+					<CardsLayout />
+				</div>
+				<div className="home-layout home-layout-grid">
+					<GridLayout />
+				</div>
 
 				<UpcomingSection />
 			</section>

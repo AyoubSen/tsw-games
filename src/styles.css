@@ -136,6 +136,22 @@ code {
   }
 }
 
+.home-layout-grid {
+  display: none;
+}
+
+html[data-home-layout="grid"] .home-layout-cards {
+  display: none;
+}
+
+html[data-home-layout="grid"] .home-layout-grid {
+  display: block;
+}
+
+html[data-home-layout="cards"] .home-layout-grid {
+  display: none;
+}
+
 /* Wordle animations */
 @keyframes shake {
   0%, 100% { transform: translateX(0); }

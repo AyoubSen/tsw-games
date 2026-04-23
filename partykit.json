@@ -7,6 +7,7 @@
     "drawing": "party/drawing.ts",
     "wordchain": "party/wordchain.ts",
     "wordscramble": "party/word-scramble.ts",
+    "syncup": "party/sync-up.ts",
     "codenames": "party/codenames.ts",
     "sudoku": "party/sudoku.ts",
     "poker": "party/poker.ts",

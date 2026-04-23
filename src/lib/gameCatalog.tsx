@@ -8,6 +8,7 @@ import {
 	Moon,
 	Palette,
 	Shuffle,
+	Sparkles,
 	Swords,
 	TimerReset,
 	Vote,
@@ -84,6 +85,19 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		color: "from-yellow-500 to-orange-500",
 		status: "live",
 		category: "word",
+		isNew: true,
+	},
+	{
+		id: "sync-up",
+		title: "Sync Up",
+		description:
+			"Answer secret social prompts and score when your answer matches the group.",
+		icon: <Sparkles className="w-10 h-10" />,
+		path: "/games/sync-up",
+		players: "2-12 players",
+		color: "from-cyan-500 to-amber-500",
+		status: "live",
+		category: "social",
 		isNew: true,
 	},
 	{

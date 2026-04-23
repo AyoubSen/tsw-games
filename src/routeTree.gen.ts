@@ -14,6 +14,7 @@ import { Route as GamesWordleRouteImport } from './routes/games/wordle'
 import { Route as GamesWordchainRouteImport } from './routes/games/wordchain'
 import { Route as GamesWordScrambleRouteImport } from './routes/games/word-scramble'
 import { Route as GamesTyperaceRouteImport } from './routes/games/typerace'
+import { Route as GamesSyncUpRouteImport } from './routes/games/sync-up'
 import { Route as GamesSudokuRouteImport } from './routes/games/sudoku'
 import { Route as GamesPokerRouteImport } from './routes/games/poker'
 import { Route as GamesMafiaRouteImport } from './routes/games/mafia'
@@ -43,6 +44,11 @@ const GamesWordScrambleRoute = GamesWordScrambleRouteImport.update({
 const GamesTyperaceRoute = GamesTyperaceRouteImport.update({
   id: '/games/typerace',
   path: '/games/typerace',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GamesSyncUpRoute = GamesSyncUpRouteImport.update({
+  id: '/games/sync-up',
+  path: '/games/sync-up',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GamesSudokuRoute = GamesSudokuRouteImport.update({
@@ -78,6 +84,7 @@ export interface FileRoutesByFullPath {
   '/games/mafia': typeof GamesMafiaRoute
   '/games/poker': typeof GamesPokerRoute
   '/games/sudoku': typeof GamesSudokuRoute
+  '/games/sync-up': typeof GamesSyncUpRoute
   '/games/typerace': typeof GamesTyperaceRoute
   '/games/word-scramble': typeof GamesWordScrambleRoute
   '/games/wordchain': typeof GamesWordchainRoute
@@ -90,6 +97,7 @@ export interface FileRoutesByTo {
   '/games/mafia': typeof GamesMafiaRoute
   '/games/poker': typeof GamesPokerRoute
   '/games/sudoku': typeof GamesSudokuRoute
+  '/games/sync-up': typeof GamesSyncUpRoute
   '/games/typerace': typeof GamesTyperaceRoute
   '/games/word-scramble': typeof GamesWordScrambleRoute
   '/games/wordchain': typeof GamesWordchainRoute
@@ -103,6 +111,7 @@ export interface FileRoutesById {
   '/games/mafia': typeof GamesMafiaRoute
   '/games/poker': typeof GamesPokerRoute
   '/games/sudoku': typeof GamesSudokuRoute
+  '/games/sync-up': typeof GamesSyncUpRoute
   '/games/typerace': typeof GamesTyperaceRoute
   '/games/word-scramble': typeof GamesWordScrambleRoute
   '/games/wordchain': typeof GamesWordchainRoute
@@ -117,6 +126,7 @@ export interface FileRouteTypes {
     | '/games/mafia'
     | '/games/poker'
     | '/games/sudoku'
+    | '/games/sync-up'
     | '/games/typerace'
     | '/games/word-scramble'
     | '/games/wordchain'
@@ -129,6 +139,7 @@ export interface FileRouteTypes {
     | '/games/mafia'
     | '/games/poker'
     | '/games/sudoku'
+    | '/games/sync-up'
     | '/games/typerace'
     | '/games/word-scramble'
     | '/games/wordchain'
@@ -141,6 +152,7 @@ export interface FileRouteTypes {
     | '/games/mafia'
     | '/games/poker'
     | '/games/sudoku'
+    | '/games/sync-up'
     | '/games/typerace'
     | '/games/word-scramble'
     | '/games/wordchain'
@@ -154,6 +166,7 @@ export interface RootRouteChildren {
   GamesMafiaRoute: typeof GamesMafiaRoute
   GamesPokerRoute: typeof GamesPokerRoute
   GamesSudokuRoute: typeof GamesSudokuRoute
+  GamesSyncUpRoute: typeof GamesSyncUpRoute
   GamesTyperaceRoute: typeof GamesTyperaceRoute
   GamesWordScrambleRoute: typeof GamesWordScrambleRoute
   GamesWordchainRoute: typeof GamesWordchainRoute
@@ -195,6 +208,13 @@ declare module '@tanstack/react-router' {
       path: '/games/typerace'
       fullPath: '/games/typerace'
       preLoaderRoute: typeof GamesTyperaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/games/sync-up': {
+      id: '/games/sync-up'
+      path: '/games/sync-up'
+      fullPath: '/games/sync-up'
+      preLoaderRoute: typeof GamesSyncUpRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/games/sudoku': {
@@ -242,6 +262,7 @@ const rootRouteChildren: RootRouteChildren = {
   GamesMafiaRoute: GamesMafiaRoute,
   GamesPokerRoute: GamesPokerRoute,
   GamesSudokuRoute: GamesSudokuRoute,
+  GamesSyncUpRoute: GamesSyncUpRoute,
   GamesTyperaceRoute: GamesTyperaceRoute,
   GamesWordScrambleRoute: GamesWordScrambleRoute,
   GamesWordchainRoute: GamesWordchainRoute,

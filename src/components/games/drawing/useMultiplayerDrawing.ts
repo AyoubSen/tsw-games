@@ -1,346 +1,372 @@
-import { useState, useCallback, useEffect, useRef } from "react"
-import PartySocket from "partysocket"
-import { PARTYKIT_HOST, generateRoomCode } from "@/lib/partykit"
+import PartySocket from "partysocket";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { generateRoomCode, PARTYKIT_HOST } from "@/lib/partykit";
 import type {
-  ServerMessage,
-  PublicGameState,
-  Stroke,
-  Guess,
-} from "../../../../party/drawing"
-import type { GameSettings } from "./GameModeSelector"
+	Guess,
+	PublicGameState,
+	ServerMessage,
+	Stroke,
+} from "../../../../party/drawing";
+import type { GameSettings } from "./types";
 
-export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
+export type ConnectionStatus =
+	| "disconnected"
+	| "connecting"
+	| "connected"
+	| "error";
 
 export interface MultiplayerState {
-  connectionStatus: ConnectionStatus
-  gameState: PublicGameState | null
-  playerId: string | null
-  error: string | null
-  isHost: boolean
-  strokes: Stroke[]
-  guesses: Guess[]
+	connectionStatus: ConnectionStatus;
+	gameState: PublicGameState | null;
+	playerId: string | null;
+	error: string | null;
+	isHost: boolean;
+	strokes: Stroke[];
+	guesses: Guess[];
 }
 
 export function useMultiplayerDrawing() {
-  const [state, setState] = useState<MultiplayerState>({
-    connectionStatus: "disconnected",
-    gameState: null,
-    playerId: null,
-    error: null,
-    isHost: false,
-    strokes: [],
-    guesses: [],
-  })
+	const [state, setState] = useState<MultiplayerState>({
+		connectionStatus: "disconnected",
+		gameState: null,
+		playerId: null,
+		error: null,
+		isHost: false,
+		strokes: [],
+		guesses: [],
+	});
 
-  const socketRef = useRef<PartySocket | null>(null)
-  const playerNameRef = useRef<string>("")
+	const socketRef = useRef<PartySocket | null>(null);
+	const playerNameRef = useRef<string>("");
 
-  const connect = useCallback((roomCode: string, isHost: boolean, playerName: string, settings?: GameSettings) => {
-    if (socketRef.current) {
-      socketRef.current.close()
-    }
+	const handleMessage = useCallback((message: ServerMessage) => {
+		switch (message.type) {
+			case "state":
+				setState((prev) => ({
+					...prev,
+					gameState: message.state,
+					strokes: message.state.strokes,
+					guesses: message.state.guesses,
+				}));
+				break;
 
-    playerNameRef.current = playerName
+			case "player-joined":
+				setState((prev) => {
+					if (!prev.gameState) return prev;
+					return {
+						...prev,
+						gameState: {
+							...prev.gameState,
+							players: {
+								...prev.gameState.players,
+								[message.player.id]: message.player,
+							},
+						},
+					};
+				});
+				break;
 
-    setState((prev) => ({
-      ...prev,
-      connectionStatus: "connecting",
-      error: null,
-      isHost,
-      strokes: [],
-      guesses: [],
-    }))
+			case "player-left":
+				setState((prev) => {
+					if (!prev.gameState) return prev;
+					const newPlayers = { ...prev.gameState.players };
+					delete newPlayers[message.playerId];
+					return {
+						...prev,
+						gameState: {
+							...prev.gameState,
+							players: newPlayers,
+						},
+					};
+				});
+				break;
 
-    const socket = new PartySocket({
-      host: PARTYKIT_HOST,
-      room: roomCode,
-      party: "drawing",
-      query: {
-        host: isHost.toString(),
-        ...(settings && {
-          roundTimeLimit: settings.roundTimeLimit.toString(),
-          roundsPerPlayer: settings.roundsPerPlayer.toString(),
-        }),
-      },
-    })
+			case "round-started":
+				setState((prev) => {
+					if (!prev.gameState) return prev;
+					return {
+						...prev,
+						strokes: [],
+						guesses: [],
+						gameState: {
+							...prev.gameState,
+							status: "playing",
+							currentDrawerId: message.drawerId,
+							currentWord: message.word,
+							wordLength: message.wordLength,
+							strokes: [],
+							guesses: [],
+							correctGuessers: [],
+						},
+					};
+				});
+				break;
 
-    socket.addEventListener("open", () => {
-      setState((prev) => ({
-        ...prev,
-        connectionStatus: "connected",
-        playerId: socket.id,
-      }))
+			case "draw":
+				setState((prev) => ({
+					...prev,
+					strokes: [...prev.strokes, message.stroke],
+				}));
+				break;
 
-      socket.send(JSON.stringify({ type: "join", name: playerName }))
-    })
+			case "clear":
+				setState((prev) => ({
+					...prev,
+					strokes: [],
+				}));
+				break;
 
-    socket.addEventListener("message", (event) => {
-      try {
-        const message: ServerMessage = JSON.parse(event.data)
-        handleMessage(message)
-      } catch (e) {
-        console.error("Failed to parse message:", e)
-      }
-    })
+			case "guess":
+				setState((prev) => ({
+					...prev,
+					guesses: [...prev.guesses, message.guess],
+				}));
+				break;
 
-    socket.addEventListener("close", () => {
-      setState((prev) => ({
-        ...prev,
-        connectionStatus: "disconnected",
-      }))
-    })
+			case "correct-guess":
+				setState((prev) => {
+					if (!prev.gameState) return prev;
+					return {
+						...prev,
+						gameState: {
+							...prev.gameState,
+							correctGuessers: [
+								...prev.gameState.correctGuessers,
+								message.playerId,
+							],
+						},
+					};
+				});
+				break;
 
-    socket.addEventListener("error", () => {
-      setState((prev) => ({
-        ...prev,
-        connectionStatus: "error",
-        error: "Connection failed",
-      }))
-    })
+			case "round-ended":
+				setState((prev) => {
+					if (!prev.gameState) return prev;
+					// Update player scores from the scores object
+					const updatedPlayers = { ...prev.gameState.players };
+					for (const [id, score] of Object.entries(message.scores)) {
+						if (updatedPlayers[id]) {
+							updatedPlayers[id] = { ...updatedPlayers[id], score };
+						}
+					}
+					return {
+						...prev,
+						gameState: {
+							...prev.gameState,
+							status: "round-end",
+							currentWord: message.word,
+							players: updatedPlayers,
+						},
+					};
+				});
+				break;
 
-    socketRef.current = socket
-  }, [])
+			case "game-over":
+				setState((prev) => {
+					if (!prev.gameState) return prev;
+					// Update player scores from results
+					const updatedPlayers = { ...prev.gameState.players };
+					for (const result of message.results) {
+						if (updatedPlayers[result.id]) {
+							updatedPlayers[result.id] = {
+								...updatedPlayers[result.id],
+								score: result.score,
+							};
+						}
+					}
+					return {
+						...prev,
+						gameState: {
+							...prev.gameState,
+							status: "finished",
+							players: updatedPlayers,
+						},
+					};
+				});
+				break;
 
-  const handleMessage = useCallback((message: ServerMessage) => {
-    switch (message.type) {
-      case "state":
-        setState((prev) => ({
-          ...prev,
-          gameState: message.state,
-          strokes: message.state.strokes,
-          guesses: message.state.guesses,
-        }))
-        break
+			case "game-restarted":
+				setState((prev) => ({
+					...prev,
+					strokes: [],
+					guesses: [],
+				}));
+				break;
 
-      case "player-joined":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              players: {
-                ...prev.gameState.players,
-                [message.player.id]: message.player,
-              },
-            },
-          }
-        })
-        break
+			case "error":
+				setState((prev) => ({
+					...prev,
+					error: message.message,
+				}));
+				break;
+		}
+	}, []);
 
-      case "player-left":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          const newPlayers = { ...prev.gameState.players }
-          delete newPlayers[message.playerId]
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              players: newPlayers,
-            },
-          }
-        })
-        break
+	const connect = useCallback(
+		(
+			roomCode: string,
+			isHost: boolean,
+			playerName: string,
+			settings?: GameSettings,
+		) => {
+			if (socketRef.current) {
+				socketRef.current.close();
+			}
 
-      case "round-started":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          return {
-            ...prev,
-            strokes: [],
-            guesses: [],
-            gameState: {
-              ...prev.gameState,
-              status: "playing",
-              currentDrawerId: message.drawerId,
-              currentWord: message.word,
-              wordLength: message.wordLength,
-              strokes: [],
-              guesses: [],
-              correctGuessers: [],
-            },
-          }
-        })
-        break
+			playerNameRef.current = playerName;
 
-      case "draw":
-        setState((prev) => ({
-          ...prev,
-          strokes: [...prev.strokes, message.stroke],
-        }))
-        break
+			setState((prev) => ({
+				...prev,
+				connectionStatus: "connecting",
+				error: null,
+				isHost,
+				strokes: [],
+				guesses: [],
+			}));
 
-      case "clear":
-        setState((prev) => ({
-          ...prev,
-          strokes: [],
-        }))
-        break
+			const socket = new PartySocket({
+				host: PARTYKIT_HOST,
+				room: roomCode,
+				party: "drawing",
+				query: {
+					host: isHost.toString(),
+					...(settings && {
+						roundTimeLimit: settings.roundTimeLimit.toString(),
+						roundsPerPlayer: settings.roundsPerPlayer.toString(),
+					}),
+				},
+			});
 
-      case "guess":
-        setState((prev) => ({
-          ...prev,
-          guesses: [...prev.guesses, message.guess],
-        }))
-        break
+			socket.addEventListener("open", () => {
+				setState((prev) => ({
+					...prev,
+					connectionStatus: "connected",
+					playerId: socket.id,
+				}));
 
-      case "correct-guess":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              correctGuessers: [...prev.gameState.correctGuessers, message.playerId],
-            },
-          }
-        })
-        break
+				socket.send(JSON.stringify({ type: "join", name: playerName }));
+			});
 
-      case "round-ended":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          // Update player scores from the scores object
-          const updatedPlayers = { ...prev.gameState.players }
-          for (const [id, score] of Object.entries(message.scores)) {
-            if (updatedPlayers[id]) {
-              updatedPlayers[id] = { ...updatedPlayers[id], score }
-            }
-          }
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              status: "round-end",
-              currentWord: message.word,
-              players: updatedPlayers,
-            },
-          }
-        })
-        break
+			socket.addEventListener("message", (event) => {
+				try {
+					const message: ServerMessage = JSON.parse(event.data);
+					handleMessage(message);
+				} catch (e) {
+					console.error("Failed to parse message:", e);
+				}
+			});
 
-      case "game-over":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          // Update player scores from results
-          const updatedPlayers = { ...prev.gameState.players }
-          for (const result of message.results) {
-            if (updatedPlayers[result.id]) {
-              updatedPlayers[result.id] = { ...updatedPlayers[result.id], score: result.score }
-            }
-          }
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              status: "finished",
-              players: updatedPlayers,
-            },
-          }
-        })
-        break
+			socket.addEventListener("close", () => {
+				setState((prev) => ({
+					...prev,
+					connectionStatus: "disconnected",
+				}));
+			});
 
-      case "game-restarted":
-        setState((prev) => ({
-          ...prev,
-          strokes: [],
-          guesses: [],
-        }))
-        break
+			socket.addEventListener("error", () => {
+				setState((prev) => ({
+					...prev,
+					connectionStatus: "error",
+					error: "Connection failed",
+				}));
+			});
 
-      case "error":
-        setState((prev) => ({
-          ...prev,
-          error: message.message,
-        }))
-        break
-    }
-  }, [])
+			socketRef.current = socket;
+		},
+		[handleMessage],
+	);
 
-  const disconnect = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "leave" }))
-      socketRef.current.close()
-      socketRef.current = null
-    }
-    setState({
-      connectionStatus: "disconnected",
-      gameState: null,
-      playerId: null,
-      error: null,
-      isHost: false,
-      strokes: [],
-      guesses: [],
-    })
-  }, [])
+	const disconnect = useCallback(() => {
+		if (socketRef.current) {
+			socketRef.current.send(JSON.stringify({ type: "leave" }));
+			socketRef.current.close();
+			socketRef.current = null;
+		}
+		setState({
+			connectionStatus: "disconnected",
+			gameState: null,
+			playerId: null,
+			error: null,
+			isHost: false,
+			strokes: [],
+			guesses: [],
+		});
+	}, []);
 
-  const createGame = useCallback((playerName: string, settings: GameSettings) => {
-    const roomCode = generateRoomCode()
-    connect(roomCode, true, playerName, settings)
-    return roomCode
-  }, [connect])
+	const createGame = useCallback(
+		(playerName: string, settings: GameSettings) => {
+			const roomCode = generateRoomCode();
+			connect(roomCode, true, playerName, settings);
+			return roomCode;
+		},
+		[connect],
+	);
 
-  const joinGame = useCallback((roomCode: string, playerName: string) => {
-    connect(roomCode.toUpperCase(), false, playerName)
-  }, [connect])
+	const joinGame = useCallback(
+		(roomCode: string, playerName: string) => {
+			connect(roomCode.toUpperCase(), false, playerName);
+		},
+		[connect],
+	);
 
-  const startGame = useCallback(() => {
-    if (socketRef.current && state.isHost) {
-      socketRef.current.send(JSON.stringify({ type: "start" }))
-    }
-  }, [state.isHost])
+	const startGame = useCallback(() => {
+		if (socketRef.current && state.isHost) {
+			socketRef.current.send(JSON.stringify({ type: "start" }));
+		}
+	}, [state.isHost]);
 
-  const sendStroke = useCallback((stroke: Stroke) => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "draw", stroke }))
-      // Also add to local state immediately for drawer
-      setState((prev) => ({
-        ...prev,
-        strokes: [...prev.strokes, stroke],
-      }))
-    }
-  }, [])
+	const sendStroke = useCallback((stroke: Stroke) => {
+		if (socketRef.current) {
+			socketRef.current.send(JSON.stringify({ type: "draw", stroke }));
+			// Also add to local state immediately for drawer
+			setState((prev) => ({
+				...prev,
+				strokes: [...prev.strokes, stroke],
+			}));
+		}
+	}, []);
 
-  const clearCanvas = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "clear" }))
-      setState((prev) => ({
-        ...prev,
-        strokes: [],
-      }))
-    }
-  }, [])
+	const clearCanvas = useCallback(() => {
+		if (socketRef.current) {
+			socketRef.current.send(JSON.stringify({ type: "clear" }));
+			setState((prev) => ({
+				...prev,
+				strokes: [],
+			}));
+		}
+	}, []);
 
-  const sendGuess = useCallback((text: string) => {
-    if (socketRef.current && text.trim()) {
-      socketRef.current.send(JSON.stringify({ type: "guess", text: text.trim() }))
-    }
-  }, [])
+	const sendGuess = useCallback((text: string) => {
+		if (socketRef.current && text.trim()) {
+			socketRef.current.send(
+				JSON.stringify({ type: "guess", text: text.trim() }),
+			);
+		}
+	}, []);
 
-  const restartGame = useCallback(() => {
-    if (socketRef.current && state.isHost) {
-      socketRef.current.send(JSON.stringify({ type: "restart" }))
-    }
-  }, [state.isHost])
+	const restartGame = useCallback(() => {
+		if (socketRef.current && state.isHost) {
+			socketRef.current.send(JSON.stringify({ type: "restart" }));
+		}
+	}, [state.isHost]);
 
-  useEffect(() => {
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.close()
-      }
-    }
-  }, [])
+	useEffect(() => {
+		return () => {
+			if (socketRef.current) {
+				socketRef.current.close();
+			}
+		};
+	}, []);
 
-  return {
-    ...state,
-    createGame,
-    joinGame,
-    startGame,
-    sendStroke,
-    clearCanvas,
-    sendGuess,
-    restartGame,
-    disconnect,
-  }
+	return {
+		...state,
+		createGame,
+		joinGame,
+		startGame,
+		sendStroke,
+		clearCanvas,
+		sendGuess,
+		restartGame,
+		disconnect,
+	};
 }

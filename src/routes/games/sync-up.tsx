@@ -1,20 +1,20 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import {
-	ArrowLeft,
 	Check,
-	Copy,
-	Crown,
 	Loader2,
-	Play,
 	RotateCcw,
 	Send,
 	Sparkles,
 	Timer,
 	Trophy,
-	Users,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useMultiplayerSyncUp } from "@/components/games/sync-up/useMultiplayerSyncUp";
+import {
+	GameTopBar,
+	MultiplayerLobby,
+	MultiplayerSetupCard,
+} from "@/components/multiplayer/shared";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -209,138 +209,91 @@ function SyncUpPage() {
 	if (view === "setup") {
 		return (
 			<div className="min-h-[calc(100vh-73px)] bg-background">
-				<div className="px-4 py-3 flex items-center justify-between border-b border-border">
-					<Button variant="ghost" size="sm" asChild>
-						<Link to="/">
-							<ArrowLeft className="w-4 h-4 mr-1" />
-							Back
-						</Link>
-					</Button>
-					<div className="text-center">
-						<h1 className="text-lg font-bold">Sync Up</h1>
-						<p className="text-xs text-muted-foreground">
-							Think like your friends, score when answers match
-						</p>
-					</div>
-					<div className="w-[60px]" />
-				</div>
+				<GameTopBar
+					title="Sync Up"
+					subtitle="Think like your friends, score when answers match"
+				/>
 
 				<div className="mx-auto grid max-w-5xl gap-6 px-4 py-8 md:grid-cols-[1.05fr_0.95fr]">
-					<Card>
-						<CardHeader>
-							<CardTitle className="flex items-center gap-2">
-								<Sparkles className="h-5 w-5 text-primary" />
-								Create Room
-							</CardTitle>
-							<CardDescription>
-								Generate social prompts from reusable packs, then reveal who
-								thought alike.
-							</CardDescription>
-						</CardHeader>
-						<CardContent className="space-y-4">
-							<Input
-								value={playerName}
-								onChange={(event) => setPlayerName(event.target.value)}
-								placeholder="Your name"
-								maxLength={20}
-							/>
-
-							<div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-								<Input
-									value={joinRoomCode}
-									onChange={(event) =>
-										setJoinRoomCode(
-											event.target.value
-												.toUpperCase()
-												.replace(/[^A-Z0-9]/g, "")
-												.slice(0, 6),
-										)
-									}
-									placeholder="Room code"
-									maxLength={6}
-								/>
-								<Button variant="outline" onClick={handleJoinGame}>
-									Join Room
-								</Button>
+					<MultiplayerSetupCard
+						title="Create Room"
+						description="Generate social prompts from reusable packs, then reveal who thought alike."
+						icon={<Sparkles className="h-5 w-5 text-primary" />}
+						playerName={playerName}
+						roomCode={joinRoomCode}
+						createLabel="Create Sync Up Room"
+						onPlayerNameChange={setPlayerName}
+						onRoomCodeChange={setJoinRoomCode}
+						onJoin={handleJoinGame}
+						onCreate={handleCreateGame}
+						message={message}
+					>
+						<div className="space-y-2">
+							<p className="text-sm font-medium">Rounds</p>
+							<div className="grid grid-cols-4 gap-2">
+								{ROUND_OPTIONS.map((option) => (
+									<button
+										key={option}
+										type="button"
+										onClick={() => setRounds(option)}
+										className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+											rounds === option
+												? "border-primary bg-primary/10 text-primary"
+												: "border-border hover:border-primary/50"
+										}`}
+									>
+										{option}
+									</button>
+								))}
 							</div>
+						</div>
 
-							<div className="space-y-2">
-								<p className="text-sm font-medium">Rounds</p>
-								<div className="grid grid-cols-4 gap-2">
-									{ROUND_OPTIONS.map((option) => (
-										<button
-											key={option}
-											type="button"
-											onClick={() => setRounds(option)}
-											className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
-												rounds === option
-													? "border-primary bg-primary/10 text-primary"
-													: "border-border hover:border-primary/50"
-											}`}
-										>
-											{option}
-										</button>
-									))}
-								</div>
+						<div className="space-y-2">
+							<p className="flex items-center gap-2 text-sm font-medium">
+								<Timer className="h-4 w-4" />
+								Answer Time
+							</p>
+							<div className="grid grid-cols-4 gap-2">
+								{ROUND_TIME_OPTIONS.map((option) => (
+									<button
+										key={option}
+										type="button"
+										onClick={() => setRoundTimeLimit(option)}
+										className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+											roundTimeLimit === option
+												? "border-primary bg-primary/10 text-primary"
+												: "border-border hover:border-primary/50"
+										}`}
+									>
+										{option}s
+									</button>
+								))}
 							</div>
+						</div>
 
-							<div className="space-y-2">
-								<p className="flex items-center gap-2 text-sm font-medium">
-									<Timer className="h-4 w-4" />
-									Answer Time
-								</p>
-								<div className="grid grid-cols-4 gap-2">
-									{ROUND_TIME_OPTIONS.map((option) => (
-										<button
-											key={option}
-											type="button"
-											onClick={() => setRoundTimeLimit(option)}
-											className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
-												roundTimeLimit === option
-													? "border-primary bg-primary/10 text-primary"
-													: "border-border hover:border-primary/50"
-											}`}
-										>
-											{option}s
-										</button>
-									))}
-								</div>
+						<div className="space-y-2">
+							<p className="text-sm font-medium">Prompt Pack</p>
+							<div className="grid gap-2 sm:grid-cols-2">
+								{PROMPT_PACK_OPTIONS.map((option) => (
+									<button
+										key={option.value}
+										type="button"
+										onClick={() => setPromptPack(option.value)}
+										className={`rounded-lg border px-3 py-3 text-left text-sm font-medium transition-colors ${
+											promptPack === option.value
+												? "border-primary bg-primary/10 text-primary"
+												: "border-border hover:border-primary/50"
+										}`}
+									>
+										<span>{option.label}</span>
+										<span className="mt-1 block text-[11px] font-normal text-muted-foreground">
+											{option.description}
+										</span>
+									</button>
+								))}
 							</div>
-
-							<div className="space-y-2">
-								<p className="text-sm font-medium">Prompt Pack</p>
-								<div className="grid gap-2 sm:grid-cols-2">
-									{PROMPT_PACK_OPTIONS.map((option) => (
-										<button
-											key={option.value}
-											type="button"
-											onClick={() => setPromptPack(option.value)}
-											className={`rounded-lg border px-3 py-3 text-left text-sm font-medium transition-colors ${
-												promptPack === option.value
-													? "border-primary bg-primary/10 text-primary"
-													: "border-border hover:border-primary/50"
-											}`}
-										>
-											<span>{option.label}</span>
-											<span className="mt-1 block text-[11px] font-normal text-muted-foreground">
-												{option.description}
-											</span>
-										</button>
-									))}
-								</div>
-							</div>
-
-							<Button className="w-full" onClick={handleCreateGame}>
-								Create Sync Up Room
-							</Button>
-
-							{message && (
-								<div className="rounded-xl border bg-accent/40 px-4 py-3 text-sm">
-									{message}
-								</div>
-							)}
-						</CardContent>
-					</Card>
+						</div>
+					</MultiplayerSetupCard>
 
 					<Card>
 						<CardHeader>
@@ -379,120 +332,45 @@ function SyncUpPage() {
 
 	if (view === "lobby" && multiplayer.gameState && multiplayer.playerId) {
 		return (
-			<div className="min-h-[calc(100vh-73px)] bg-background">
-				<div className="px-4 py-3 flex items-center justify-between border-b border-border">
-					<Button variant="ghost" size="sm" onClick={handleBack}>
-						<ArrowLeft className="w-4 h-4 mr-1" />
-						Back
-					</Button>
-					<div className="text-center">
-						<h1 className="text-lg font-bold">Sync Up Lobby</h1>
-						<p className="text-xs text-muted-foreground">
-							Room {multiplayer.gameState.roomCode}
+			<MultiplayerLobby
+				title="Sync Up Lobby"
+				subtitle={`Room ${multiplayer.gameState.roomCode}`}
+				onBack={handleBack}
+				players={playerList}
+				hostId={multiplayer.gameState.hostId}
+				currentPlayerId={multiplayer.playerId}
+				playerDescription="Need at least 2 players. The host controls when the match starts."
+				settings={
+					<div className="rounded-2xl border px-4 py-3 text-sm text-muted-foreground">
+						<p>
+							Rounds:{" "}
+							<span className="font-medium text-foreground">
+								{multiplayer.gameState.settings.rounds}
+							</span>
+						</p>
+						<p className="mt-1">
+							Time:{" "}
+							<span className="font-medium text-foreground">
+								{multiplayer.gameState.settings.roundTimeLimit}s
+							</span>
+						</p>
+						<p className="mt-1">
+							Pack:{" "}
+							<span className="font-medium capitalize text-foreground">
+								{multiplayer.gameState.settings.promptPack}
+							</span>
 						</p>
 					</div>
-					<div className="w-[60px]" />
-				</div>
-
-				<div className="mx-auto grid max-w-5xl gap-6 px-4 py-6 lg:grid-cols-[1.2fr_0.8fr]">
-					<Card>
-						<CardHeader>
-							<CardTitle className="flex items-center gap-2">
-								<Users className="h-5 w-5 text-primary" />
-								Players
-							</CardTitle>
-							<CardDescription>
-								Need at least 2 players. The host controls when the match
-								starts.
-							</CardDescription>
-						</CardHeader>
-						<CardContent className="space-y-3">
-							{playerList.map((player) => (
-								<div
-									key={player.id}
-									className="flex items-center justify-between rounded-2xl border px-4 py-3"
-								>
-									<div className="flex items-center gap-2">
-										<span className="font-medium">{player.name}</span>
-										{player.id === multiplayer.gameState?.hostId && (
-											<Crown className="h-4 w-4 text-yellow-500" />
-										)}
-									</div>
-									<span className="text-xs text-muted-foreground">
-										{player.id === multiplayer.playerId ? "You" : "Ready"}
-									</span>
-								</div>
-							))}
-						</CardContent>
-					</Card>
-
-					<Card>
-						<CardHeader>
-							<CardTitle>Match Controls</CardTitle>
-						</CardHeader>
-						<CardContent className="space-y-3">
-							<div className="rounded-2xl border px-4 py-3 text-sm text-muted-foreground">
-								<p>
-									Rounds:{" "}
-									<span className="font-medium text-foreground">
-										{multiplayer.gameState.settings.rounds}
-									</span>
-								</p>
-								<p className="mt-1">
-									Time:{" "}
-									<span className="font-medium text-foreground">
-										{multiplayer.gameState.settings.roundTimeLimit}s
-									</span>
-								</p>
-								<p className="mt-1">
-									Pack:{" "}
-									<span className="font-medium capitalize text-foreground">
-										{multiplayer.gameState.settings.promptPack}
-									</span>
-								</p>
-							</div>
-							<div className="rounded-2xl bg-accent/40 p-4 text-sm">
-								<div className="flex items-start justify-between gap-3">
-									<div>
-										<p className="font-semibold">Room Code</p>
-										<p className="mt-2 text-2xl font-black tracking-[0.25em]">
-											{multiplayer.gameState.roomCode}
-										</p>
-									</div>
-									<Button
-										type="button"
-										variant="outline"
-										size="sm"
-										onClick={handleCopyRoomCode}
-									>
-										{copiedRoomCode ? (
-											<Check className="h-4 w-4" />
-										) : (
-											<Copy className="h-4 w-4" />
-										)}
-									</Button>
-								</div>
-							</div>
-							<Button
-								className="w-full"
-								onClick={multiplayer.startGame}
-								disabled={!multiplayer.isHost || playerList.length < 2}
-							>
-								<Play className="mr-2 h-4 w-4" />
-								Start Match
-							</Button>
-							<Button className="w-full" variant="outline" onClick={handleBack}>
-								Leave Lobby
-							</Button>
-							{message && (
-								<div className="rounded-xl border bg-accent/40 px-4 py-3 text-sm">
-									{message}
-								</div>
-							)}
-						</CardContent>
-					</Card>
-				</div>
-			</div>
+				}
+				roomCode={multiplayer.gameState.roomCode}
+				copiedRoomCode={copiedRoomCode}
+				onCopyRoomCode={handleCopyRoomCode}
+				onStart={multiplayer.startGame}
+				onLeave={handleBack}
+				canStart={playerList.length >= 2}
+				isHost={multiplayer.isHost}
+				message={message}
+			/>
 		);
 	}
 
@@ -503,28 +381,22 @@ function SyncUpPage() {
 
 		return (
 			<div className="min-h-[calc(100vh-73px)] bg-background">
-				<div className="px-4 py-3 flex items-center justify-between border-b border-border">
-					<Button variant="ghost" size="sm" onClick={handleBack}>
-						<ArrowLeft className="w-4 h-4 mr-1" />
-						Back
-					</Button>
-					<div className="text-center">
-						<h1 className="text-lg font-bold">Sync Up</h1>
-						<p className="text-xs text-muted-foreground">
-							Round {multiplayer.gameState.roundNumber} /{" "}
-							{multiplayer.gameState.settings.rounds}
-						</p>
-					</div>
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={multiplayer.restartGame}
-						disabled={!multiplayer.isHost}
-					>
-						<RotateCcw className="w-4 h-4 mr-1" />
-						Rematch
-					</Button>
-				</div>
+				<GameTopBar
+					title="Sync Up"
+					subtitle={`Round ${multiplayer.gameState.roundNumber} / ${multiplayer.gameState.settings.rounds}`}
+					onBack={handleBack}
+					rightAction={
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={multiplayer.restartGame}
+							disabled={!multiplayer.isHost}
+						>
+							<RotateCcw className="w-4 h-4 mr-1" />
+							Rematch
+						</Button>
+					}
+				/>
 
 				<div className="mx-auto grid max-w-6xl gap-6 px-4 py-6 lg:grid-cols-[1.45fr_0.9fr]">
 					<Card className="overflow-hidden">

@@ -81,7 +81,7 @@ export const liveGames: LiveGameCatalogEntry[] = [
 			"Unscramble a shared set of letters and find every common anagram hiding inside.",
 		icon: <Shuffle className="w-10 h-10" />,
 		path: "/games/word-scramble",
-		players: "1 player",
+		players: "2-8 players",
 		color: "from-yellow-500 to-orange-500",
 		status: "live",
 		category: "word",

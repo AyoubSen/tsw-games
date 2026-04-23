@@ -1,10 +1,6 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import {
-	ArrowLeft,
-	Check,
 	Clock3,
-	Copy,
-	Crown,
 	Database,
 	Eye,
 	EyeOff,
@@ -17,6 +13,11 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMultiplayerWordScramble } from "@/components/games/word-scramble/useMultiplayerWordScramble";
+import {
+	GameTopBar,
+	MultiplayerLobby,
+	MultiplayerSetupCard,
+} from "@/components/multiplayer/shared";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -444,141 +445,99 @@ function WordScramblePage() {
 	if (view === "select") {
 		return (
 			<div className="min-h-[calc(100vh-73px)] bg-background">
-				<div className="px-4 py-3 flex items-center justify-between border-b border-border">
-					<Button variant="ghost" size="sm" asChild>
-						<Link to="/">
-							<ArrowLeft className="w-4 h-4 mr-1" />
-							Back
-						</Link>
-					</Button>
-					<div className="text-center">
-						<h1 className="text-lg font-bold">Word Scramble</h1>
-						<p className="text-xs text-muted-foreground">
-							Practice solo or race live with friends
-						</p>
-					</div>
-					<div className="w-[60px]" />
-				</div>
+				<GameTopBar
+					title="Word Scramble"
+					subtitle="Practice solo or race live with friends"
+				/>
 
 				<div className="mx-auto grid max-w-5xl gap-6 px-4 py-8 md:grid-cols-2">
-					<Card>
-						<CardHeader>
-							<CardTitle className="flex items-center gap-2">
-								<Users className="h-5 w-5 text-primary" />
-								Multiplayer
-							</CardTitle>
-							<CardDescription>
-								Shared scramble, live scoreboard, and first-claim pressure.
-							</CardDescription>
-						</CardHeader>
-						<CardContent className="space-y-4">
-							<Input
-								value={playerName}
-								onChange={(event) => setPlayerName(event.target.value)}
-								placeholder="Your name"
-								maxLength={20}
-							/>
-							<div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-								<Input
-									value={joinRoomCode}
-									onChange={(event) =>
-										setJoinRoomCode(
-											event.target.value
-												.toUpperCase()
-												.replace(/[^A-Z0-9]/g, "")
-												.slice(0, 6),
-										)
-									}
-									placeholder="Room code"
-									maxLength={6}
-								/>
-								<Button onClick={handleJoinMultiplayer} variant="outline">
-									Join Room
-								</Button>
+					<MultiplayerSetupCard
+						title="Multiplayer"
+						description="Shared scramble, live scoreboard, and first-claim pressure."
+						icon={<Users className="h-5 w-5 text-primary" />}
+						playerName={playerName}
+						roomCode={joinRoomCode}
+						createLabel="Create Multiplayer Room"
+						onPlayerNameChange={setPlayerName}
+						onRoomCodeChange={setJoinRoomCode}
+						onJoin={handleJoinMultiplayer}
+						onCreate={handleCreateMultiplayer}
+						message={multiplayerMessage}
+					>
+						<div className="space-y-2">
+							<p className="text-sm font-medium flex items-center gap-2">
+								<Clock3 className="w-4 h-4" />
+								Round Time
+							</p>
+							<div className="grid grid-cols-4 gap-2">
+								{ROUND_TIME_OPTIONS.map((option) => (
+									<button
+										key={option.value}
+										type="button"
+										onClick={() => setRoundTimeLimit(option.value)}
+										className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+											roundTimeLimit === option.value
+												? "border-primary bg-primary/10 text-primary"
+												: "border-border hover:border-primary/50"
+										}`}
+									>
+										{option.label}
+									</button>
+								))}
 							</div>
-							<div className="space-y-2">
-								<p className="text-sm font-medium flex items-center gap-2">
-									<Clock3 className="w-4 h-4" />
-									Round Time
-								</p>
-								<div className="grid grid-cols-4 gap-2">
-									{ROUND_TIME_OPTIONS.map((option) => (
-										<button
-											key={option.value}
-											type="button"
-											onClick={() => setRoundTimeLimit(option.value)}
-											className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
-												roundTimeLimit === option.value
-													? "border-primary bg-primary/10 text-primary"
-													: "border-border hover:border-primary/50"
-											}`}
-										>
-											{option.label}
-										</button>
-									))}
-								</div>
+						</div>
+						<div className="space-y-2">
+							<p className="text-sm font-medium">Difficulty</p>
+							<div className="grid grid-cols-3 gap-2">
+								{DIFFICULTY_OPTIONS.map((option) => (
+									<button
+										key={option.value}
+										type="button"
+										onClick={() => setDifficulty(option.value)}
+										className={`rounded-lg border px-3 py-3 text-sm font-medium transition-colors ${
+											difficulty === option.value
+												? "border-primary bg-primary/10 text-primary"
+												: "border-border hover:border-primary/50"
+										}`}
+									>
+										<div>{option.label}</div>
+										<div className="mt-1 text-[11px] font-normal text-muted-foreground">
+											{option.description}
+										</div>
+									</button>
+								))}
 							</div>
-							<div className="space-y-2">
-								<p className="text-sm font-medium">Difficulty</p>
-								<div className="grid grid-cols-3 gap-2">
-									{DIFFICULTY_OPTIONS.map((option) => (
-										<button
-											key={option.value}
-											type="button"
-											onClick={() => setDifficulty(option.value)}
-											className={`rounded-lg border px-3 py-3 text-sm font-medium transition-colors ${
-												difficulty === option.value
-													? "border-primary bg-primary/10 text-primary"
-													: "border-border hover:border-primary/50"
-											}`}
-										>
-											<div>{option.label}</div>
-											<div className="mt-1 text-[11px] font-normal text-muted-foreground">
-												{option.description}
-											</div>
-										</button>
-									))}
-								</div>
-							</div>
-							<div className="space-y-2">
-								<p className="text-sm font-medium">Claim Visibility</p>
-								<div className="grid gap-2 sm:grid-cols-2">
-									{CLAIM_VISIBILITY_OPTIONS.map((option) => {
-										const Icon = option.icon;
+						</div>
+						<div className="space-y-2">
+							<p className="text-sm font-medium">Claim Visibility</p>
+							<div className="grid gap-2 sm:grid-cols-2">
+								{CLAIM_VISIBILITY_OPTIONS.map((option) => {
+									const Icon = option.icon;
 
-										return (
-											<button
-												key={option.value}
-												type="button"
-												onClick={() => setClaimVisibility(option.value)}
-												className={`rounded-lg border px-3 py-3 text-left text-sm font-medium transition-colors ${
-													claimVisibility === option.value
-														? "border-primary bg-primary/10 text-primary"
-														: "border-border hover:border-primary/50"
-												}`}
-											>
-												<span className="flex items-center gap-2">
-													<Icon className="h-4 w-4" />
-													{option.label}
-												</span>
-												<span className="mt-1 block text-[11px] font-normal text-muted-foreground">
-													{option.description}
-												</span>
-											</button>
-										);
-									})}
-								</div>
+									return (
+										<button
+											key={option.value}
+											type="button"
+											onClick={() => setClaimVisibility(option.value)}
+											className={`rounded-lg border px-3 py-3 text-left text-sm font-medium transition-colors ${
+												claimVisibility === option.value
+													? "border-primary bg-primary/10 text-primary"
+													: "border-border hover:border-primary/50"
+											}`}
+										>
+											<span className="flex items-center gap-2">
+												<Icon className="h-4 w-4" />
+												{option.label}
+											</span>
+											<span className="mt-1 block text-[11px] font-normal text-muted-foreground">
+												{option.description}
+											</span>
+										</button>
+									);
+								})}
 							</div>
-							<Button className="w-full" onClick={handleCreateMultiplayer}>
-								Create Multiplayer Room
-							</Button>
-							{multiplayerMessage && (
-								<div className="rounded-xl border bg-accent/40 px-4 py-3 text-sm">
-									{multiplayerMessage}
-								</div>
-							)}
-						</CardContent>
-					</Card>
+						</div>
+					</MultiplayerSetupCard>
 
 					<Card>
 						<CardHeader>
@@ -627,27 +586,22 @@ function WordScramblePage() {
 	if (view === "single") {
 		return (
 			<div className="min-h-[calc(100vh-73px)] bg-background">
-				<div className="px-4 py-3 flex items-center justify-between border-b border-border">
-					<Button variant="ghost" size="sm" onClick={handleBackToSelect}>
-						<ArrowLeft className="w-4 h-4 mr-1" />
-						Back
-					</Button>
-					<div className="text-center">
-						<h1 className="text-lg font-bold">Word Scramble Practice</h1>
-						<p className="text-xs text-muted-foreground">
-							Find every common 5-letter anagram
-						</p>
-					</div>
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={() => startSingleRound(singlePuzzle?.signature ?? null)}
-						disabled={singlePuzzles.length === 0}
-					>
-						<RotateCcw className="w-4 h-4 mr-1" />
-						New
-					</Button>
-				</div>
+				<GameTopBar
+					title="Word Scramble Practice"
+					subtitle="Find every common 5-letter anagram"
+					onBack={handleBackToSelect}
+					rightAction={
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => startSingleRound(singlePuzzle?.signature ?? null)}
+							disabled={singlePuzzles.length === 0}
+						>
+							<RotateCcw className="w-4 h-4 mr-1" />
+							New
+						</Button>
+					}
+				/>
 
 				<div className="mx-auto grid max-w-6xl gap-6 px-4 py-6 lg:grid-cols-[1.5fr_1fr]">
 					<Card className="overflow-hidden">
@@ -815,120 +769,45 @@ function WordScramblePage() {
 		const playerList = Object.values(multiplayer.gameState.players);
 
 		return (
-			<div className="min-h-[calc(100vh-73px)] bg-background">
-				<div className="px-4 py-3 flex items-center justify-between border-b border-border">
-					<Button variant="ghost" size="sm" onClick={handleBackToSelect}>
-						<ArrowLeft className="w-4 h-4 mr-1" />
-						Back
-					</Button>
-					<div className="text-center">
-						<h1 className="text-lg font-bold">Word Scramble Lobby</h1>
-						<p className="text-xs text-muted-foreground">
-							Room {multiplayer.gameState.roomCode}
+			<MultiplayerLobby
+				title="Word Scramble Lobby"
+				subtitle={`Room ${multiplayer.gameState.roomCode}`}
+				onBack={handleBackToSelect}
+				players={playerList}
+				hostId={multiplayer.gameState.hostId}
+				currentPlayerId={multiplayer.playerId}
+				playerDescription="Need at least 2 players. First to claim the most words wins the round."
+				settings={
+					<div className="rounded-2xl border px-4 py-3 text-sm text-muted-foreground">
+						<p>
+							Time:{" "}
+							<span className="font-medium text-foreground">
+								{multiplayer.gameState.settings.roundTimeLimit}s
+							</span>
+						</p>
+						<p className="mt-1">
+							Difficulty:{" "}
+							<span className="font-medium capitalize text-foreground">
+								{multiplayer.gameState.settings.difficulty}
+							</span>
+						</p>
+						<p className="mt-1">
+							Claims:{" "}
+							<span className="font-medium capitalize text-foreground">
+								{multiplayer.gameState.settings.claimVisibility}
+							</span>
 						</p>
 					</div>
-					<div className="w-[60px]" />
-				</div>
-
-				<div className="mx-auto grid max-w-5xl gap-6 px-4 py-6 lg:grid-cols-[1.2fr_0.8fr]">
-					<Card>
-						<CardHeader>
-							<CardTitle>Players</CardTitle>
-							<CardDescription>
-								Need at least 2 players. First to claim the most words wins the
-								round.
-							</CardDescription>
-						</CardHeader>
-						<CardContent className="space-y-3">
-							{playerList.map((player) => (
-								<div
-									key={player.id}
-									className="flex items-center justify-between rounded-2xl border px-4 py-3"
-								>
-									<div className="flex items-center gap-2">
-										<span className="font-medium">{player.name}</span>
-										{player.id === multiplayer.gameState?.hostId && (
-											<Crown className="h-4 w-4 text-yellow-500" />
-										)}
-									</div>
-									<span className="text-xs text-muted-foreground">
-										{player.id === multiplayer.playerId ? "You" : "Ready"}
-									</span>
-								</div>
-							))}
-						</CardContent>
-					</Card>
-
-					<Card>
-						<CardHeader>
-							<CardTitle>Match Controls</CardTitle>
-						</CardHeader>
-						<CardContent className="space-y-3">
-							<div className="rounded-2xl border px-4 py-3 text-sm text-muted-foreground">
-								<p>
-									Time:{" "}
-									<span className="font-medium text-foreground">
-										{multiplayer.gameState.settings.roundTimeLimit}s
-									</span>
-								</p>
-								<p className="mt-1">
-									Difficulty:{" "}
-									<span className="font-medium capitalize text-foreground">
-										{multiplayer.gameState.settings.difficulty}
-									</span>
-								</p>
-								<p className="mt-1">
-									Claims:{" "}
-									<span className="font-medium capitalize text-foreground">
-										{multiplayer.gameState.settings.claimVisibility}
-									</span>
-								</p>
-							</div>
-							<div className="rounded-2xl bg-accent/40 p-4 text-sm">
-								<div className="flex items-start justify-between gap-3">
-									<div>
-										<p className="font-semibold">Room Code</p>
-										<p className="mt-2 text-2xl font-black tracking-[0.25em]">
-											{multiplayer.gameState.roomCode}
-										</p>
-									</div>
-									<Button
-										type="button"
-										variant="outline"
-										size="sm"
-										onClick={handleCopyRoomCode}
-									>
-										{copiedRoomCode ? (
-											<Check className="h-4 w-4" />
-										) : (
-											<Copy className="h-4 w-4" />
-										)}
-									</Button>
-								</div>
-							</div>
-							<Button
-								className="w-full"
-								onClick={multiplayer.startGame}
-								disabled={!multiplayer.isHost || playerList.length < 2}
-							>
-								Start Match
-							</Button>
-							<Button
-								className="w-full"
-								variant="outline"
-								onClick={handleBackToSelect}
-							>
-								Leave Lobby
-							</Button>
-							{multiplayerMessage && (
-								<div className="rounded-xl border bg-accent/40 px-4 py-3 text-sm">
-									{multiplayerMessage}
-								</div>
-							)}
-						</CardContent>
-					</Card>
-				</div>
-			</div>
+				}
+				roomCode={multiplayer.gameState.roomCode}
+				copiedRoomCode={copiedRoomCode}
+				onCopyRoomCode={handleCopyRoomCode}
+				onStart={multiplayer.startGame}
+				onLeave={handleBackToSelect}
+				canStart={playerList.length >= 2}
+				isHost={multiplayer.isHost}
+				message={multiplayerMessage}
+			/>
 		);
 	}
 
@@ -959,27 +838,22 @@ function WordScramblePage() {
 
 		return (
 			<div className="min-h-[calc(100vh-73px)] bg-background">
-				<div className="px-4 py-3 flex items-center justify-between border-b border-border">
-					<Button variant="ghost" size="sm" onClick={handleBackToSelect}>
-						<ArrowLeft className="w-4 h-4 mr-1" />
-						Back
-					</Button>
-					<div className="text-center">
-						<h1 className="text-lg font-bold">Multiplayer Word Scramble</h1>
-						<p className="text-xs text-muted-foreground">
-							Room {multiplayer.gameState.roomCode}
-						</p>
-					</div>
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={multiplayer.restartGame}
-						disabled={!multiplayer.isHost}
-					>
-						<RotateCcw className="w-4 h-4 mr-1" />
-						Rematch
-					</Button>
-				</div>
+				<GameTopBar
+					title="Multiplayer Word Scramble"
+					subtitle={`Room ${multiplayer.gameState.roomCode}`}
+					onBack={handleBackToSelect}
+					rightAction={
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={multiplayer.restartGame}
+							disabled={!multiplayer.isHost}
+						>
+							<RotateCcw className="w-4 h-4 mr-1" />
+							Rematch
+						</Button>
+					}
+				/>
 
 				<div className="mx-auto grid max-w-6xl gap-6 px-4 py-6 lg:grid-cols-[1.45fr_0.9fr]">
 					<Card className="overflow-hidden">

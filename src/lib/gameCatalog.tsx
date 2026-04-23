@@ -101,6 +101,19 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		isNew: true,
 	},
 	{
+		id: "hot-take-arena",
+		title: "Hot Take Arena",
+		description:
+			"Pick a side on a spicy opinion, reveal the room, and score when people land with you.",
+		icon: <Vote className="w-10 h-10" />,
+		path: "/games/hot-take-arena",
+		players: "2-12 players",
+		color: "from-rose-500 to-orange-500",
+		status: "live",
+		category: "social",
+		isNew: true,
+	},
+	{
 		id: "wordchain",
 		title: "Word Chain",
 		description:

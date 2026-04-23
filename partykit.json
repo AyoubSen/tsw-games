@@ -8,6 +8,7 @@
     "wordchain": "party/wordchain.ts",
     "wordscramble": "party/word-scramble.ts",
     "syncup": "party/sync-up.ts",
+    "hottakearena": "party/hot-take-arena.ts",
     "codenames": "party/codenames.ts",
     "sudoku": "party/sudoku.ts",
     "poker": "party/poker.ts",

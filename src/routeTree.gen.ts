@@ -16,6 +16,7 @@ import { Route as GamesWordScrambleRouteImport } from './routes/games/word-scram
 import { Route as GamesTyperaceRouteImport } from './routes/games/typerace'
 import { Route as GamesSyncUpRouteImport } from './routes/games/sync-up'
 import { Route as GamesSudokuRouteImport } from './routes/games/sudoku'
+import { Route as GamesPressureButtonRouteImport } from './routes/games/pressure-button'
 import { Route as GamesPokerRouteImport } from './routes/games/poker'
 import { Route as GamesMafiaRouteImport } from './routes/games/mafia'
 import { Route as GamesHotTakeArenaRouteImport } from './routes/games/hot-take-arena'
@@ -57,6 +58,11 @@ const GamesSudokuRoute = GamesSudokuRouteImport.update({
   path: '/games/sudoku',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GamesPressureButtonRoute = GamesPressureButtonRouteImport.update({
+  id: '/games/pressure-button',
+  path: '/games/pressure-button',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GamesPokerRoute = GamesPokerRouteImport.update({
   id: '/games/poker',
   path: '/games/poker',
@@ -90,6 +96,7 @@ export interface FileRoutesByFullPath {
   '/games/hot-take-arena': typeof GamesHotTakeArenaRoute
   '/games/mafia': typeof GamesMafiaRoute
   '/games/poker': typeof GamesPokerRoute
+  '/games/pressure-button': typeof GamesPressureButtonRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/sync-up': typeof GamesSyncUpRoute
   '/games/typerace': typeof GamesTyperaceRoute
@@ -104,6 +111,7 @@ export interface FileRoutesByTo {
   '/games/hot-take-arena': typeof GamesHotTakeArenaRoute
   '/games/mafia': typeof GamesMafiaRoute
   '/games/poker': typeof GamesPokerRoute
+  '/games/pressure-button': typeof GamesPressureButtonRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/sync-up': typeof GamesSyncUpRoute
   '/games/typerace': typeof GamesTyperaceRoute
@@ -119,6 +127,7 @@ export interface FileRoutesById {
   '/games/hot-take-arena': typeof GamesHotTakeArenaRoute
   '/games/mafia': typeof GamesMafiaRoute
   '/games/poker': typeof GamesPokerRoute
+  '/games/pressure-button': typeof GamesPressureButtonRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/sync-up': typeof GamesSyncUpRoute
   '/games/typerace': typeof GamesTyperaceRoute
@@ -135,6 +144,7 @@ export interface FileRouteTypes {
     | '/games/hot-take-arena'
     | '/games/mafia'
     | '/games/poker'
+    | '/games/pressure-button'
     | '/games/sudoku'
     | '/games/sync-up'
     | '/games/typerace'
@@ -149,6 +159,7 @@ export interface FileRouteTypes {
     | '/games/hot-take-arena'
     | '/games/mafia'
     | '/games/poker'
+    | '/games/pressure-button'
     | '/games/sudoku'
     | '/games/sync-up'
     | '/games/typerace'
@@ -163,6 +174,7 @@ export interface FileRouteTypes {
     | '/games/hot-take-arena'
     | '/games/mafia'
     | '/games/poker'
+    | '/games/pressure-button'
     | '/games/sudoku'
     | '/games/sync-up'
     | '/games/typerace'
@@ -178,6 +190,7 @@ export interface RootRouteChildren {
   GamesHotTakeArenaRoute: typeof GamesHotTakeArenaRoute
   GamesMafiaRoute: typeof GamesMafiaRoute
   GamesPokerRoute: typeof GamesPokerRoute
+  GamesPressureButtonRoute: typeof GamesPressureButtonRoute
   GamesSudokuRoute: typeof GamesSudokuRoute
   GamesSyncUpRoute: typeof GamesSyncUpRoute
   GamesTyperaceRoute: typeof GamesTyperaceRoute
@@ -237,6 +250,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GamesSudokuRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/games/pressure-button': {
+      id: '/games/pressure-button'
+      path: '/games/pressure-button'
+      fullPath: '/games/pressure-button'
+      preLoaderRoute: typeof GamesPressureButtonRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/games/poker': {
       id: '/games/poker'
       path: '/games/poker'
@@ -282,6 +302,7 @@ const rootRouteChildren: RootRouteChildren = {
   GamesHotTakeArenaRoute: GamesHotTakeArenaRoute,
   GamesMafiaRoute: GamesMafiaRoute,
   GamesPokerRoute: GamesPokerRoute,
+  GamesPressureButtonRoute: GamesPressureButtonRoute,
   GamesSudokuRoute: GamesSudokuRoute,
   GamesSyncUpRoute: GamesSyncUpRoute,
   GamesTyperaceRoute: GamesTyperaceRoute,

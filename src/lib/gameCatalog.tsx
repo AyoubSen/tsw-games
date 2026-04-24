@@ -12,6 +12,7 @@ import {
 	Swords,
 	TimerReset,
 	Vote,
+	Zap,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -109,6 +110,19 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		path: "/games/hot-take-arena",
 		players: "2-12 players",
 		color: "from-rose-500 to-orange-500",
+		status: "live",
+		category: "social",
+		isNew: true,
+	},
+	{
+		id: "pressure-button",
+		title: "Pressure Button",
+		description:
+			"Take the prompt yourself, pass, or pressure someone else into answering before time runs out.",
+		icon: <Zap className="w-10 h-10" />,
+		path: "/games/pressure-button",
+		players: "2-10 players",
+		color: "from-red-500 to-orange-600",
 		status: "live",
 		category: "social",
 		isNew: true,

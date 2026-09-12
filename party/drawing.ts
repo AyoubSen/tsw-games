@@ -1,4 +1,10 @@
 import type * as Party from "partykit/server"
+import {
+  markConnected,
+  markDisconnected,
+  nextHost,
+  canControlGame,
+} from "./shared/presence"
 
 // Stroke data for drawing
 export interface Stroke {
@@ -24,6 +30,8 @@ export interface Player {
   hasDrawn: boolean
   hasGuessedCorrectly: boolean
   joinedAt: number
+  /** False while their socket is away; they stay in the game and can rejoin. */
+  connected?: boolean
   drawCount: number // How many times this player has drawn
   lastGuessAt: number // Timestamp of last guess for cooldown
 }
@@ -365,6 +373,17 @@ export default class DrawingParty implements Party.Server {
 
       switch (data.type) {
         case "join": {
+          // A reconnect, not a new player. broadcastState is per-connection,
+          // so a returning drawer gets the word back and guessers do not.
+          const returning = markConnected(this.state.players, sender.id)
+          if (returning) {
+            returning.name = data.name || returning.name
+            await this.saveState()
+            this.broadcast({ type: "player-joined", player: returning })
+            this.broadcastState()
+            break
+          }
+
           if (this.state.status !== "waiting") {
             this.send(sender, { type: "error", message: "Game already started" })
             return
@@ -382,6 +401,7 @@ export default class DrawingParty implements Party.Server {
             hasDrawn: false,
             hasGuessedCorrectly: false,
             joinedAt: Date.now(),
+            connected: true,
             drawCount: 0,
             lastGuessAt: 0,
           }
@@ -397,7 +417,7 @@ export default class DrawingParty implements Party.Server {
         }
 
         case "start": {
-          if (sender.id !== this.state.hostId) {
+          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
             this.send(sender, { type: "error", message: "Only host can start" })
             return
           }
@@ -518,7 +538,7 @@ export default class DrawingParty implements Party.Server {
 
         case "restart": {
           // Only host can restart, and only when game is finished
-          if (sender.id !== this.state.hostId) {
+          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
             this.send(sender, { type: "error", message: "Only host can restart" })
             return
           }
@@ -561,10 +581,8 @@ export default class DrawingParty implements Party.Server {
           delete this.state.players[sender.id]
 
           if (sender.id === this.state.hostId) {
-            const remaining = Object.keys(this.state.players)
-            if (remaining.length > 0) {
-              this.state.hostId = remaining[0]
-            }
+            const next = nextHost(this.state.players, sender.id)
+            if (next) this.state.hostId = next
           }
 
           // If drawer leaves during a round, end the round
@@ -590,25 +608,17 @@ export default class DrawingParty implements Party.Server {
     if (!this.state) return
 
     if (this.state.players[conn.id]) {
-      delete this.state.players[conn.id]
+      markDisconnected(this.state.players, conn.id)
 
-      if (conn.id === this.state.hostId) {
-        const remaining = Object.keys(this.state.players)
-        if (remaining.length > 0) {
-          this.state.hostId = remaining[0]
-        }
-      }
+      // Host keeps the role across a blip; canControlGame covers a real absence.
 
-      // If drawer leaves during a round, end the round
-      if (
-        this.state.status === "playing" &&
-        conn.id === this.state.currentDrawerId
-      ) {
-        await this.endRound()
-      }
+      // The round is deliberately NOT ended when the drawer's socket drops.
+      // A brief blip would otherwise cost everyone the round, and the drawer
+      // can reconnect and carry on. If they never come back, the existing
+      // round timer ends it anyway. An explicit "leave" still ends the round.
 
       await this.saveState()
-      this.broadcast({ type: "player-left", playerId: conn.id })
+      // No "player-left": they may be back shortly and clients remove on that.
       this.broadcastState()
     }
   }

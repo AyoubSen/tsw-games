@@ -1,18 +1,26 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Trophy, Clock, Crown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { SudokuBoard } from './SudokuBoard'
 import { NumberPad } from './NumberPad'
 import type { PublicGameState } from '../../../../party/sudoku'
-import type { Cell } from './useSudoku'
+import { applyErrors, hasSudokuConflict, type Cell } from './useSudoku'
+import { useSudokuKeyboard } from './useSudokuKeyboard'
 
 interface MultiplayerGameProps {
   gameState: PublicGameState
   playerId: string
   isHost: boolean
-  solution: (number | null)[] | null
-  onUpdateProgress: (progress: number, completed: boolean) => void
+  /** Whether the round's puzzle has arrived. The solution stays on the server. */
+  puzzleReady: boolean
+  /** Server's verdict on which of this player's entries are wrong. */
+  wrongCells: ReadonlySet<number>
+  serverTimeOffset: number
+  restoredCells: (number | null)[] | null
+  connected: boolean
+  error: string | null
+  onUpdateProgress: (cells: (number | null)[]) => void
   onRestart: () => void
   onLeave: () => void
 }
@@ -55,7 +63,12 @@ export function MultiplayerGame({
   gameState,
   playerId,
   isHost,
-  solution,
+  puzzleReady,
+  wrongCells,
+  serverTimeOffset,
+  restoredCells,
+  connected,
+  error,
   onUpdateProgress,
   onRestart,
   onLeave,
@@ -67,77 +80,129 @@ export function MultiplayerGame({
   const [notesMode, setNotesMode] = useState(false)
   const [history, setHistory] = useState<Cell[][][]>([])
   const [elapsedTime, setElapsedTime] = useState(0)
-  const [totalToFill, setTotalToFill] = useState(() => {
-    // Calculate totalToFill from the puzzle on mount
-    if (!gameState.puzzle) return 0
-    return gameState.puzzle.filter(cell => cell === null).length
-  })
-  const [localProgress, setLocalProgress] = useState(0)
-  const lastProgressRef = useRef(0)
+  const lastSentRef = useRef<string>('')
+  const shouldSendRef = useRef(false)
 
-  // Timer
+  const puzzle = gameState.puzzle
+  const totalToFill = gameState.totalToFill
+
+  // The puzzle can arrive (or change) after mount - on a reconnect resync, or
+  // when the host starts a new round. A one-shot useState initializer would
+  // leave the board permanently empty in those cases. `restoredCells` is the
+  // player's own grid handed back by the server after a reconnect, so it is
+  // part of the same identity: a new puzzle or a new restore rebuilds.
+  const puzzleKey = puzzle ? puzzle.join(',') : ''
+  const restoredKey = restoredCells ? restoredCells.join(',') : ''
+  const buildKey = `${puzzleKey}|${restoredKey}`
+  // Starts empty so the first pass always runs and applies error marks.
+  const renderedRef = useRef<string>('')
   useEffect(() => {
-    if (gameState.status !== 'playing' || !gameState.startTime) return
+    if (!puzzle || buildKey === renderedRef.current) return
+    renderedRef.current = buildKey
+    lastSentRef.current = ''
+    shouldSendRef.current = false
 
-    const interval = setInterval(() => {
-      setElapsedTime(Date.now() - gameState.startTime!)
-    }, 1000)
-
-    return () => clearInterval(interval)
-  }, [gameState.status, gameState.startTime])
-
-  // Calculate and report progress (only count user-filled cells, not initial ones)
-  const calculateProgress = useCallback((currentBoard: Cell[][]): { progress: number; completed: boolean; totalToFill: number } => {
-    if (!solution) return { progress: 0, completed: false, totalToFill: 0 }
-
-    let userFilledCorrect = 0
-    let totalToFill = 0
-    let complete = true
-
-    for (let row = 0; row < 9; row++) {
-      for (let col = 0; col < 9; col++) {
-        const cell = currentBoard[row][col]
-        const expected = solution[row * 9 + col]
-
-        // Only count cells that need to be filled by the user
-        if (!cell.isInitial) {
-          totalToFill++
-
-          if (cell.value === null) {
-            complete = false
-          } else if (expected !== null && cell.value === expected + 1) {
-            userFilledCorrect++
-          } else {
-            // Wrong value
-            complete = false
+    const next = initializeBoard(puzzle)
+    if (restoredCells && restoredCells.length === 81) {
+      for (let row = 0; row < 9; row++) {
+        for (let col = 0; col < 9; col++) {
+          const value = restoredCells[row * 9 + col]
+          // Givens come from the puzzle; only the player's own entries restore.
+          if (!next[row][col].isInitial && value !== null) {
+            next[row][col].value = value
           }
         }
       }
     }
+    applyErrors(next, wrongCells)
 
-    return { progress: userFilledCorrect, completed: complete && userFilledCorrect === totalToFill, totalToFill }
-  }, [solution])
+    setBoard(next)
+    setHistory([])
+    setSelectedCell(null)
+    // wrongCells intentionally omitted: its own effect re-marks the board, and
+    // including it here would wipe the player's grid on every server verdict.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [puzzle, buildKey, restoredCells])
 
-  // Report progress when board changes
+  // The server is the only holder of the solution, so its verdict arrives a
+  // beat after the entry. Re-mark the existing board rather than rebuilding it.
   useEffect(() => {
-    const { progress, completed, totalToFill: total } = calculateProgress(board)
-    setTotalToFill(total)
-    setLocalProgress(progress)
-    if (progress !== lastProgressRef.current || completed) {
-      lastProgressRef.current = progress
-      onUpdateProgress(progress, completed)
+    setBoard(prev => {
+      if (prev.length === 0) return prev
+      return applyErrors(cloneBoard(prev), wrongCells)
+    })
+  }, [wrongCells])
+
+  // Timer. `startTime` is a server timestamp, so it is compared against the
+  // server's clock - a skewed client clock used to show nonsense here.
+  useEffect(() => {
+    if (gameState.status !== 'playing' || !gameState.startTime) return
+
+    const tick = () => setElapsedTime(Math.max(0, Date.now() + serverTimeOffset - gameState.startTime!))
+    tick()
+    const interval = setInterval(tick, 1000)
+
+    return () => clearInterval(interval)
+  }, [gameState.status, gameState.startTime, serverTimeOffset])
+
+  // Local, optimistic count for this player's own bar. The server independently
+  // scores the same board and is the authority for everyone else's view.
+  // Without the solution the client cannot judge correctness itself, so it
+  // counts its own filled cells and subtracts the server's last verdict.
+  const localProgress = useMemo(() => {
+    if (board.length === 0) return 0
+    let filled = 0
+    let wrong = 0
+    for (let row = 0; row < 9; row++) {
+      for (let col = 0; col < 9; col++) {
+        const cell = board[row][col]
+        if (cell.isInitial || cell.value === null) continue
+        filled++
+        if (wrongCells.has(row * 9 + col)) wrong++
+      }
     }
-  }, [board, calculateProgress, onUpdateProgress])
+    return Math.max(0, filled - wrong)
+  }, [board, wrongCells])
+
+  // Report the raw board; the server decides progress and completion.
+  useEffect(() => {
+    if (board.length === 0 || gameState.status !== 'playing' || !connected || !shouldSendRef.current) return
+    shouldSendRef.current = false
+
+    const cells: (number | null)[] = []
+    for (let row = 0; row < 9; row++) {
+      for (let col = 0; col < 9; col++) {
+        cells.push(board[row][col].value)
+      }
+    }
+
+    const encoded = cells.join(',')
+    if (encoded === lastSentRef.current) return
+    lastSentRef.current = encoded
+    onUpdateProgress(cells)
+  }, [board, gameState.status, connected, onUpdateProgress])
+
+  // History and the new board are derived from the same snapshot. Mixing a
+  // closure board into history with a `prev`-derived board update is what made
+  // undo restore the wrong position.
+  const mutateBoard = useCallback((mutate: (board: Cell[][]) => void) => {
+    const newBoard = cloneBoard(board)
+    mutate(newBoard)
+    // Duplicates are local geometry, so conflicts light up immediately; the
+    // server's solution verdict lands a moment later via the effect above.
+    applyErrors(newBoard, wrongCells)
+    shouldSendRef.current = true
+    setHistory(prev => [...prev, board])
+    setBoard(newBoard)
+  }, [board, wrongCells])
 
   const setNumber = useCallback((num: number) => {
-    if (!selectedCell || gameState.status !== 'playing' || !solution) return
+    if (!selectedCell || gameState.status !== 'playing' || !puzzleReady || !connected) return
     const [row, col] = selectedCell
-    const cell = board[row][col]
-    if (cell.isInitial) return
+    if (board[row][col].isInitial) return
+    if (!notesMode && hasSudokuConflict(board, row, col, num)) return
 
-    setHistory(prev => [...prev, cloneBoard(board)])
-    setBoard(prev => {
-      const newBoard = cloneBoard(prev)
+    mutateBoard(newBoard => {
       if (notesMode) {
         if (newBoard[row][col].notes.has(num)) {
           newBoard[row][col].notes.delete(num)
@@ -145,53 +210,40 @@ export function MultiplayerGame({
           newBoard[row][col].notes.add(num)
         }
         newBoard[row][col].value = null
-        newBoard[row][col].isError = false
       } else {
         newBoard[row][col].value = num
         newBoard[row][col].notes.clear()
-        // Validate on input
-        const expected = solution[row * 9 + col]
-        newBoard[row][col].isError = expected !== null && num !== expected + 1
       }
-      return newBoard
     })
-  }, [selectedCell, board, notesMode, gameState.status, solution])
+  }, [selectedCell, board, notesMode, gameState.status, puzzleReady, connected, mutateBoard])
 
   const clearCell = useCallback(() => {
-    if (!selectedCell || gameState.status !== 'playing') return
+    if (!selectedCell || gameState.status !== 'playing' || !connected) return
     const [row, col] = selectedCell
-    const cell = board[row][col]
-    if (cell.isInitial) return
+    if (board[row][col].isInitial) return
 
-    setHistory(prev => [...prev, cloneBoard(board)])
-    setBoard(prev => {
-      const newBoard = cloneBoard(prev)
+    mutateBoard(newBoard => {
       newBoard[row][col] = {
         value: null,
         isInitial: false,
         notes: new Set<number>(),
         isError: false,
       }
-      return newBoard
     })
-  }, [selectedCell, board, gameState.status])
+  }, [selectedCell, board, gameState.status, connected, mutateBoard])
 
   const undo = useCallback(() => {
-    if (history.length === 0 || gameState.status !== 'playing') return
-    setHistory(prev => {
-      const newHistory = [...prev]
-      const previousBoard = newHistory.pop()!
-      setBoard(previousBoard)
-      return newHistory
-    })
-  }, [history.length, gameState.status])
+    if (history.length === 0 || gameState.status !== 'playing' || !connected) return
+    const previousBoard = history[history.length - 1]
+    shouldSendRef.current = true
+    setHistory(prev => prev.slice(0, -1))
+    setBoard(previousBoard)
+  }, [history, gameState.status, connected])
 
   const clearAll = useCallback(() => {
-    if (gameState.status !== 'playing') return
+    if (gameState.status !== 'playing' || !connected) return
 
-    setHistory(prev => [...prev, cloneBoard(board)])
-    setBoard(prev => {
-      const newBoard = cloneBoard(prev)
+    mutateBoard(newBoard => {
       for (let row = 0; row < 9; row++) {
         for (let col = 0; col < 9; col++) {
           if (!newBoard[row][col].isInitial) {
@@ -204,18 +256,34 @@ export function MultiplayerGame({
           }
         }
       }
-      return newBoard
     })
-  }, [board, gameState.status])
+  }, [gameState.status, connected, mutateBoard])
+
+  const selectCell = useCallback((row: number, col: number) => setSelectedCell([row, col]), [])
+  const toggleNotes = useCallback(() => setNotesMode(prev => !prev), [])
+
+  useSudokuKeyboard({
+    enabled: gameState.status === 'playing' && puzzleReady && connected,
+    selectedCell,
+    onSelectCell: selectCell,
+    onNumber: setNumber,
+    onClear: clearCell,
+    onToggleNotes: toggleNotes,
+  })
 
   const players = Object.values(gameState.players).sort((a, b) => b.progress - a.progress)
   const winner = gameState.winnerId ? gameState.players[gameState.winnerId] : null
   const isFinished = gameState.status === 'finished'
+  const controlsDisabled = isFinished || !puzzleReady || !connected
 
   // Game over screen
   if (isFinished) {
     return (
       <div className="max-w-md mx-auto p-6 space-y-6">
+        {!connected && (
+          <p className="text-center text-sm text-muted-foreground">Connection lost. Reconnecting...</p>
+        )}
+        {error && <p className="text-center text-sm text-destructive">{error}</p>}
         <div className="text-center">
           <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-yellow-500/20 flex items-center justify-center">
             <Trophy className="w-10 h-10 text-yellow-500" />
@@ -267,7 +335,7 @@ export function MultiplayerGame({
             Leave
           </Button>
           {isHost && (
-            <Button onClick={onRestart} className="flex-1">
+            <Button onClick={onRestart} disabled={!connected} className="flex-1">
               Play Again
             </Button>
           )}
@@ -283,6 +351,11 @@ export function MultiplayerGame({
         <Clock className="w-5 h-5" />
         {formatTime(elapsedTime)}
       </div>
+
+      {!connected && (
+        <p className="text-center text-sm text-muted-foreground">Connection lost. Your board is paused while reconnecting...</p>
+      )}
+      {error && <p className="text-center text-sm text-destructive">{error}</p>}
 
       {/* Player progress bars */}
       <div className="space-y-2">
@@ -305,6 +378,9 @@ export function MultiplayerGame({
                   {player.id === gameState.hostId && (
                     <Crown className="w-3 h-3 text-yellow-500" />
                   )}
+                  {!player.connected && (
+                    <span className="text-xs text-muted-foreground italic">reconnecting…</span>
+                  )}
                 </div>
                 <span className="text-muted-foreground">
                   {displayProgress}/{totalToFill}
@@ -321,8 +397,8 @@ export function MultiplayerGame({
         <SudokuBoard
           board={board}
           selectedCell={selectedCell}
-          onCellSelect={(row, col) => setSelectedCell([row, col])}
-          disabled={isFinished}
+          onCellSelect={selectCell}
+          disabled={controlsDisabled}
         />
       </div>
 
@@ -331,11 +407,11 @@ export function MultiplayerGame({
         onNumberSelect={setNumber}
         onClear={clearCell}
         onClearAll={clearAll}
-        onToggleNotes={() => setNotesMode(prev => !prev)}
+        onToggleNotes={toggleNotes}
         onUndo={undo}
         notesMode={notesMode}
         canUndo={history.length > 0}
-        disabled={isFinished}
+        disabled={controlsDisabled}
         showHint={false}
       />
     </div>

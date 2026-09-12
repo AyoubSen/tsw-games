@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useMultiplayerSession } from "@/lib/multiplayerSession"
 import {
 	Clock3,
 	Database,
@@ -135,6 +136,16 @@ function WordScramblePage() {
 
 	const multiplayer = useMultiplayerWordScramble();
 
+	// Walk back into the room this tab was in before a reload.
+	const session = useMultiplayerSession({
+		game: "word-scramble",
+		joinGame: multiplayer.joinGame,
+		hasGameState: !!multiplayer.gameState,
+		error: multiplayer.error,
+		connectionStatus: multiplayer.connectionStatus,
+		onAbandon: multiplayer.disconnect,
+	});
+
 	useEffect(() => {
 		if (!isWordsLoaded()) {
 			loadWords()
@@ -200,6 +211,8 @@ function WordScramblePage() {
 	}, [multiplayer.connectionStatus, multiplayer.gameState]);
 
 	useEffect(() => {
+		// An unrequested resume that failed is not the player's problem.
+		if (session.isSuppressingErrors()) return;
 		if (multiplayer.error) {
 			setMultiplayerMessage(multiplayer.error);
 		}
@@ -279,6 +292,7 @@ function WordScramblePage() {
 
 	const handleBackToSelect = () => {
 		if (multiplayer.connectionStatus !== "disconnected") {
+			session.forget();
 			multiplayer.disconnect();
 		}
 
@@ -354,7 +368,8 @@ function WordScramblePage() {
 			claimVisibility,
 		};
 
-		multiplayer.createGame(playerName.trim(), settings);
+		const createdRoom = multiplayer.createGame(playerName.trim(), settings);
+		session.remember(createdRoom, playerName.trim());
 		setMultiplayerMessage(null);
 	};
 
@@ -379,6 +394,7 @@ function WordScramblePage() {
 		}
 
 		multiplayer.joinGame(joinRoomCode.trim(), playerName.trim());
+		session.remember((joinRoomCode.trim()).toUpperCase(), playerName.trim());
 		setMultiplayerMessage(null);
 	};
 
@@ -438,6 +454,14 @@ function WordScramblePage() {
 				<p className="text-xs text-muted-foreground">
 					Word Scramble uses the same local dictionary as Wordle.
 				</p>
+			</div>
+		);
+	}
+
+	if (session.isResuming && view === "select") {
+		return (
+			<div className="flex min-h-[calc(100vh-73px)] items-center justify-center bg-background">
+				<p className="text-muted-foreground">Rejoining your game…</p>
 			</div>
 		);
 	}

@@ -1148,17 +1148,25 @@ export default class MafiaParty implements Party.Server {
 
       switch (msg.type) {
         case "join": {
+          // Check for a returning player FIRST. This used to sit below the
+          // status guard, so anyone who dropped mid-game was told "Game
+          // already in progress" and could never get back to their role.
+          const returning = this.state.players[sender.id]
+          if (returning) {
+            returning.connected = true
+            returning.name = msg.name.trim().slice(0, 20) || returning.name
+            await this.saveState()
+            // Per-connection state, so they get their own role back and only theirs.
+            this.broadcastState()
+            return
+          }
+
           if (this.state.status !== "waiting") {
             this.sendError(sender, "Game already in progress")
             return
           }
           if (Object.keys(this.state.players).length >= 12) {
             this.sendError(sender, "Game is full (max 12 players)")
-            return
-          }
-          if (this.state.players[sender.id]) {
-            // Already joined
-            this.broadcastState()
             return
           }
 

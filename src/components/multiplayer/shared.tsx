@@ -15,6 +15,12 @@ export interface MultiplayerPlayer {
 	id: string;
 	name: string;
 	joinedAt?: number;
+	/**
+	 * False while the player's socket is away. They stay in the game and can
+	 * rejoin, so the list shows them as reconnecting rather than dropping them.
+	 * Undefined means present (rooms persisted before presence tracking).
+	 */
+	connected?: boolean;
 }
 
 interface GameTopBarProps {
@@ -161,23 +167,32 @@ export function PlayerListCard({
 				<CardDescription>{description}</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-3">
-				{players.map((player) => (
-					<div
-						key={player.id}
-						className="flex items-center justify-between rounded-2xl border px-4 py-3"
-					>
-						<div className="flex items-center gap-2">
-							<span className="font-medium">{player.name}</span>
-							{player.id === hostId && (
-								<Crown className="h-4 w-4 text-yellow-500" />
-							)}
+				{players.map((player) => {
+					const away = player.connected === false;
+					return (
+						<div
+							key={player.id}
+							className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${
+								away ? "opacity-60" : ""
+							}`}
+						>
+							<div className="flex items-center gap-2">
+								<span className="font-medium">{player.name}</span>
+								{player.id === hostId && (
+									<Crown className="h-4 w-4 text-yellow-500" />
+								)}
+							</div>
+							<span className="text-xs text-muted-foreground">
+								{/* Presence wins over any game-specific status: "Ready" would be
+								    actively misleading for someone whose socket is gone. */}
+								{away
+									? "reconnecting…"
+									: (getStatus?.(player) ??
+										(player.id === currentPlayerId ? "You" : "Ready"))}
+							</span>
 						</div>
-						<span className="text-xs text-muted-foreground">
-							{getStatus?.(player) ??
-								(player.id === currentPlayerId ? "You" : "Ready")}
-						</span>
-					</div>
-				))}
+					);
+				})}
 			</CardContent>
 		</Card>
 	);

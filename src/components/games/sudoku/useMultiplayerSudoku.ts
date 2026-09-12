@@ -1,7 +1,13 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import PartySocket from "partysocket"
-import { PARTYKIT_HOST, generateRoomCode } from "@/lib/partykit"
-import type { ServerMessage, PublicGameState, Difficulty } from "../../../../party/sudoku"
+import { PARTYKIT_HOST, generateRoomCode, getPersistentPlayerId, clearPersistentPlayerId } from "@/lib/partykit"
+import {
+  SUDOKU_PROTOCOL_VERSION,
+  type ClientMessage,
+  type ServerMessage,
+  type PublicGameState,
+  type Difficulty,
+} from "../../../../party/sudoku"
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
 
@@ -10,227 +16,245 @@ export interface MultiplayerState {
   gameState: PublicGameState | null
   playerId: string | null
   error: string | null
-  isHost: boolean
-  solution: (number | null)[] | null
+  puzzleReady: boolean
+  serverTimeOffset: number
+  restoredCells: (number | null)[] | null
+  wrongCells: ReadonlySet<number>
 }
 
-export function useMultiplayerSudoku() {
-  const [state, setState] = useState<MultiplayerState>({
+interface StoredSession {
+  roomCode: string
+  name: string
+  savedAt: number
+}
+
+const SESSION_KEY = "sudoku:lastSession"
+const SESSION_TTL_MS = 6 * 60 * 60 * 1000
+
+function initialState(overrides: Partial<MultiplayerState> = {}): MultiplayerState {
+  return {
     connectionStatus: "disconnected",
     gameState: null,
     playerId: null,
     error: null,
-    isHost: false,
-    solution: null,
-  })
+    puzzleReady: false,
+    serverTimeOffset: 0,
+    restoredCells: null,
+    wrongCells: new Set<number>(),
+    ...overrides,
+  }
+}
 
+function saveSession(roomCode: string, name: string) {
+  if (typeof sessionStorage === "undefined") return
+  const record: StoredSession = { roomCode, name, savedAt: Date.now() }
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify(record))
+}
+
+function readSession(): StoredSession | null {
+  if (typeof sessionStorage === "undefined") return null
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY)
+    if (!raw) return null
+    const record = JSON.parse(raw) as StoredSession
+    if (!record.roomCode || !record.name) return null
+    if (Date.now() - record.savedAt > SESSION_TTL_MS) {
+      sessionStorage.removeItem(SESSION_KEY)
+      return null
+    }
+    return record
+  } catch {
+    return null
+  }
+}
+
+function clearSession() {
+  if (typeof sessionStorage !== "undefined") sessionStorage.removeItem(SESSION_KEY)
+}
+
+export function useMultiplayerSudoku() {
+  const [state, setState] = useState<MultiplayerState>(() => initialState())
   const socketRef = useRef<PartySocket | null>(null)
-  const playerNameRef = useRef<string>("")
+  const roomCodeRef = useRef("")
+  const roundIdRef = useRef("")
+  const revisionRef = useRef(0)
+  const resumingRef = useRef(false)
 
-  const connect = useCallback((roomCode: string, isHost: boolean, playerName: string, difficulty?: Difficulty) => {
-    if (socketRef.current) {
-      socketRef.current.close()
+  const handleMessage = useCallback((message: ServerMessage) => {
+    if (message.type === "error") {
+      const terminalJoinError = (
+        message.message === "Game already started" ||
+        message.message === "Game is full"
+      )
+      const quietResumeFailure = resumingRef.current && message.message === "Game not found"
+      if (message.message === "Game not found" || terminalJoinError) {
+        resumingRef.current = false
+        clearSession()
+        const socket = socketRef.current
+        socketRef.current = null
+        socket?.close()
+        roundIdRef.current = ""
+        revisionRef.current = 0
+        setState(initialState({
+          connectionStatus: quietResumeFailure ? "disconnected" : "error",
+          error: quietResumeFailure ? null : message.message,
+        }))
+        return
+      }
+      setState(prev => ({ ...prev, error: message.message }))
+      return
     }
 
-    playerNameRef.current = playerName
+    if (message.revision < revisionRef.current) return
+    if (message.type !== "state" && roundIdRef.current && message.roundId !== roundIdRef.current) return
+    revisionRef.current = Math.max(revisionRef.current, message.revision)
 
-    setState((prev) => ({
-      ...prev,
-      connectionStatus: "connecting",
-      error: null,
-      isHost,
-    }))
+    switch (message.type) {
+      case "state":
+        resumingRef.current = false
+        roundIdRef.current = message.state.roundId
+        setState(prev => {
+          const roundChanged = prev.gameState?.roundId !== message.state.roundId
+          const waiting = message.state.status === "waiting"
+          return {
+            ...prev,
+            connectionStatus: "connected",
+            gameState: message.state,
+            puzzleReady: !waiting && message.state.puzzle?.length === 81,
+            serverTimeOffset: message.state.serverNow - Date.now(),
+            restoredCells: roundChanged || waiting ? null : prev.restoredCells,
+            wrongCells: roundChanged || waiting ? new Set<number>() : prev.wrongCells,
+            error: null,
+          }
+        })
+        break
+
+      case "board-restored":
+        if (message.cells.length !== 81) return
+        setState(prev => ({ ...prev, restoredCells: message.cells }))
+        break
+
+      case "board-feedback":
+        setState(prev => ({ ...prev, wrongCells: new Set(message.wrong) }))
+        break
+
+    }
+  }, [])
+
+  const connect = useCallback((roomCode: string, isHost: boolean, playerName: string, difficulty?: Difficulty) => {
+    const previousSocket = socketRef.current
+    socketRef.current = null
+    previousSocket?.close()
+
+    roomCodeRef.current = roomCode
+    roundIdRef.current = ""
+    revisionRef.current = 0
+    const playerId = getPersistentPlayerId("sudoku", roomCode)
+    saveSession(roomCode, playerName)
+    setState(initialState({ connectionStatus: "connecting", playerId }))
 
     const socket = new PartySocket({
       host: PARTYKIT_HOST,
       room: roomCode,
       party: "sudoku",
+      id: playerId,
       query: {
         host: isHost.toString(),
+        protocolVersion: String(SUDOKU_PROTOCOL_VERSION),
         ...(difficulty && { difficulty }),
       },
+      maxEnqueuedMessages: 0,
     })
+    socketRef.current = socket
 
     socket.addEventListener("open", () => {
-      setState((prev) => ({
+      if (socketRef.current !== socket) return
+      revisionRef.current = 0
+      setState(prev => ({
         ...prev,
-        connectionStatus: "connected",
         playerId: socket.id,
+        error: null,
       }))
-
-      socket.send(JSON.stringify({ type: "join", name: playerName }))
+      const join: ClientMessage = {
+        type: "join",
+        protocolVersion: SUDOKU_PROTOCOL_VERSION,
+        name: playerName,
+      }
+      socket.send(JSON.stringify(join))
     })
 
-    socket.addEventListener("message", (event) => {
+    socket.addEventListener("message", event => {
+      if (socketRef.current !== socket) return
       try {
-        const message: ServerMessage = JSON.parse(event.data)
+        const message = JSON.parse(event.data) as ServerMessage
+        if (message.protocolVersion !== SUDOKU_PROTOCOL_VERSION) {
+          setState(prev => ({
+            ...prev,
+            connectionStatus: "error",
+            error: "Sudoku was updated. Refresh this page to continue.",
+          }))
+          socketRef.current = null
+          socket.close(1008, "Incompatible Sudoku server")
+          return
+        }
         handleMessage(message)
-      } catch (e) {
-        console.error("Failed to parse message:", e)
+      } catch (error) {
+        console.error("Failed to parse Sudoku message:", error)
       }
     })
 
     socket.addEventListener("close", () => {
-      setState((prev) => ({
-        ...prev,
-        connectionStatus: "disconnected",
-      }))
+      if (socketRef.current !== socket) return
+      setState(prev => ({ ...prev, connectionStatus: "disconnected" }))
     })
 
     socket.addEventListener("error", () => {
-      setState((prev) => ({
+      if (socketRef.current !== socket) return
+      setState(prev => ({
         ...prev,
         connectionStatus: "error",
-        error: "Connection failed",
+        error: "Connection lost. Reconnecting...",
       }))
     })
+  }, [handleMessage])
 
-    socketRef.current = socket
-  }, [])
-
-  const handleMessage = useCallback((message: ServerMessage) => {
-    switch (message.type) {
-      case "state":
-        setState((prev) => ({
-          ...prev,
-          gameState: message.state,
-        }))
-        break
-
-      case "player-joined":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              players: {
-                ...prev.gameState.players,
-                [message.player.id]: message.player,
-              },
-            },
-          }
-        })
-        break
-
-      case "player-left":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          const newPlayers = { ...prev.gameState.players }
-          delete newPlayers[message.playerId]
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              players: newPlayers,
-            },
-          }
-        })
-        break
-
-      case "game-started":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              status: "playing",
-              puzzle: message.puzzle,
-              startTime: Date.now(),
-            },
-            solution: message.solution,
-          }
-        })
-        break
-
-      case "progress-update":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          const player = prev.gameState.players[message.playerId]
-          if (!player) return prev
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              players: {
-                ...prev.gameState.players,
-                [message.playerId]: {
-                  ...player,
-                  progress: message.progress,
-                },
-              },
-            },
-          }
-        })
-        break
-
-      case "player-completed":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          const player = prev.gameState.players[message.playerId]
-          if (!player) return prev
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              players: {
-                ...prev.gameState.players,
-                [message.playerId]: {
-                  ...player,
-                  completedAt: Date.now(),
-                },
-              },
-            },
-          }
-        })
-        break
-
-      case "game-over":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              status: "finished",
-              winnerId: message.winnerId,
-            },
-          }
-        })
-        break
-
-      case "game-restarted":
-        setState((prev) => ({
-          ...prev,
-          solution: null,
-        }))
-        break
-
-      case "error":
-        setState((prev) => ({
-          ...prev,
-          error: message.message,
-        }))
-        break
+  const sendNow = useCallback((message: ClientMessage) => {
+    const socket = socketRef.current
+    if (!socket || socket.readyState !== 1) {
+      setState(prev => ({ ...prev, error: "Connection lost. Reconnecting..." }))
+      return false
     }
+    socket.send(JSON.stringify(message))
+    return true
   }, [])
 
   const disconnect = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "leave" }))
-      socketRef.current.close()
-      socketRef.current = null
+    const socket = socketRef.current
+    socketRef.current = null
+    if (socket?.readyState === 1) {
+      const leave: ClientMessage = { type: "leave", protocolVersion: SUDOKU_PROTOCOL_VERSION }
+      socket.send(JSON.stringify(leave))
     }
-    setState({
-      connectionStatus: "disconnected",
-      gameState: null,
-      playerId: null,
-      error: null,
-      isHost: false,
-      solution: null,
-    })
+    socket?.close()
+
+    if (roomCodeRef.current) {
+      clearPersistentPlayerId("sudoku", roomCodeRef.current)
+      roomCodeRef.current = ""
+    }
+    roundIdRef.current = ""
+    revisionRef.current = 0
+    resumingRef.current = false
+    clearSession()
+    setState(initialState())
   }, [])
+
+  const resumeSession = useCallback(() => {
+    const record = readSession()
+    if (!record) return false
+    resumingRef.current = true
+    connect(record.roomCode, false, record.name)
+    return true
+  }, [connect])
 
   const createGame = useCallback((playerName: string, difficulty: Difficulty) => {
     const roomCode = generateRoomCode()
@@ -243,42 +267,57 @@ export function useMultiplayerSudoku() {
   }, [connect])
 
   const startGame = useCallback(() => {
-    if (socketRef.current && state.isHost) {
-      socketRef.current.send(JSON.stringify({ type: "start" }))
-    }
-  }, [state.isHost])
+    if (!roundIdRef.current) return
+    sendNow({
+      type: "start",
+      protocolVersion: SUDOKU_PROTOCOL_VERSION,
+      roundId: roundIdRef.current,
+    })
+  }, [sendNow])
 
-  const updateProgress = useCallback((progress: number, completed: boolean) => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({
-        type: "update-progress",
-        progress,
-        completed,
-      }))
-    }
-  }, [])
+  const updateProgress = useCallback((cells: (number | null)[]) => {
+    if (!roundIdRef.current) return
+    sendNow({
+      type: "update-progress",
+      protocolVersion: SUDOKU_PROTOCOL_VERSION,
+      roundId: roundIdRef.current,
+      cells,
+    })
+  }, [sendNow])
 
   const restartGame = useCallback(() => {
-    if (socketRef.current && state.isHost) {
-      socketRef.current.send(JSON.stringify({ type: "restart" }))
-    }
-  }, [state.isHost])
+    if (!roundIdRef.current) return
+    sendNow({
+      type: "restart",
+      protocolVersion: SUDOKU_PROTOCOL_VERSION,
+      roundId: roundIdRef.current,
+    })
+  }, [sendNow])
 
   useEffect(() => {
     return () => {
-      if (socketRef.current) {
-        socketRef.current.close()
-      }
+      const socket = socketRef.current
+      socketRef.current = null
+      socket?.close()
     }
   }, [])
 
+  const recordedHost = state.gameState?.players[state.gameState.hostId]
+  const isHost = Boolean(
+    state.gameState &&
+    state.playerId &&
+    (state.gameState.hostId === state.playerId || !recordedHost || recordedHost.connected === false)
+  )
+
   return {
     ...state,
+    isHost,
     createGame,
     joinGame,
     startGame,
     updateProgress,
     restartGame,
     disconnect,
+    resumeSession,
   }
 }

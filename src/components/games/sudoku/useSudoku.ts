@@ -33,6 +33,31 @@ const DIFFICULTY_THRESHOLDS = {
   expert: { min: 70, max: 200 },
 }
 
+function isValidGeneratedPuzzle(puzzle: unknown, solution: unknown): boolean {
+  if (!Array.isArray(puzzle) || puzzle.length !== 81) return false
+  if (!Array.isArray(solution) || solution.length !== 81) return false
+
+  const rows = Array.from({ length: 9 }, () => new Set<number>())
+  const cols = Array.from({ length: 9 }, () => new Set<number>())
+  const boxes = Array.from({ length: 9 }, () => new Set<number>())
+
+  for (let index = 0; index < 81; index++) {
+    const solved = solution[index]
+    const given = puzzle[index]
+    if (!Number.isInteger(solved) || solved < 0 || solved > 8) return false
+    if (given !== null && (!Number.isInteger(given) || given < 0 || given > 8 || given !== solved)) return false
+
+    const row = Math.floor(index / 9)
+    const col = index % 9
+    const box = Math.floor(row / 3) * 3 + Math.floor(col / 3)
+    if (rows[row].has(solved) || cols[col].has(solved) || boxes[box].has(solved)) return false
+    rows[row].add(solved)
+    cols[col].add(solved)
+    boxes[box].add(solved)
+  }
+  return true
+}
+
 function generatePuzzleWithDifficulty(difficulty: Difficulty): { puzzle: (number | null)[], solution: (number | null)[] } {
   let bestPuzzle: (number | null)[] | null = null
   let bestSolution: (number | null)[] | null = null
@@ -43,6 +68,7 @@ function generatePuzzleWithDifficulty(difficulty: Difficulty): { puzzle: (number
   for (let i = 0; i < 20; i++) {
     const puzzle = sudoku.makepuzzle()
     const solution = sudoku.solvepuzzle(puzzle)
+    if (!isValidGeneratedPuzzle(puzzle, solution)) continue
     const rating = sudoku.ratepuzzle(puzzle, 4)
 
     if (rating >= min && rating <= max) {
@@ -57,7 +83,8 @@ function generatePuzzleWithDifficulty(difficulty: Difficulty): { puzzle: (number
     }
   }
 
-  return { puzzle: bestPuzzle!, solution: bestSolution! }
+  if (!bestPuzzle || !bestSolution) throw new Error('Unable to generate a valid Sudoku puzzle')
+  return { puzzle: bestPuzzle, solution: bestSolution }
 }
 
 function arrayToGrid(arr: (number | null)[]): (number | null)[][] {
@@ -89,7 +116,100 @@ function cloneBoard(board: Cell[][]): Cell[][] {
   )
 }
 
-export function useSudoku() {
+const boxIndex = (row: number, col: number) => Math.floor(row / 3) * 3 + Math.floor(col / 3)
+
+export function hasSudokuConflict(board: Cell[][], row: number, col: number, value: number): boolean {
+  for (let index = 0; index < 9; index++) {
+    if (index !== col && board[row][index].value === value) return true
+    if (index !== row && board[index][col].value === value) return true
+  }
+
+  const boxRow = Math.floor(row / 3) * 3
+  const boxCol = Math.floor(col / 3) * 3
+  for (let r = boxRow; r < boxRow + 3; r++) {
+    for (let c = boxCol; c < boxCol + 3; c++) {
+      if ((r !== row || c !== col) && board[r][c].value === value) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Board indices whose value disagrees with the solution. Only callers that
+ * legitimately hold the solution use this - in multiplayer the server owns it
+ * and sends back the indices, so the answer key never reaches the browser.
+ */
+export function findSolutionMismatches(board: Cell[][], solution: (number | null)[]): Set<number> {
+  const wrong = new Set<number>()
+  for (let row = 0; row < 9; row++) {
+    for (let col = 0; col < 9; col++) {
+      const cell = board[row][col]
+      if (cell.isInitial || cell.value === null) continue
+      const expected = solution[row * 9 + col]
+      if (expected !== null && cell.value !== expected + 1) {
+        wrong.add(row * 9 + col)
+      }
+    }
+  }
+  return wrong
+}
+
+/**
+ * Recompute `isError` for every cell, in place.
+ *
+ * A player-entered cell is wrong if it is in `wrongIndices` (it disagrees with
+ * the solution) OR if it duplicates a value already in its row, column or box.
+ * The duplicate rule is what makes "two 7s in one column" light up: checking
+ * against the solution alone leaves the solution-correct 7 unflagged, so a
+ * conflict caused by an *earlier* wrong entry showed no feedback on the cell
+ * the player just typed.
+ *
+ * Duplicates are pure local geometry and need no solution, so multiplayer can
+ * flag them instantly while the solution-mismatch set arrives from the server.
+ *
+ * Because a conflict clears as soon as its partner is fixed, this has to run
+ * over the whole board after every change rather than on the edited cell only.
+ */
+export function applyErrors(board: Cell[][], wrongIndices: ReadonlySet<number>): Cell[][] {
+  const rowCounts: number[][] = Array.from({ length: 9 }, () => new Array(10).fill(0))
+  const colCounts: number[][] = Array.from({ length: 9 }, () => new Array(10).fill(0))
+  const boxCounts: number[][] = Array.from({ length: 9 }, () => new Array(10).fill(0))
+
+  for (let row = 0; row < 9; row++) {
+    for (let col = 0; col < 9; col++) {
+      const value = board[row][col].value
+      if (value === null) continue
+      rowCounts[row][value]++
+      colCounts[col][value]++
+      boxCounts[boxIndex(row, col)][value]++
+    }
+  }
+
+  for (let row = 0; row < 9; row++) {
+    for (let col = 0; col < 9; col++) {
+      const cell = board[row][col]
+
+      // Givens are correct by construction; flagging them would just make the
+      // player's own mistake harder to spot.
+      if (cell.isInitial || cell.value === null) {
+        cell.isError = false
+        continue
+      }
+
+      const value = cell.value
+      const duplicate =
+        rowCounts[row][value] > 1 ||
+        colCounts[col][value] > 1 ||
+        boxCounts[boxIndex(row, col)][value] > 1
+
+      cell.isError = wrongIndices.has(row * 9 + col) || duplicate
+    }
+  }
+
+  return board
+}
+
+export function useSudoku(isActive = true) {
   const [state, setState] = useState<SudokuState>(() => {
     const { puzzle, solution } = generatePuzzleWithDifficulty('medium')
     return {
@@ -110,7 +230,7 @@ export function useSudoku() {
 
   // Timer effect
   useEffect(() => {
-    if (state.gameStatus === 'playing') {
+    if (isActive && state.gameStatus === 'playing') {
       timerRef.current = setInterval(() => {
         setState(prev => ({ ...prev, timer: prev.timer + 1 }))
       }, 1000)
@@ -126,7 +246,7 @@ export function useSudoku() {
         clearInterval(timerRef.current)
       }
     }
-  }, [state.gameStatus])
+  }, [isActive, state.gameStatus])
 
   const selectCell = useCallback((row: number, col: number) => {
     setState(prev => ({
@@ -142,6 +262,7 @@ export function useSudoku() {
       const cell = prev.board[row][col]
 
       if (cell.isInitial) return prev
+      if (!prev.notesMode && hasSudokuConflict(prev.board, row, col, num)) return prev
 
       // Save to history
       const newHistory = [...prev.history, cloneBoard(prev.board)]
@@ -156,14 +277,12 @@ export function useSudoku() {
           newBoard[row][col].notes.add(num)
         }
         newBoard[row][col].value = null
-        newBoard[row][col].isError = false
       } else {
-        // Set number and validate on input
         newBoard[row][col].value = num
         newBoard[row][col].notes.clear()
-        const expectedValue = prev.solution[row * 9 + col]
-        newBoard[row][col].isError = expectedValue !== null && num !== expectedValue + 1
       }
+
+      applyErrors(newBoard, findSolutionMismatches(newBoard, prev.solution))
 
       // Check for win (only if no errors)
       const isComplete = newBoard.every((r, ri) =>
@@ -201,6 +320,9 @@ export function useSudoku() {
         isError: false,
       }
 
+      // Clearing a cell can resolve a conflict elsewhere.
+      applyErrors(newBoard, findSolutionMismatches(newBoard, prev.solution))
+
       return {
         ...prev,
         board: newBoard,
@@ -230,7 +352,7 @@ export function useSudoku() {
               const newBoard = cloneBoard(prev.board)
               newBoard[row][col].value = solutionValue + 1
               newBoard[row][col].notes.clear()
-              newBoard[row][col].isError = false
+              applyErrors(newBoard, findSolutionMismatches(newBoard, prev.solution))
 
               // Check for win after hint
               const isComplete = newBoard.every((r, ri) =>
@@ -291,6 +413,8 @@ export function useSudoku() {
           }
         }
       }
+
+      applyErrors(newBoard, findSolutionMismatches(newBoard, prev.solution))
 
       return {
         ...prev,

@@ -1,4 +1,10 @@
 import type * as Party from "partykit/server"
+import {
+  markConnected,
+  markDisconnected,
+  nextHost,
+  canControlGame,
+} from "./shared/presence"
 
 // Core types
 export type Team = "red" | "blue"
@@ -21,6 +27,8 @@ export interface Player {
   team: Team | null
   role: PlayerRole | null
   joinedAt: number
+  /** False while their socket is away; they stay in the game and can rejoin. */
+  connected?: boolean
 }
 
 export interface Card {
@@ -540,6 +548,18 @@ export default class CodenamesParty implements Party.Server {
 
       switch (data.type) {
         case "join": {
+          // A known player is reconnecting, not joining. Their team and role
+          // are still on record, so broadcastState hands the spymaster their
+          // spymaster view again - and only them.
+          const returning = markConnected(this.state.players, sender.id)
+          if (returning) {
+            returning.name = data.name || returning.name
+            await this.saveState()
+            this.broadcast({ type: "player-joined", player: returning })
+            this.broadcastState()
+            break
+          }
+
           if (this.state.status === "playing") {
             this.send(sender, { type: "error", message: "Game already in progress" })
             return
@@ -551,6 +571,7 @@ export default class CodenamesParty implements Party.Server {
             team: null,
             role: null,
             joinedAt: Date.now(),
+            connected: true,
           }
 
           this.state.players[sender.id] = player
@@ -562,7 +583,7 @@ export default class CodenamesParty implements Party.Server {
         }
 
         case "proceed-to-team-selection": {
-          if (sender.id !== this.state.hostId) {
+          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
             this.send(sender, { type: "error", message: "Only host can proceed" })
             return
           }
@@ -620,7 +641,7 @@ export default class CodenamesParty implements Party.Server {
         }
 
         case "start-game": {
-          if (sender.id !== this.state.hostId) {
+          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
             this.send(sender, { type: "error", message: "Only host can start the game" })
             return
           }
@@ -795,7 +816,7 @@ export default class CodenamesParty implements Party.Server {
         }
 
         case "restart": {
-          if (sender.id !== this.state.hostId) {
+          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
             this.send(sender, { type: "error", message: "Only host can restart" })
             return
           }
@@ -832,10 +853,8 @@ export default class CodenamesParty implements Party.Server {
 
           // Transfer host if needed
           if (sender.id === this.state.hostId) {
-            const remaining = Object.keys(this.state.players)
-            if (remaining.length > 0) {
-              this.state.hostId = remaining[0]
-            }
+            const next = nextHost(this.state.players, sender.id)
+            if (next) this.state.hostId = next
           }
 
           await this.saveState()
@@ -853,18 +872,13 @@ export default class CodenamesParty implements Party.Server {
     if (!this.state) return
 
     if (this.state.players[conn.id]) {
-      delete this.state.players[conn.id]
+      markDisconnected(this.state.players, conn.id)
 
       // Transfer host if needed
-      if (conn.id === this.state.hostId) {
-        const remaining = Object.keys(this.state.players)
-        if (remaining.length > 0) {
-          this.state.hostId = remaining[0]
-        }
-      }
+      // Host keeps the role across a blip; canControlGame covers a real absence.
 
       await this.saveState()
-      this.broadcast({ type: "player-left", playerId: conn.id })
+      // No "player-left": they may be back shortly and clients remove on that.
       this.broadcastState()
     }
   }

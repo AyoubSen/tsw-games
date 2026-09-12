@@ -1,6 +1,6 @@
 import PartySocket from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { generateRoomCode, PARTYKIT_HOST } from "@/lib/partykit";
+import { generateRoomCode, PARTYKIT_HOST, getPersistentPlayerId } from "@/lib/partykit";
 import type {
 	Guess,
 	PublicGameState,
@@ -227,6 +227,7 @@ export function useMultiplayerDrawing() {
 			const socket = new PartySocket({
 				host: PARTYKIT_HOST,
 				room: roomCode,
+				id: getPersistentPlayerId("drawing", roomCode),
 				party: "drawing",
 				query: {
 					host: isHost.toString(),

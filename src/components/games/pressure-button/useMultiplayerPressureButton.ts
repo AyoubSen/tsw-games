@@ -1,6 +1,6 @@
 import PartySocket from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { generateRoomCode, PARTYKIT_HOST } from "@/lib/partykit";
+import { generateRoomCode, PARTYKIT_HOST, getPersistentPlayerId } from "@/lib/partykit";
 import type {
 	PressureButtonSettings,
 	PublicPressureButtonGameState,
@@ -194,6 +194,7 @@ export function useMultiplayerPressureButton() {
 			const socket = new PartySocket({
 				host: PARTYKIT_HOST,
 				room: roomCode,
+				id: getPersistentPlayerId("pressure-button", roomCode),
 				party: "pressurebutton",
 				query: {
 					host: isHost.toString(),

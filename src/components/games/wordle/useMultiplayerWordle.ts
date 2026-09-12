@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import PartySocket from "partysocket"
-import { PARTYKIT_HOST, generateRoomCode } from "@/lib/partykit"
+import { PARTYKIT_HOST, generateRoomCode, getPersistentPlayerId } from "@/lib/partykit"
 import type { ServerMessage, PublicGameState, GameMode, RevealMode } from "../../../../party/wordle"
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
@@ -55,6 +55,7 @@ export function useMultiplayerWordle() {
     const socket = new PartySocket({
       host: PARTYKIT_HOST,
       room: roomCode,
+      id: getPersistentPlayerId("wordle", roomCode),
       query: {
         host: isHost.toString(),
         mode,

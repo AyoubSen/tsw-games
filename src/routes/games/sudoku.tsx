@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft, Clock, RotateCcw, Trophy, Pause, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -9,6 +9,7 @@ import { MultiplayerLobby } from '@/components/games/sudoku/MultiplayerLobby'
 import { MultiplayerGame } from '@/components/games/sudoku/MultiplayerGame'
 import { useSudoku, type Difficulty, type GameMode } from '@/components/games/sudoku/useSudoku'
 import { useMultiplayerSudoku } from '@/components/games/sudoku/useMultiplayerSudoku'
+import { useSudokuKeyboard } from '@/components/games/sudoku/useSudokuKeyboard'
 
 export const Route = createFileRoute('/games/sudoku')({ component: SudokuPage })
 
@@ -29,9 +30,10 @@ const DIFFICULTY_LABELS: Record<Difficulty, string> = {
 
 function SudokuPage() {
   const [view, setView] = useState<GameView>('select')
+  const [isResuming, setIsResuming] = useState(false)
 
   // Single player state
-  const game = useSudoku()
+  const game = useSudoku(view === 'single')
 
   // Multiplayer state
   const multiplayer = useMultiplayerSudoku()
@@ -52,9 +54,27 @@ function SudokuPage() {
     multiplayer.joinGame(roomCode, playerName)
   }
 
+  // Walk straight back into a game this tab was already in, e.g. after a
+  // reload. Runs once; if there is nothing to resume we just show the menu.
+  const resumeSession = multiplayer.resumeSession
+  const hasAttemptedResume = useRef(false)
+  useEffect(() => {
+    if (hasAttemptedResume.current) return
+    hasAttemptedResume.current = true
+    setIsResuming(resumeSession())
+  }, [resumeSession])
+
+  // Give up the "resuming" placeholder once we land somewhere real.
+  useEffect(() => {
+    if (!isResuming) return
+    if (multiplayer.gameState || multiplayer.connectionStatus === 'disconnected' || multiplayer.connectionStatus === 'error') {
+      setIsResuming(false)
+    }
+  }, [isResuming, multiplayer.gameState, multiplayer.connectionStatus])
+
   // Watch for multiplayer connection and game state changes
   useEffect(() => {
-    if (multiplayer.connectionStatus === 'connected' && multiplayer.gameState) {
+    if (multiplayer.gameState) {
       if (multiplayer.gameState.status === 'waiting') {
         setView('multiplayer-lobby')
       } else if (
@@ -63,6 +83,8 @@ function SudokuPage() {
       ) {
         setView('multiplayer-game')
       }
+    } else if (multiplayer.connectionStatus === 'error') {
+      setView('select')
     }
   }, [multiplayer.connectionStatus, multiplayer.gameState?.status])
 
@@ -80,42 +102,34 @@ function SudokuPage() {
     setView('select')
   }
 
-  // Keyboard handler for single player
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (view !== 'single' || game.gameStatus !== 'playing') return
+  // Keyboard control for single player (multiplayer wires up the same hook)
+  useSudokuKeyboard({
+    enabled: view === 'single' && game.gameStatus === 'playing',
+    selectedCell: game.selectedCell,
+    onSelectCell: game.selectCell,
+    onNumber: game.setNumber,
+    onClear: game.clearCell,
+    onToggleNotes: game.toggleNotesMode,
+  })
 
-    // Numbers 1-9 (both regular and numpad)
-    const num = parseInt(e.key)
-    if (num >= 1 && num <= 9) {
-      e.preventDefault()
-      game.setNumber(num)
-    }
-    // Delete or Backspace to clear
-    else if (e.key === 'Delete' || e.key === 'Backspace') {
-      e.preventDefault()
-      game.clearCell()
-    }
-    // Arrow keys to navigate
-    else if (e.key.startsWith('Arrow') && game.selectedCell) {
-      e.preventDefault()
-      const [row, col] = game.selectedCell
-      let newRow = row
-      let newCol = col
-
-      if (e.key === 'ArrowUp') newRow = Math.max(0, row - 1)
-      else if (e.key === 'ArrowDown') newRow = Math.min(8, row + 1)
-      else if (e.key === 'ArrowLeft') newCol = Math.max(0, col - 1)
-      else if (e.key === 'ArrowRight') newCol = Math.min(8, col + 1)
-
-      game.selectCell(newRow, newCol)
-    }
-  }, [view, game])
-
-  // Add keyboard listener
-  useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleKeyDown])
+  // Rejoining a game from before a reload - avoids flashing the menu.
+  if (view === 'select' && isResuming) {
+    return (
+      <div className="min-h-[calc(100vh-73px)] bg-background">
+        <div className="px-4 py-3 flex items-center justify-between border-b border-border">
+          <Button variant="ghost" size="sm" onClick={handleBackToSelect}>
+            <ArrowLeft className="w-4 h-4 mr-1" />
+            Back
+          </Button>
+          <h1 className="text-lg font-bold">Sudoku</h1>
+          <div className="w-[60px]" />
+        </div>
+        <div className="flex items-center justify-center py-24">
+          <p className="text-muted-foreground">Rejoining your game…</p>
+        </div>
+      </div>
+    )
+  }
 
   // Mode selection view
   if (view === 'select') {
@@ -260,6 +274,8 @@ function SudokuPage() {
           gameState={multiplayer.gameState}
           playerId={multiplayer.playerId}
           isHost={multiplayer.isHost}
+          connected={multiplayer.connectionStatus === 'connected'}
+          error={multiplayer.error}
           onStart={multiplayer.startGame}
           onLeave={handleLeaveMultiplayer}
         />
@@ -283,7 +299,12 @@ function SudokuPage() {
           gameState={multiplayer.gameState}
           playerId={multiplayer.playerId}
           isHost={multiplayer.isHost}
-          solution={multiplayer.solution}
+          puzzleReady={multiplayer.puzzleReady}
+          wrongCells={multiplayer.wrongCells}
+          serverTimeOffset={multiplayer.serverTimeOffset}
+          restoredCells={multiplayer.restoredCells}
+          connected={multiplayer.connectionStatus === 'connected'}
+          error={multiplayer.error}
           onUpdateProgress={multiplayer.updateProgress}
           onRestart={multiplayer.restartGame}
           onLeave={handleLeaveMultiplayer}

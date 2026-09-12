@@ -1,6 +1,6 @@
 import PartySocket from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { generateRoomCode, PARTYKIT_HOST } from "@/lib/partykit";
+import { generateRoomCode, PARTYKIT_HOST, getPersistentPlayerId } from "@/lib/partykit";
 import type {
 	GameMode,
 	PublicGameState,
@@ -180,6 +180,7 @@ export function useMultiplayerTypeRace() {
 			const socket = new PartySocket({
 				host: PARTYKIT_HOST,
 				room: roomCode,
+				id: getPersistentPlayerId("typerace", roomCode),
 				party: "typerace",
 				query: {
 					host: isHost.toString(),

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import PartySocket from "partysocket"
-import { PARTYKIT_HOST, generateRoomCode } from "@/lib/partykit"
+import { PARTYKIT_HOST, generateRoomCode, getPersistentPlayerId } from "@/lib/partykit"
 import type {
   ServerMessage,
   PublicGameState,
@@ -46,6 +46,7 @@ export function useMultiplayerMafia() {
       const socket = new PartySocket({
         host: PARTYKIT_HOST,
         room: roomCode,
+        id: getPersistentPlayerId("mafia", roomCode),
         party: "mafia",
         query: {
           host: isHost.toString(),

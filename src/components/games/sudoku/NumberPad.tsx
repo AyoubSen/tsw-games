@@ -111,6 +111,11 @@ export function NumberPad({
           </Button>
         )}
       </div>
+
+      {/* Space is not discoverable on its own, so spell the shortcuts out. */}
+      <p className="text-center text-xs text-muted-foreground">
+        Arrows move · 1-9 enter · Space toggles notes · Backspace clears
+      </p>
     </div>
   )
 }

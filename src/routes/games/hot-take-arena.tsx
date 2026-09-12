@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useMultiplayerSession } from "@/lib/multiplayerSession"
 import { Check, Loader2, RotateCcw, Timer, Trophy, Vote } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useMultiplayerHotTakeArena } from "@/components/games/hot-take-arena/useMultiplayerHotTakeArena";
@@ -130,6 +131,16 @@ function HotTakeArenaPage() {
 		useState<HotTakePosition | null>(null);
 
 	const multiplayer = useMultiplayerHotTakeArena();
+
+	// Walk back into the room this tab was in before a reload.
+	const session = useMultiplayerSession({
+		game: "hot-take-arena",
+		joinGame: multiplayer.joinGame,
+		hasGameState: !!multiplayer.gameState,
+		error: multiplayer.error,
+		connectionStatus: multiplayer.connectionStatus,
+		onAbandon: multiplayer.disconnect,
+	});
 	const activeRoundNumber = multiplayer.gameState?.roundNumber;
 
 	useEffect(() => {
@@ -139,6 +150,8 @@ function HotTakeArenaPage() {
 	}, [multiplayer.connectionStatus, multiplayer.gameState]);
 
 	useEffect(() => {
+		// An unrequested resume that failed is not the player's problem.
+		if (session.isSuppressingErrors()) return;
 		if (multiplayer.error) {
 			setMessage(multiplayer.error);
 		}
@@ -211,6 +224,7 @@ function HotTakeArenaPage() {
 
 	const handleBack = () => {
 		if (multiplayer.connectionStatus !== "disconnected") {
+			session.forget();
 			multiplayer.disconnect();
 		}
 
@@ -231,7 +245,8 @@ function HotTakeArenaPage() {
 			promptPack,
 		};
 
-		multiplayer.createGame(playerName.trim(), settings);
+		const createdRoom = multiplayer.createGame(playerName.trim(), settings);
+		session.remember(createdRoom, playerName.trim());
 		setMessage(null);
 	};
 
@@ -242,6 +257,7 @@ function HotTakeArenaPage() {
 		}
 
 		multiplayer.joinGame(joinRoomCode.trim(), playerName.trim());
+		session.remember((joinRoomCode.trim()).toUpperCase(), playerName.trim());
 		setMessage(null);
 	};
 
@@ -264,6 +280,14 @@ function HotTakeArenaPage() {
 		multiplayer.submitVote(position);
 		setMessage(null);
 	};
+
+	if (session.isResuming && view === "setup") {
+		return (
+			<div className="flex min-h-[calc(100vh-73px)] items-center justify-center bg-background">
+				<p className="text-muted-foreground">Rejoining your game…</p>
+			</div>
+		);
+	}
 
 	if (view === "setup") {
 		return (

@@ -1,6 +1,6 @@
 import PartySocket from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { generateRoomCode, PARTYKIT_HOST } from "@/lib/partykit";
+import { generateRoomCode, PARTYKIT_HOST, getPersistentPlayerId } from "@/lib/partykit";
 import type {
 	HotTakePosition,
 	HotTakeSettings,
@@ -176,6 +176,7 @@ export function useMultiplayerHotTakeArena() {
 			const socket = new PartySocket({
 				host: PARTYKIT_HOST,
 				room: roomCode,
+				id: getPersistentPlayerId("hot-take-arena", roomCode),
 				party: "hottakearena",
 				query: {
 					host: isHost.toString(),

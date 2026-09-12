@@ -46,7 +46,7 @@ export function SudokuBoard({ board, selectedCell, onCellSelect, disabled, hardc
                   : `${isSelected ? 'bg-primary/40' : ''}
                      ${!isSelected && (isInSameRow || isInSameCol || isInSameBox) ? 'bg-primary/10' : ''}
                      ${isHighlighted ? 'bg-primary/35 font-bold' : ''}
-                     ${cell.isInitial ? 'text-foreground font-semibold' : 'text-primary'}`
+                     ${cell.isInitial ? 'text-foreground font-bold bg-muted/30' : 'text-primary font-semibold'}`
                 }
                 ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-primary/15'}
               `}

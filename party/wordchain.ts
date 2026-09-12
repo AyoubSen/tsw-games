@@ -1,4 +1,11 @@
 import type * as Party from "partykit/server"
+import {
+  markConnected,
+  markDisconnected,
+  presentCount,
+  nextHost,
+  canControlGame,
+} from "./shared/presence";
 
 // Player state
 export interface Player {
@@ -8,6 +15,8 @@ export interface Player {
   eliminatedReason?: string // "timeout" | "invalid" | "repeated" | "wrong-letter"
   eliminatedWord?: string // The word that caused elimination
   joinedAt: number
+  /** False while their socket is away; they are not removed from the game. */
+  connected?: boolean
   hearts: number // Current hearts (lives)
 }
 
@@ -396,6 +405,16 @@ export default class WordChainParty implements Party.Server {
 
       switch (data.type) {
         case "join": {
+          const returning = markConnected(this.state.players, sender.id);
+          if (returning) {
+            // A reconnect, not a new player - never rejected mid-game.
+            returning.name = data.name || returning.name;
+            await this.saveState();
+            this.broadcast({ type: "player-joined", player: returning });
+            this.broadcast({ type: "state", state: this.getPublicState() });
+            break;
+          }
+
           if (this.state.status !== "waiting") {
             this.send(sender, { type: "error", message: "Game already started" })
             return
@@ -411,6 +430,7 @@ export default class WordChainParty implements Party.Server {
             name: data.name,
             eliminated: false,
             joinedAt: Date.now(),
+            connected: true,
             hearts: this.state.maxHearts,
           }
 
@@ -424,12 +444,12 @@ export default class WordChainParty implements Party.Server {
         }
 
         case "start": {
-          if (sender.id !== this.state.hostId) {
+          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
             this.send(sender, { type: "error", message: "Only host can start" })
             return
           }
 
-          if (Object.keys(this.state.players).length < 2) {
+          if (presentCount(this.state.players) < 2) {
             this.send(sender, { type: "error", message: "Need at least 2 players" })
             return
           }
@@ -546,10 +566,8 @@ export default class WordChainParty implements Party.Server {
           this.state.playerOrder = this.state.playerOrder.filter(id => id !== sender.id)
 
           if (sender.id === this.state.hostId) {
-            const remaining = Object.keys(this.state.players)
-            if (remaining.length > 0) {
-              this.state.hostId = remaining[0]
-            }
+            const next = nextHost(this.state.players, sender.id);
+            if (next) this.state.hostId = next;
           }
 
           await this.saveState()
@@ -573,7 +591,7 @@ export default class WordChainParty implements Party.Server {
         }
 
         case "restart": {
-          if (sender.id !== this.state.hostId) {
+          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
             this.send(sender, { type: "error", message: "Only host can restart" })
             return
           }
@@ -615,18 +633,15 @@ export default class WordChainParty implements Party.Server {
       const wasPlaying = this.state.status === "playing"
       const wasCurrentPlayer = conn.id === this.state.currentPlayerId
 
-      delete this.state.players[conn.id]
+      markDisconnected(this.state.players, conn.id);
       this.state.playerOrder = this.state.playerOrder.filter(id => id !== conn.id)
 
-      if (conn.id === this.state.hostId) {
-        const remaining = Object.keys(this.state.players)
-        if (remaining.length > 0) {
-          this.state.hostId = remaining[0]
-        }
-      }
+      // The host keeps the role across a blip; canControlGame lets someone else
+      // act only once the host is genuinely absent.
 
       await this.saveState()
-      this.broadcast({ type: "player-left", playerId: conn.id })
+      // No "player-left" here: they may be back in a moment, and the client
+      // removes players on that message.
 
       // If game was playing, handle turn/win logic
       if (wasPlaying) {

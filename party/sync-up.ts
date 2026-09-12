@@ -1,5 +1,12 @@
 import type * as Party from "partykit/server";
 import {
+	markConnected,
+	markDisconnected,
+	presentCount,
+	nextHost,
+	canControlGame,
+} from "./shared/presence";
+import {
 	normalizeSyncUpAnswer,
 	pickSyncUpPrompt,
 	type SyncUpPrompt,
@@ -11,6 +18,8 @@ export interface SyncUpPlayer {
 	name: string;
 	score: number;
 	joinedAt: number;
+	/** False while their socket is away; they are not removed from the game. */
+	connected?: boolean;
 }
 
 export interface SyncUpSettings {
@@ -326,6 +335,16 @@ export default class SyncUpParty implements Party.Server {
 
 			switch (data.type) {
 				case "join": {
+					const returning = markConnected(this.state.players, sender.id);
+					if (returning) {
+						// A reconnect, not a new player - never rejected mid-game.
+						returning.name = data.name || returning.name;
+						await this.saveState();
+						this.broadcast({ type: "player-joined", player: returning });
+						this.broadcast({ type: "state", state: this.getPublicState() });
+						break;
+					}
+
 					if (this.state.status !== "waiting") {
 						this.send(sender, { type: "error", message: "Game already started" });
 						return;
@@ -341,6 +360,7 @@ export default class SyncUpParty implements Party.Server {
 						name: data.name.slice(0, 20),
 						score: 0,
 						joinedAt: Date.now(),
+						connected: true,
 					};
 
 					this.state.players[sender.id] = player;
@@ -351,12 +371,12 @@ export default class SyncUpParty implements Party.Server {
 				}
 
 				case "start": {
-					if (sender.id !== this.state.hostId) {
+					if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
 						this.send(sender, { type: "error", message: "Only host can start" });
 						return;
 					}
 
-					if (Object.keys(this.state.players).length < 2) {
+					if (presentCount(this.state.players) < 2) {
 						this.send(sender, { type: "error", message: "Need at least 2 players" });
 						return;
 					}
@@ -413,7 +433,7 @@ export default class SyncUpParty implements Party.Server {
 				}
 
 				case "next-round": {
-					if (sender.id !== this.state.hostId) {
+					if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
 						this.send(sender, {
 							type: "error",
 							message: "Only host can advance rounds",
@@ -436,7 +456,7 @@ export default class SyncUpParty implements Party.Server {
 				}
 
 				case "restart": {
-					if (sender.id !== this.state.hostId) {
+					if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
 						this.send(sender, { type: "error", message: "Only host can restart" });
 						return;
 					}
@@ -467,10 +487,8 @@ export default class SyncUpParty implements Party.Server {
 					delete this.state.answers[sender.id];
 
 					if (sender.id === this.state.hostId) {
-						const remaining = Object.keys(this.state.players);
-						if (remaining.length > 0) {
-							this.state.hostId = remaining[0];
-						}
+						const next = nextHost(this.state.players, sender.id);
+						if (next) this.state.hostId = next;
 					}
 
 					await this.saveState();
@@ -493,18 +511,15 @@ export default class SyncUpParty implements Party.Server {
 			return;
 		}
 
-		delete this.state.players[connection.id];
+		markDisconnected(this.state.players, connection.id);
 		delete this.state.answers[connection.id];
 
-		if (connection.id === this.state.hostId) {
-			const remaining = Object.keys(this.state.players);
-			if (remaining.length > 0) {
-				this.state.hostId = remaining[0];
-			}
-		}
+		// The host keeps the role across a blip; canControlGame lets someone else
+		// act only once the host is genuinely absent.
 
 		await this.saveState();
-		this.broadcast({ type: "player-left", playerId: connection.id });
+		// No "player-left" here: they may be back in a moment, and the client
+		// removes players on that message.
 		this.broadcast({ type: "state", state: this.getPublicState() });
 	}
 }

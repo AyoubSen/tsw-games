@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useMultiplayerSession } from "@/lib/multiplayerSession"
 import { Clock, Heart, Link2, RotateCcw, Skull } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { MultiplayerGame } from "@/components/games/wordchain/MultiplayerGame";
@@ -49,9 +50,21 @@ function WordChainPage() {
 	const [copiedRoomCode, setCopiedRoomCode] = useState(false);
 
 	const multiplayer = useMultiplayerWordchain();
+
+	// Walk back into the room this tab was in before a reload.
+	const session = useMultiplayerSession({
+		game: "wordchain",
+		joinGame: multiplayer.joinGame,
+		hasGameState: !!multiplayer.gameState,
+		error: multiplayer.error,
+		connectionStatus: multiplayer.connectionStatus,
+		onAbandon: multiplayer.disconnect,
+	});
 	const multiplayerGameState = multiplayer.gameState;
 
 	useEffect(() => {
+		// An unrequested resume that failed is not the player's problem.
+		if (session.isSuppressingErrors()) return;
 		if (multiplayer.error) {
 			setMessage(multiplayer.error);
 		}
@@ -90,7 +103,8 @@ function WordChainPage() {
 			maxHearts: gameMode === "casual" ? maxHearts : 1,
 		};
 
-		multiplayer.createGame(playerName.trim(), settings);
+		const createdRoom = multiplayer.createGame(playerName.trim(), settings);
+		session.remember(createdRoom, playerName.trim());
 		setMessage(null);
 	};
 
@@ -101,10 +115,12 @@ function WordChainPage() {
 		}
 
 		multiplayer.joinGame(joinRoomCode.trim(), playerName.trim());
+		session.remember((joinRoomCode.trim()).toUpperCase(), playerName.trim());
 		setMessage(null);
 	};
 
 	const handleLeaveMultiplayer = () => {
+		session.forget();
 		multiplayer.disconnect();
 		setView("select");
 		setMessage(null);
@@ -112,6 +128,7 @@ function WordChainPage() {
 
 	const handleBackToSelect = () => {
 		if (multiplayer.connectionStatus !== "disconnected") {
+			session.forget();
 			multiplayer.disconnect();
 		}
 		setView("select");
@@ -131,6 +148,14 @@ function WordChainPage() {
 			setMessage("Could not copy the room code.");
 		}
 	};
+
+	if (session.isResuming && view === "select") {
+		return (
+			<div className="flex min-h-[calc(100vh-73px)] items-center justify-center bg-background">
+				<p className="text-muted-foreground">Rejoining your game…</p>
+			</div>
+		);
+	}
 
 	if (view === "select") {
 		return (

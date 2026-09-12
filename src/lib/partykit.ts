@@ -25,6 +25,33 @@ export function createPartySocket(roomId: string, isHost: boolean, mode: string)
   })
 }
 
+/**
+ * A connection id that survives reconnects and page reloads, so the server can
+ * recognise a returning player instead of treating them as a stranger. Passed
+ * to PartySocket as `id`, which becomes `conn.id` on the server.
+ *
+ * sessionStorage, not localStorage, is deliberate: it is per-tab, so two tabs
+ * in one browser remain independent players. localStorage would make them
+ * collide on a single connection id.
+ */
+export function getPersistentPlayerId(game: string, roomCode: string): string {
+  const key = `${game}:playerId:${roomCode}`
+  if (typeof sessionStorage === "undefined") {
+    return crypto.randomUUID()
+  }
+  const existing = sessionStorage.getItem(key)
+  if (existing) return existing
+  const id = crypto.randomUUID()
+  sessionStorage.setItem(key, id)
+  return id
+}
+
+/** Forget this tab's identity for a room - used when the player deliberately leaves. */
+export function clearPersistentPlayerId(game: string, roomCode: string): void {
+  if (typeof sessionStorage === "undefined") return
+  sessionStorage.removeItem(`${game}:playerId:${roomCode}`)
+}
+
 export function generateRoomCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
   let code = ""

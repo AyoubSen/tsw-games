@@ -1,6 +1,6 @@
 import PartySocket from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { generateRoomCode, PARTYKIT_HOST } from "@/lib/partykit";
+import { generateRoomCode, PARTYKIT_HOST, getPersistentPlayerId } from "@/lib/partykit";
 import type {
 	GameSettings,
 	PublicGameState,
@@ -206,6 +206,7 @@ export function useMultiplayerWordScramble() {
 			const socket = new PartySocket({
 				host: PARTYKIT_HOST,
 				room: roomCode,
+				id: getPersistentPlayerId("word-scramble", roomCode),
 				party: "wordscramble",
 				query: {
 					host: isHost.toString(),

@@ -1,4 +1,11 @@
 import type * as Party from "partykit/server"
+import {
+  markConnected,
+  markDisconnected,
+  presentCount,
+  nextHost,
+  canControlGame,
+} from "./shared/presence";
 
 // Game modes
 export type GameMode = "race" | "classic"
@@ -14,6 +21,8 @@ export interface Player {
   guesses: string[][] // Stored guesses with results
   currentGuess: number // Current guess number (0-5)
   joinedAt: number
+  /** False while their socket is away; they are not removed from the game. */
+  connected?: boolean
   readyForNextTurn: boolean // For turns mode - player submitted their guess
 }
 
@@ -247,6 +256,16 @@ export default class WordleParty implements Party.Server {
 
       switch (data.type) {
         case "join": {
+          const returning = markConnected(this.state.players, sender.id);
+          if (returning) {
+            // A reconnect, not a new player - never rejected mid-game.
+            returning.name = data.name || returning.name;
+            await this.saveState();
+            this.broadcast({ type: "player-joined", player: returning });
+            this.broadcast({ type: "state", state: this.getPublicState() });
+            break;
+          }
+
           if (this.state.status !== "waiting") {
             this.send(sender, { type: "error", message: "Game already started" })
             return
@@ -266,6 +285,7 @@ export default class WordleParty implements Party.Server {
             guesses: [],
             currentGuess: 0,
             joinedAt: Date.now(),
+            connected: true,
             readyForNextTurn: false,
           }
 
@@ -279,12 +299,12 @@ export default class WordleParty implements Party.Server {
         }
 
         case "start": {
-          if (sender.id !== this.state.hostId) {
+          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
             this.send(sender, { type: "error", message: "Only host can start" })
             return
           }
 
-          if (Object.keys(this.state.players).length < 2) {
+          if (presentCount(this.state.players) < 2) {
             this.send(sender, { type: "error", message: "Need at least 2 players" })
             return
           }
@@ -466,10 +486,8 @@ export default class WordleParty implements Party.Server {
 
           // If host leaves, assign new host
           if (sender.id === this.state.hostId) {
-            const remaining = Object.keys(this.state.players)
-            if (remaining.length > 0) {
-              this.state.hostId = remaining[0]
-            }
+            const next = nextHost(this.state.players, sender.id);
+            if (next) this.state.hostId = next;
           }
 
           await this.saveState()
@@ -479,7 +497,7 @@ export default class WordleParty implements Party.Server {
         }
 
         case "restart": {
-          if (sender.id !== this.state.hostId) {
+          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
             this.send(sender, { type: "error", message: "Only host can restart" })
             return
           }
@@ -518,18 +536,15 @@ export default class WordleParty implements Party.Server {
 
     // Remove player on disconnect
     if (this.state.players[conn.id]) {
-      delete this.state.players[conn.id]
+      markDisconnected(this.state.players, conn.id);
 
       // If host leaves, assign new host
-      if (conn.id === this.state.hostId) {
-        const remaining = Object.keys(this.state.players)
-        if (remaining.length > 0) {
-          this.state.hostId = remaining[0]
-        }
-      }
+      // The host keeps the role across a blip; canControlGame lets someone else
+      // act only once the host is genuinely absent.
 
       await this.saveState()
-      this.broadcast({ type: "player-left", playerId: conn.id })
+      // No "player-left" here: they may be back in a moment, and the client
+      // removes players on that message.
       this.broadcast({ type: "state", state: this.getPublicState() })
     }
   }

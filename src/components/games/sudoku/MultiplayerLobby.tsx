@@ -8,6 +8,8 @@ interface MultiplayerLobbyProps {
   gameState: PublicGameState
   playerId: string
   isHost: boolean
+  connected: boolean
+  error: string | null
   onStart: () => void
   onLeave: () => void
 }
@@ -19,7 +21,7 @@ const DIFFICULTY_LABELS = {
   expert: 'Expert',
 }
 
-export function MultiplayerLobby({ gameState, playerId, isHost, onStart, onLeave }: MultiplayerLobbyProps) {
+export function MultiplayerLobby({ gameState, playerId, isHost, connected, error, onStart, onLeave }: MultiplayerLobbyProps) {
   const [copied, setCopied] = useState(false)
 
   const copyRoomCode = async () => {
@@ -33,7 +35,8 @@ export function MultiplayerLobby({ gameState, playerId, isHost, onStart, onLeave
   }
 
   const players = Object.values(gameState.players)
-  const canStart = players.length >= 2 && isHost
+  const connectedPlayers = players.filter(player => player.connected !== false)
+  const canStart = connectedPlayers.length >= 2 && isHost && connected
 
   return (
     <div className="max-w-md mx-auto p-6 space-y-6">
@@ -75,7 +78,7 @@ export function MultiplayerLobby({ gameState, playerId, isHost, onStart, onLeave
             <div className="flex items-center gap-2 mb-3">
               <Users className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm font-medium">
-                Players ({players.length}/{gameState.maxPlayers})
+                Players ({connectedPlayers.length} connected, {players.length}/{gameState.maxPlayers})
               </span>
             </div>
 
@@ -93,6 +96,9 @@ export function MultiplayerLobby({ gameState, playerId, isHost, onStart, onLeave
                   <span className="font-medium flex-1">
                     {player.name}
                     {player.id === playerId && ' (You)'}
+                    {!player.connected && (
+                      <span className="ml-2 text-xs text-muted-foreground italic">reconnecting…</span>
+                    )}
                   </span>
                   {player.id === gameState.hostId && (
                     <Crown className="w-4 h-4 text-yellow-500" />
@@ -109,7 +115,7 @@ export function MultiplayerLobby({ gameState, playerId, isHost, onStart, onLeave
             </Button>
             {isHost ? (
               <Button onClick={onStart} disabled={!canStart} className="flex-1">
-                {players.length < 2 ? 'Need 2+ players' : 'Start Race'}
+                {connectedPlayers.length < 2 ? 'Need 2 connected' : 'Start Race'}
               </Button>
             ) : (
               <div className="flex-1 text-center text-sm text-muted-foreground py-2">
@@ -117,6 +123,10 @@ export function MultiplayerLobby({ gameState, playerId, isHost, onStart, onLeave
               </div>
             )}
           </div>
+          {!connected && (
+            <p className="text-center text-sm text-muted-foreground">Reconnecting before the race can start...</p>
+          )}
+          {error && <p className="text-center text-sm text-destructive">{error}</p>}
         </CardContent>
       </Card>
     </div>

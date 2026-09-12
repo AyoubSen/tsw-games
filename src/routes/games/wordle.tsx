@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useMultiplayerSession } from '@/lib/multiplayerSession'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft, RotateCcw, Loader2, Database } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -39,6 +40,16 @@ function WordlePage() {
   // Multiplayer state
   const multiplayer = useMultiplayerWordle()
 
+  // Walk back into the room this tab was in before a reload.
+  const session = useMultiplayerSession({
+    game: 'wordle',
+    joinGame: multiplayer.joinGame,
+    hasGameState: !!multiplayer.gameState,
+    error: multiplayer.error,
+    connectionStatus: multiplayer.connectionStatus,
+    onAbandon: multiplayer.disconnect,
+  });
+
   // Load words on mount
   useEffect(() => {
     if (!isWordsLoaded()) {
@@ -57,12 +68,14 @@ function WordlePage() {
 
   // Handle multiplayer game creation
   const handleCreateMultiplayer = (mode: GameMode, revealMode: RevealMode, playerName: string) => {
-    multiplayer.createGame(mode, revealMode, playerName)
+    const createdRoom = multiplayer.createGame(mode, revealMode, playerName)
+    session.remember(createdRoom, playerName)
   }
 
   // Handle multiplayer game join
   const handleJoinMultiplayer = (roomCode: string, playerName: string) => {
-    multiplayer.joinGame(roomCode, playerName)
+    multiplayer.joinGame(roomCode, playerName);
+    session.remember((roomCode).toUpperCase(), playerName);
   }
 
   // Watch for multiplayer connection and game state changes
@@ -78,14 +91,16 @@ function WordlePage() {
 
   // Handle leaving multiplayer
   const handleLeaveMultiplayer = () => {
-    multiplayer.disconnect()
+    session.forget();
+    multiplayer.disconnect();
     setView('select')
   }
 
   // Handle back to mode selection
   const handleBackToSelect = () => {
     if (multiplayer.connectionStatus !== 'disconnected') {
-      multiplayer.disconnect()
+      session.forget();
+      multiplayer.disconnect();
     }
     singlePlayer.resetGame()
     setView('select')
@@ -103,6 +118,14 @@ function WordlePage() {
   }
 
   // Mode selection view
+  if (session.isResuming && view === 'select') {
+    return (
+      <div className="flex min-h-[calc(100vh-73px)] items-center justify-center bg-background">
+        <p className="text-muted-foreground">Rejoining your game…</p>
+      </div>
+    );
+  }
+
   if (view === 'select') {
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background">
@@ -295,5 +318,5 @@ function WordlePage() {
         </Button>
       </div>
     </div>
-  )
+  );
 }

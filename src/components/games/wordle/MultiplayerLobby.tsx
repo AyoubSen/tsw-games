@@ -10,6 +10,8 @@ interface MultiplayerLobbyProps {
   gameState: PublicGameState
   playerId: string
   isHost: boolean
+  connected: boolean
+  error: string | null
   onStart: () => void
   onLeave: () => void
 }
@@ -18,12 +20,15 @@ export function MultiplayerLobby({
   gameState,
   playerId,
   isHost,
+  connected,
+  error,
   onStart,
   onLeave,
 }: MultiplayerLobbyProps) {
   const [copied, setCopied] = useState(false)
   const players = Object.values(gameState.players)
   const playerCount = players.length
+  const connectedCount = players.filter(player => player.connected).length
 
   const copyInviteCode = async () => {
     await navigator.clipboard.writeText(gameState.roomCode)
@@ -31,7 +36,7 @@ export function MultiplayerLobby({
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const canStart = isHost && playerCount >= 2
+  const canStart = isHost && connected && connectedCount >= 2 && connectedCount === playerCount
 
   return (
     <div className="flex flex-col items-center p-4 max-w-md mx-auto">
@@ -70,7 +75,7 @@ export function MultiplayerLobby({
             <div className="flex items-center justify-between">
               <p className="text-sm font-medium flex items-center gap-2">
                 <Users className="w-4 h-4" />
-                Players ({playerCount}/{gameState.maxPlayers})
+                Players ({connectedCount} connected, {playerCount}/{gameState.maxPlayers})
               </p>
               <Badge variant="secondary" className="text-xs">{gameState.mode}</Badge>
             </div>
@@ -88,6 +93,7 @@ export function MultiplayerLobby({
                       {player.name.charAt(0).toUpperCase()}
                     </div>
                     <span className="font-medium text-sm">{player.name}</span>
+                    {!player.connected && <span className="text-xs text-muted-foreground">reconnecting...</span>}
                     {player.id === playerId && (
                       <Badge variant="outline" className="text-xs">You</Badge>
                     )}
@@ -120,7 +126,11 @@ export function MultiplayerLobby({
                   className="w-full"
                 >
                   <Play className="w-4 h-4 mr-2" />
-                  {canStart ? "Start Game" : `Need ${2 - playerCount} more player(s)`}
+                  {canStart
+                    ? "Start Game"
+                    : connectedCount < 2
+                      ? `Need ${2 - connectedCount} more connected`
+                      : "Waiting for everyone to reconnect"}
                 </Button>
                 <p className="text-xs text-center text-muted-foreground">
                   You are the host. Start when everyone is ready!
@@ -136,6 +146,8 @@ export function MultiplayerLobby({
             <Button variant="ghost" size="sm" onClick={onLeave} className="w-full">
               Leave Game
             </Button>
+            {!connected && <p className="text-xs text-center text-muted-foreground">Reconnecting...</p>}
+            {error && <p className="text-sm text-center text-destructive">{error}</p>}
           </div>
         </CardContent>
       </Card>

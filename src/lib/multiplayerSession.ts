@@ -136,6 +136,17 @@ export function useMultiplayerSession({
     }
   }, [isResuming, hasGameState, error, connectionStatus, game])
 
+  useEffect(() => {
+    if (!isResuming) return
+    const timeout = setTimeout(() => {
+      forgetSession(game)
+      abandonRef.current?.()
+      setIsResuming(false)
+      suppressRef.current = false
+    }, 15_000)
+    return () => clearTimeout(timeout)
+  }, [isResuming, game])
+
   /** True while an unrequested resume is in flight or being abandoned. */
   const isSuppressingErrors = useCallback(() => suppressRef.current, [])
 

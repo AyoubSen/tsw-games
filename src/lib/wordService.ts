@@ -10,6 +10,51 @@ const CACHE_DURATION = 30 * 24 * 60 * 60 * 1000
 const ANSWERS_URL = 'https://gist.githubusercontent.com/cfreshman/a03ef2cba789d8cf00c08f767e0fad7b/raw/wordle-answers-alphabetical.txt'
 const ALLOWED_URL = 'https://gist.githubusercontent.com/cfreshman/cdcdf777450c5b5301e439061d29694c/raw/wordle-allowed-guesses.txt'
 
+const FALLBACK_WORDS = [
+  'about', 'above', 'actor', 'admit', 'adopt', 'after', 'again', 'agent', 'agree', 'ahead',
+  'alarm', 'album', 'alert', 'alike', 'alive', 'allow', 'alone', 'along', 'alter', 'among',
+  'anger', 'angle', 'angry', 'apart', 'apple', 'apply', 'arena', 'argue', 'arise', 'array',
+  'aside', 'asset', 'audio', 'audit', 'avoid', 'award', 'aware', 'basic', 'beach', 'begin',
+  'black', 'blank', 'blend', 'blind', 'block', 'board', 'brain', 'brand', 'brave', 'bread',
+  'break', 'brick', 'brief', 'bring', 'broad', 'brown', 'build', 'cabin', 'carry', 'catch',
+  'chain', 'chair', 'charm', 'chase', 'check', 'chess', 'chest', 'chief', 'child', 'claim',
+  'class', 'clean', 'clear', 'click', 'climb', 'clock', 'close', 'cloud', 'coach', 'coast',
+  'count', 'court', 'cover', 'craft', 'crash', 'cream', 'crime', 'cross', 'crowd', 'crown',
+  'dance', 'death', 'delay', 'doubt', 'draft', 'drama', 'dream', 'drink', 'drive', 'eager',
+  'early', 'earth', 'eight', 'elite', 'empty', 'enemy', 'enjoy', 'entry', 'equal', 'event',
+  'every', 'exact', 'exist', 'extra', 'faith', 'false', 'field', 'fight', 'final', 'first',
+  'flash', 'float', 'floor', 'focus', 'force', 'found', 'frame', 'fresh', 'front', 'fruit',
+  'funny', 'giant', 'given', 'glass', 'globe', 'glory', 'grace', 'grade', 'grain', 'grand',
+  'grant', 'grass', 'great', 'green', 'group', 'guard', 'guess', 'guest', 'guide', 'happy',
+  'heart', 'heavy', 'hello', 'horse', 'hotel', 'house', 'human', 'ideal', 'image', 'input',
+  'issue', 'joint', 'judge', 'juice', 'known', 'label', 'large', 'later', 'laugh', 'learn',
+  'least', 'leave', 'lemon', 'level', 'light', 'limit', 'local', 'logic', 'lucky', 'lunch',
+  'magic', 'major', 'match', 'maybe', 'media', 'metal', 'might', 'minor', 'model', 'money',
+  'month', 'moral', 'motor', 'mount', 'mouse', 'mouth', 'movie', 'music', 'never', 'night',
+  'noise', 'north', 'novel', 'nurse', 'ocean', 'offer', 'often', 'opera', 'orbit', 'order',
+  'other', 'owner', 'paint', 'panel', 'paper', 'party', 'peace', 'phone', 'photo', 'piece',
+  'pilot', 'pitch', 'place', 'plain', 'plane', 'plant', 'plate', 'point', 'power', 'press',
+  'price', 'pride', 'prime', 'print', 'prize', 'proof', 'proud', 'queen', 'quest', 'quick',
+  'quiet', 'quite', 'radio', 'raise', 'range', 'reach', 'react', 'ready', 'relax', 'reply',
+  'right', 'rival', 'river', 'robot', 'rough', 'round', 'route', 'royal', 'salad', 'scale',
+  'scene', 'score', 'sense', 'serve', 'seven', 'shade', 'shake', 'shape', 'share', 'sharp',
+  'sheep', 'sheet', 'shelf', 'shell', 'shift', 'shine', 'shirt', 'shock', 'shore', 'short',
+  'shout', 'sight', 'skill', 'sleep', 'slice', 'slide', 'small', 'smart', 'smell', 'smile',
+  'smoke', 'snake', 'solar', 'solid', 'solve', 'sound', 'south', 'space', 'spare', 'spark',
+  'speak', 'speed', 'spend', 'spike', 'spirit', 'sport', 'stack', 'staff', 'stage', 'stake',
+  'stand', 'start', 'state', 'steam', 'steel', 'stick', 'still', 'stock', 'stone', 'store',
+  'storm', 'story', 'strip', 'study', 'style', 'sugar', 'super', 'sweet', 'swing', 'sword',
+  'table', 'taste', 'teach', 'teeth', 'thank', 'their', 'theme', 'there', 'these', 'thick',
+  'thing', 'think', 'third', 'those', 'three', 'throw', 'tiger', 'tight', 'timer', 'tired',
+  'title', 'today', 'token', 'tooth', 'topic', 'total', 'touch', 'tough', 'tower', 'trace',
+  'track', 'trade', 'train', 'treat', 'trend', 'trial', 'tribe', 'trick', 'truck', 'truly',
+  'trust', 'truth', 'twice', 'uncle', 'under', 'union', 'unity', 'until', 'upper', 'upset',
+  'urban', 'usage', 'usual', 'valid', 'value', 'video', 'visit', 'vital', 'vivid', 'vocal',
+  'voice', 'waste', 'watch', 'water', 'weird', 'whale', 'wheat', 'wheel', 'where', 'which',
+  'while', 'white', 'whole', 'woman', 'world', 'worry', 'worse', 'worth', 'would', 'write',
+  'wrong', 'yield', 'young', 'youth', 'zebra',
+]
+
 interface CacheMeta {
   id: string
   timestamp: number
@@ -20,6 +65,11 @@ interface CacheMeta {
 // In-memory cache
 let answerWords: string[] = []
 let validWordsSet: Set<string> = new Set()
+
+function useFallbackWords() {
+  answerWords = [...FALLBACK_WORDS]
+  validWordsSet = new Set(FALLBACK_WORDS)
+}
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -115,13 +165,17 @@ export async function loadWords(forceRefresh = false): Promise<void> {
 
   // Check if we're in a browser environment
   if (typeof window === 'undefined' || !window.indexedDB) {
-    // SSR fallback - fetch directly
-    const [answers, allowed] = await Promise.all([
-      fetchWordList(ANSWERS_URL),
-      fetchWordList(ALLOWED_URL),
-    ])
-    answerWords = answers
-    validWordsSet = new Set([...answers, ...allowed])
+    try {
+      const [answers, allowed] = await Promise.all([
+        fetchWordList(ANSWERS_URL),
+        fetchWordList(ALLOWED_URL),
+      ])
+      answerWords = answers
+      validWordsSet = new Set([...answers, ...allowed])
+    } catch (error) {
+      console.error('Using bundled Wordle dictionary:', error)
+      useFallbackWords()
+    }
     return
   }
 
@@ -163,13 +217,7 @@ export async function loadWords(forceRefresh = false): Promise<void> {
   } catch (error) {
     console.error('Error loading words:', error)
 
-    // Fallback: fetch directly without caching
-    const [answers, allowed] = await Promise.all([
-      fetchWordList(ANSWERS_URL),
-      fetchWordList(ALLOWED_URL),
-    ])
-    answerWords = answers
-    validWordsSet = new Set([...answers, ...allowed])
+    useFallbackWords()
   }
 }
 

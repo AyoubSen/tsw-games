@@ -17,12 +17,6 @@ import { GameModeSelector } from '@/components/games/wordle/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/wordle/MultiplayerLobby'
 import { MultiplayerGame } from '@/components/games/wordle/MultiplayerGame'
 import { useMultiplayerWordle } from '@/components/games/wordle/useMultiplayerWordle'
-import {
-  loadWords,
-  isWordsLoaded,
-  getAnswerWords,
-  getValidWordsSet,
-} from '@/lib/wordService'
 import type { GameMode, RevealMode } from '../../../party/wordle'
 
 export const Route = createFileRoute('/games/wordle')({ component: WordlePage })
@@ -31,8 +25,6 @@ type GameView = 'select' | 'single' | 'multiplayer-lobby' | 'multiplayer-game'
 
 function WordlePage() {
   const [view, setView] = useState<GameView>('select')
-  const [wordsLoaded, setWordsLoaded] = useState(isWordsLoaded())
-  const [loadingWords, setLoadingWords] = useState(false)
 
   // Single player state
   const singlePlayer = useWordle()
@@ -47,19 +39,8 @@ function WordlePage() {
     hasGameState: !!multiplayer.gameState,
     error: multiplayer.error,
     connectionStatus: multiplayer.connectionStatus,
-    onAbandon: multiplayer.disconnect,
+    onAbandon: multiplayer.abandonReconnect,
   });
-
-  // Load words on mount
-  useEffect(() => {
-    if (!isWordsLoaded()) {
-      setLoadingWords(true)
-      loadWords().then(() => {
-        setWordsLoaded(true)
-        setLoadingWords(false)
-      })
-    }
-  }, [])
 
   // Handle single player selection
   const handleSinglePlayer = () => {
@@ -80,14 +61,17 @@ function WordlePage() {
 
   // Watch for multiplayer connection and game state changes
   useEffect(() => {
-    if (multiplayer.connectionStatus === 'connected' && multiplayer.gameState) {
+    if (multiplayer.gameState) {
       if (multiplayer.gameState.status === 'waiting') {
         setView('multiplayer-lobby')
-      } else if (multiplayer.gameState.status === 'playing') {
+      } else if (multiplayer.gameState.status === 'playing' || multiplayer.gameState.status === 'finished') {
         setView('multiplayer-game')
       }
+    } else if (multiplayer.connectionStatus === 'error' && !session.isResuming) {
+      session.forget()
+      setView('select')
     }
-  }, [multiplayer.connectionStatus, multiplayer.gameState?.status])
+  }, [multiplayer.connectionStatus, multiplayer.gameState?.status, session.isResuming])
 
   // Handle leaving multiplayer
   const handleLeaveMultiplayer = () => {
@@ -98,23 +82,12 @@ function WordlePage() {
 
   // Handle back to mode selection
   const handleBackToSelect = () => {
-    if (multiplayer.connectionStatus !== 'disconnected') {
+    if (multiplayer.gameState || multiplayer.connectionStatus !== 'disconnected') {
       session.forget();
       multiplayer.disconnect();
     }
     singlePlayer.resetGame()
     setView('select')
-  }
-
-  // Loading words screen
-  if (loadingWords || (view !== 'select' && !wordsLoaded)) {
-    return (
-      <div className="min-h-[calc(100vh-73px)] bg-background flex flex-col items-center justify-center gap-4">
-        <Loader2 className="w-10 h-10 animate-spin text-primary" />
-        <p className="text-muted-foreground">Loading dictionary...</p>
-        <p className="text-xs text-muted-foreground">First load fetches from API, then cached locally</p>
-      </div>
-    )
   }
 
   // Mode selection view
@@ -203,7 +176,7 @@ function WordlePage() {
             <p className="text-sm text-muted-foreground">Loading dictionary...</p>
           </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center gap-6 py-4 px-4">
+          <div className="flex-1 flex flex-col items-center justify-center gap-6 px-2 py-4 sm:px-4">
             {message && (
               <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-foreground text-background px-4 py-2 rounded-lg font-semibold z-50 animate-fade-in">
                 {message}
@@ -280,6 +253,8 @@ function WordlePage() {
           gameState={multiplayer.gameState}
           playerId={multiplayer.playerId}
           isHost={multiplayer.isHost}
+          connected={multiplayer.connectionStatus === 'connected'}
+          error={multiplayer.error}
           onStart={multiplayer.startGame}
           onLeave={handleLeaveMultiplayer}
         />
@@ -292,14 +267,14 @@ function WordlePage() {
     return (
       <MultiplayerGame
         gameState={multiplayer.gameState}
+        privatePlayer={multiplayer.privatePlayer}
         playerId={multiplayer.playerId}
         isHost={multiplayer.isHost}
+        connected={multiplayer.connectionStatus === 'connected'}
+        error={multiplayer.error}
         onGuess={multiplayer.sendGuess}
-        onComplete={multiplayer.sendComplete}
         onRestart={multiplayer.restartGame}
         onLeave={handleLeaveMultiplayer}
-        validWords={getValidWordsSet()}
-        answerWords={getAnswerWords()}
         waitingFor={multiplayer.waitingFor}
         isWaitingForOthers={multiplayer.isWaitingForOthers}
         roundReveal={multiplayer.roundReveal}

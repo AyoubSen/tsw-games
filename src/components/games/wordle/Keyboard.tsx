@@ -16,16 +16,10 @@ const KEYBOARD_ROWS = [
 ]
 
 function getKeyStyle(state?: LetterState): string {
-  switch (state) {
-    case 'correct':
-      return 'bg-green-600 hover:bg-green-700 text-white border-green-600'
-    case 'present':
-      return 'bg-yellow-500 hover:bg-yellow-600 text-white border-yellow-500'
-    case 'absent':
-      return 'bg-zinc-700 hover:bg-zinc-600 text-zinc-400 border-zinc-700'
-    default:
-      return 'bg-zinc-500 hover:bg-zinc-400 text-white border-zinc-500'
+  if (state && state !== 'empty' && state !== 'tbd') {
+    return 'bg-zinc-700 hover:bg-zinc-600 text-zinc-400 border-zinc-700'
   }
+  return 'bg-zinc-500 hover:bg-zinc-400 text-white border-zinc-500'
 }
 
 export function Keyboard({ usedLetters, onKey, onEnter, onBackspace }: KeyboardProps) {
@@ -40,9 +34,20 @@ export function Keyboard({ usedLetters, onKey, onEnter, onBackspace }: KeyboardP
   }
 
   return (
-    <div className="flex flex-col gap-1.5 w-full max-w-lg mx-auto">
+    <div className="mx-auto flex w-full max-w-lg flex-col gap-1.5">
       {KEYBOARD_ROWS.map((row, rowIndex) => (
-        <div key={rowIndex} className="flex gap-1 justify-center">
+        <div
+          key={rowIndex}
+          className={cn(
+            'grid w-full gap-[3px]',
+            rowIndex === 1 && 'mx-[5%] w-[90%]',
+          )}
+          style={{
+            gridTemplateColumns: rowIndex === 2
+              ? '1.5fr repeat(7, minmax(0, 1fr)) 1.5fr'
+              : `repeat(${row.length}, minmax(0, 1fr))`,
+          }}
+        >
           {row.map((key) => {
             const isSpecial = key === 'ENTER' || key === 'BACKSPACE'
             const state = isSpecial ? undefined : usedLetters[key]
@@ -52,8 +57,7 @@ export function Keyboard({ usedLetters, onKey, onEnter, onBackspace }: KeyboardP
                 key={key}
                 onClick={() => handleClick(key)}
                 className={cn(
-                  'h-14 rounded font-semibold text-sm uppercase transition-colors border',
-                  isSpecial ? 'px-2 sm:px-4 min-w-[52px] sm:min-w-[65px]' : 'w-8 sm:w-10',
+                  'h-14 min-w-0 touch-manipulation select-none rounded-md border text-[15px] font-semibold uppercase transition active:scale-[0.97]',
                   getKeyStyle(state)
                 )}
               >

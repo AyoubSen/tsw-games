@@ -1,8 +1,8 @@
 import { cn } from '@/lib/utils'
+import type { EvaluatedLetter } from '../../../../party/wordle'
 
 interface MiniBoardProps {
-  // Array of guesses, each guess is an array of [char, state] pairs
-  guesses: string[][]
+  guesses: EvaluatedLetter[][]
   maxGuesses?: number
   wordLength?: number
   playerName: string
@@ -55,18 +55,19 @@ export function MiniBoard({
               )}
             >
               {Array.from({ length: wordLength }).map((_, colIndex) => {
-                // Each guess element is [char, state]
                 const letterData = hasGuess ? guess[colIndex] : null
-                const state = letterData ? letterData[1] : 'empty'
+                const state = letterData?.state ?? 'empty'
 
                 return (
                   <div
                     key={colIndex}
                     className={cn(
-                      "w-4 h-4 rounded-sm",
+                      "w-4 h-4 rounded-sm flex items-center justify-center text-[9px] font-bold text-white",
                       getMiniTileStyle(state)
                     )}
-                  />
+                  >
+                    {letterData?.char ?? ''}
+                  </div>
                 )
               })}
             </div>

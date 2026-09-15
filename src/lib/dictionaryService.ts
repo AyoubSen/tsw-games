@@ -12,6 +12,8 @@ const COMMON_WORDS = new Set([
   "the", "and", "for", "are", "but", "not", "you", "all", "can", "had", "her", "was", "one", "our", "out", "day", "get", "has", "him", "his", "how", "its", "let", "may", "new", "now", "old", "see", "two", "way", "who", "boy", "did", "end", "few", "got", "man", "own", "say", "she", "too", "use", "act", "add", "age", "ago", "air", "ask", "bad", "bag", "bar", "bed", "big", "bit", "box", "bus", "buy", "car", "cat", "cup", "cut", "dog", "dry", "eat", "egg", "eye", "far", "fat", "fit", "fly", "fun", "gas", "gun", "hat", "hit", "hot", "ice", "job", "key", "kid", "lay", "leg", "lie", "lot", "low", "map", "mix", "mud", "net", "nor", "odd", "oil", "pay", "pen", "pet", "pie", "pig", "pin", "pop", "pot", "put", "ran", "raw", "red", "rid", "row", "run", "sad", "sat", "sea", "set", "sit", "six", "sky", "son", "sun", "tax", "tea", "ten", "tie", "tip", "top", "try", "van", "war", "wet", "win", "won", "yes", "yet", "arm", "art", "bed", "bit", "bow", "cap", "cow", "cry", "die", "due", "ear", "era", "fan", "fee", "fix", "gap", "god", "hay", "hen", "hip", "hug", "ink", "inn", "jam", "jar", "jaw", "jet", "joy", "lab", "lap", "law", "lid", "lip", "log", "mad", "mat", "mom", "nap", "nut", "oak", "oat", "pad", "pan", "paw", "pea", "per", "pit", "ray", "rib", "rob", "rod", "rot", "rub", "rug", "sad", "sin", "sip", "ski", "sob", "soy", "spy", "sum", "tab", "tag", "tan", "tap", "tar", "tin", "toe", "tom", "ton", "toy", "tub", "vet", "via", "vow", "web", "wig", "wit", "woe", "wow", "yam", "zip", "zoo",
 ])
 
+const DICTIONARY_TIMEOUT_MS = 4000
+
 export async function isValidEnglishWord(word: string): Promise<boolean> {
   const normalizedWord = word.toLowerCase().trim()
 
@@ -36,15 +38,27 @@ export async function isValidEnglishWord(word: string): Promise<boolean> {
     return true
   }
 
-  // Query the dictionary API
+  // Query the dictionary API.
+  // Only a 404 means "not a word" - any other failure is the service being
+  // degraded, which must not be cached or held against the player.
   try {
     const response = await fetch(
-      `https://api.dictionaryapi.dev/api/v2/entries/en/${normalizedWord}`
+      `https://api.dictionaryapi.dev/api/v2/entries/en/${normalizedWord}`,
+      { signal: AbortSignal.timeout(DICTIONARY_TIMEOUT_MS) }
     )
 
-    const isValid = response.ok
-    validatedWords.set(normalizedWord, isValid)
-    return isValid
+    if (response.ok) {
+      validatedWords.set(normalizedWord, true)
+      return true
+    }
+
+    if (response.status === 404) {
+      validatedWords.set(normalizedWord, false)
+      return false
+    }
+
+    console.error(`Dictionary API unavailable (${response.status}) for "${normalizedWord}"`)
+    return true
   } catch (error) {
     console.error('Dictionary API error:', error)
     // On error, be permissive - let the game continue

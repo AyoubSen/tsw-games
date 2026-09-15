@@ -1,69 +1,47 @@
 import type * as Party from "partykit/server"
-import {
-  markConnected,
-  markDisconnected,
-  presentCount,
-  nextHost,
-  canControlGame,
-} from "./shared/presence";
+import { isPresent, markConnected, markDisconnected } from "./shared/presence"
 
-// Game modes
+export const WORDLE_PROTOCOL_VERSION = 3
+const STATE_SCHEMA_VERSION = 3
+const MAX_PLAYERS = 8
+const MAX_GUESSES = 6
+const DISCONNECTED_PLAYER_TTL_MS = 30 * 60 * 1000
+const LOBBY_DISCONNECT_TTL_MS = 30 * 1000
+const RECONNECT_GRACE_MS = 15 * 1000
+
 export type GameMode = "race" | "classic"
 export type RevealMode = "after-round" | "at-end"
+export type TileState = "correct" | "present" | "absent"
 
-// Player state
+export interface EvaluatedLetter {
+  char: string
+  state: TileState
+}
+
 export interface Player {
   id: string
   name: string
   attempts: number
   completed: boolean
   won: boolean
-  guesses: string[][] // Stored guesses with results
-  currentGuess: number // Current guess number (0-5)
+  guesses: EvaluatedLetter[][]
   joinedAt: number
-  /** False while their socket is away; they are not removed from the game. */
-  connected?: boolean
-  readyForNextTurn: boolean // For turns mode - player submitted their guess
+  connected: boolean
+  disconnectedAt: number | null
+  graceHandled: boolean
+  readyForNextTurn: boolean
 }
 
-// Game state
-export interface GameState {
-  roomCode: string
-  mode: GameMode
-  revealMode: RevealMode // For classic mode - when to reveal guesses
-  hostId: string
-  targetWord: string
-  players: Record<string, Player>
-  status: "waiting" | "playing" | "finished"
-  maxPlayers: number
-  winnerId: string | null
-  startedAt: number | null
-  finishedAt: number | null
-  currentTurn: number // For classic mode - which turn we're on (0-5)
+export interface PublicPlayer {
+  id: string
+  name: string
+  attempts: number
+  completed: boolean
+  won: boolean
+  joinedAt: number
+  connected: boolean
+  readyForNextTurn: boolean
 }
-
-// Message types from client
-export type ClientMessage =
-  | { type: "join"; name: string }
-  | { type: "start" }
-  | { type: "guess"; word: string; result: string[][] }
-  | { type: "complete"; won: boolean; attempts: number }
-  | { type: "leave" }
-  | { type: "restart" }
-
-// Message types to client
-export type ServerMessage =
-  | { type: "state"; state: PublicGameState }
-  | { type: "player-joined"; player: Player }
-  | { type: "player-left"; playerId: string }
-  | { type: "game-started"; targetWord: string }
-  | { type: "player-progress"; playerId: string; attempts: number }
-  | { type: "player-completed"; playerId: string; won: boolean; attempts: number }
-  | { type: "game-over"; winnerId: string | null; results: PlayerResult[] }
-  | { type: "turn-complete"; turn: number; playerGuesses: Record<string, string[]> } // For turns mode
-  | { type: "waiting-for-players"; waitingFor: string[] } // Players who haven't guessed yet
-  | { type: "game-restarted" }
-  | { type: "error"; message: string }
 
 export interface PlayerResult {
   id: string
@@ -72,21 +50,75 @@ export interface PlayerResult {
   attempts: number
 }
 
-// Public state (sent to clients - no targetWord until game starts)
-export interface PublicGameState {
+export interface PrivatePlayerState {
+  playerId: string
+  guesses: EvaluatedLetter[][]
+  attempts: number
+  completed: boolean
+  won: boolean
+}
+
+export interface GameState {
+  schemaVersion: number
+  revision: number
+  roundId: string
   roomCode: string
   mode: GameMode
-  revealMode: RevealMode // For classic mode - when to reveal guesses
+  revealMode: RevealMode
   hostId: string
+  targetWord: string
+  /** Players keyed by their private reconnect credential (the PartyKit connection ID). */
   players: Record<string, Player>
   status: "waiting" | "playing" | "finished"
   maxPlayers: number
-  winnerId: string | null
-  targetWord?: string // Only sent when game starts
-  currentTurn: number // Current turn for classic mode
+  winnerIds: string[]
+  startedAt: number | null
+  finishedAt: number | null
+  currentTurn: number
+  participantIds: string[]
+  revealedBoards: Record<string, EvaluatedLetter[][]>
+  results: PlayerResult[]
 }
 
-// Word list (subset for server - full list fetched client-side for validation)
+export interface PublicGameState {
+  protocolVersion: number
+  revision: number
+  roundId: string
+  roomCode: string
+  mode: GameMode
+  revealMode: RevealMode
+  hostId: string
+  players: Record<string, PublicPlayer>
+  status: "waiting" | "playing" | "finished"
+  maxPlayers: number
+  winnerIds: string[]
+  winnerId: string | null
+  targetWord: string | null
+  currentTurn: number
+  waitingFor: string[]
+  revealedBoards: Record<string, EvaluatedLetter[][]>
+  results: PlayerResult[]
+}
+
+export type ClientMessage =
+  | { type: "join"; protocolVersion: number; name: string }
+  | { type: "start"; protocolVersion: number; roundId: string }
+  | { type: "guess"; protocolVersion: number; roundId: string; word: string }
+  | { type: "leave"; protocolVersion: number }
+  | { type: "restart"; protocolVersion: number; roundId: string }
+
+type ServerPayload =
+  | { type: "state"; state: PublicGameState }
+  | { type: "private-state"; player: PrivatePlayerState }
+  | { type: "round-reveal"; turn: number; playerGuesses: Record<string, EvaluatedLetter[][]> }
+  | { type: "error"; message: string }
+
+export type ServerMessage = ServerPayload & {
+  protocolVersion: number
+  revision: number
+  roundId: string
+}
+
 const ANSWER_WORDS = [
   "about", "above", "abuse", "actor", "acute", "admit", "adopt", "adult", "after", "again",
   "agent", "agree", "ahead", "alarm", "album", "alert", "alike", "alive", "allow", "alone",
@@ -133,7 +165,7 @@ const ANSWER_WORDS = [
   "shown", "sight", "silly", "simon", "since", "sixth", "sixty", "sized", "skill", "slave",
   "sleep", "slice", "slide", "slope", "small", "smart", "smell", "smile", "smith", "smoke",
   "snake", "solar", "solid", "solve", "sorry", "sound", "south", "space", "spare", "spark",
-  "speak", "speed", "spend", "spent", "spike", "spine", "spirit","split", "spoke", "sport",
+  "speak", "speed", "spend", "spent", "spike", "spine", "spirit", "split", "spoke", "sport",
   "spray", "squad", "stack", "staff", "stage", "stake", "stand", "stark", "start", "state",
   "steak", "steam", "steel", "steep", "stick", "stiff", "still", "stock", "stone", "stood",
   "store", "storm", "story", "strip", "stuck", "study", "stuff", "style", "sugar", "suite",
@@ -148,14 +180,164 @@ const ANSWER_WORDS = [
   "voice", "waste", "watch", "water", "waved", "weigh", "weird", "whale", "wheat", "wheel",
   "where", "which", "while", "white", "whole", "whose", "widow", "width", "woman", "world",
   "worry", "worse", "worst", "worth", "would", "wound", "write", "wrong", "wrote", "yield",
-  "young", "youth", "zebra"
+  "young", "youth", "zebra",
 ]
+
+const WORD_LIST_URLS = [
+  "https://gist.githubusercontent.com/cfreshman/a03ef2cba789d8cf00c08f767e0fad7b/raw/wordle-answers-alphabetical.txt",
+  "https://gist.githubusercontent.com/cfreshman/cdcdf777450c5b5301e439061d29694c/raw/wordle-allowed-guesses.txt",
+]
+
+let validWordsPromise: Promise<Set<string>> | null = null
+
+function getValidWords(): Promise<Set<string>> {
+  if (validWordsPromise) return validWordsPromise
+  validWordsPromise = Promise.all(WORD_LIST_URLS.map(async url => {
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`Word list request failed: ${response.status}`)
+    return response.text()
+  }))
+    .then(lists => {
+      const words = new Set(ANSWER_WORDS.map(word => word.toUpperCase()))
+      for (const list of lists) {
+        for (const word of list.split(/[^a-zA-Z]+/)) {
+          if (/^[a-zA-Z]{5}$/.test(word)) words.add(word.toUpperCase())
+        }
+      }
+      return words
+    })
+    .catch(error => {
+      console.error("Using bundled Wordle dictionary:", error)
+      return new Set(ANSWER_WORDS.map(word => word.toUpperCase()))
+    })
+  return validWordsPromise
+}
 
 function getRandomWord(): string {
   return ANSWER_WORDS[Math.floor(Math.random() * ANSWER_WORDS.length)].toUpperCase()
 }
 
-// Room code is generated client-side and passed as the room ID
+function isGameMode(value: unknown): value is GameMode {
+  return value === "race" || value === "classic"
+}
+
+function isRevealMode(value: unknown): value is RevealMode {
+  return value === "after-round" || value === "at-end"
+}
+
+function evaluateGuess(guess: string, target: string): EvaluatedLetter[] {
+  const result: EvaluatedLetter[] = new Array(5)
+  const used = new Array(5).fill(false)
+
+  for (let index = 0; index < 5; index++) {
+    if (guess[index] === target[index]) {
+      result[index] = { char: guess[index], state: "correct" }
+      used[index] = true
+    }
+  }
+
+  for (let index = 0; index < 5; index++) {
+    if (result[index]) continue
+    const match = target.split("").findIndex((letter, targetIndex) => letter === guess[index] && !used[targetIndex])
+    if (match >= 0) {
+      used[match] = true
+      result[index] = { char: guess[index], state: "present" }
+    } else {
+      result[index] = { char: guess[index], state: "absent" }
+    }
+  }
+  return result
+}
+
+function cloneBoards(boards: Record<string, EvaluatedLetter[][]>): Record<string, EvaluatedLetter[][]> {
+  return Object.fromEntries(Object.entries(boards).map(([id, guesses]) => [id, guesses.map(row => row.map(tile => ({ ...tile }))) ]))
+}
+
+function isValidEvaluatedGuess(value: unknown): value is EvaluatedLetter[] {
+  return Array.isArray(value) && (value.length === 0 || (
+    value.length === 5 && value.every(tile => {
+      if (!tile || typeof tile !== "object") return false
+      const candidate = tile as Partial<EvaluatedLetter>
+      return typeof candidate.char === "string" && /^[A-Z]$/.test(candidate.char) &&
+        (candidate.state === "correct" || candidate.state === "present" || candidate.state === "absent")
+    })
+  ))
+}
+
+function normalizeStoredState(value: unknown, roomCode: string): GameState | null {
+  if (!value || typeof value !== "object") return null
+  const stored = value as Partial<GameState>
+  if (stored.roomCode !== roomCode || !isGameMode(stored.mode) || !isRevealMode(stored.revealMode)) return null
+  if (stored.status !== "waiting" && stored.status !== "playing" && stored.status !== "finished") return null
+  if (stored.schemaVersion !== STATE_SCHEMA_VERSION && stored.status !== "waiting") return null
+  if (!stored.players || typeof stored.players !== "object" || Array.isArray(stored.players)) return null
+
+  const players: Record<string, Player> = {}
+  for (const [credential, raw] of Object.entries(stored.players)) {
+    if (!raw || typeof raw !== "object") return null
+    const player = raw as Partial<Player>
+    if (typeof player.name !== "string" || !Array.isArray(player.guesses) || !player.guesses.every(isValidEvaluatedGuess)) return null
+    const wasConnected = player.connected !== false
+    players[credential] = {
+      id: stored.schemaVersion === STATE_SCHEMA_VERSION && typeof player.id === "string"
+        ? player.id
+        : crypto.randomUUID(),
+      name: player.name.trim().slice(0, 20),
+      attempts: player.guesses.length,
+      completed: Boolean(player.completed),
+      won: Boolean(player.won),
+      guesses: player.guesses,
+      joinedAt: typeof player.joinedAt === "number" ? player.joinedAt : Date.now(),
+      connected: false,
+      disconnectedAt: !wasConnected && typeof player.disconnectedAt === "number" ? player.disconnectedAt : Date.now(),
+      graceHandled: Boolean(player.graceHandled),
+      readyForNextTurn: Boolean(player.readyForNextTurn),
+    }
+  }
+
+  const storedHost = typeof stored.hostId === "string" ? stored.hostId : ""
+  const normalizedHost = Object.values(players).find(player => player.id === storedHost)?.id ??
+    players[storedHost]?.id ?? ""
+
+  const targetWord = typeof stored.targetWord === "string" && /^[A-Z]{5}$/.test(stored.targetWord)
+    ? stored.targetWord
+    : ""
+  if (stored.status !== "waiting" && !targetWord) return null
+
+  const revealedBoards: Record<string, EvaluatedLetter[][]> = {}
+  if (stored.revealedBoards && typeof stored.revealedBoards === "object") {
+    for (const [id, guesses] of Object.entries(stored.revealedBoards)) {
+      if (!Array.isArray(guesses) || !guesses.every(isValidEvaluatedGuess)) return null
+      revealedBoards[id] = guesses
+    }
+  }
+
+  return {
+    schemaVersion: STATE_SCHEMA_VERSION,
+    revision: Number.isInteger(stored.revision) && stored.revision! >= 0 ? stored.revision! : 0,
+    roundId: typeof stored.roundId === "string" && stored.roundId ? stored.roundId : crypto.randomUUID(),
+    roomCode,
+    mode: stored.mode,
+    revealMode: stored.mode === "race" ? "at-end" : stored.revealMode,
+    hostId: normalizedHost,
+    targetWord,
+    players,
+    status: stored.status,
+    maxPlayers: MAX_PLAYERS,
+    winnerIds: Array.isArray(stored.winnerIds) ? stored.winnerIds.filter(id => typeof id === "string") : [],
+    startedAt: typeof stored.startedAt === "number" ? stored.startedAt : null,
+    finishedAt: typeof stored.finishedAt === "number" ? stored.finishedAt : null,
+    currentTurn: Number.isInteger(stored.currentTurn) ? Math.max(0, Math.min(6, stored.currentTurn!)) : 0,
+    participantIds: Array.isArray(stored.participantIds)
+      ? stored.participantIds.filter(id => typeof id === "string")
+      : Object.values(players).map(player => player.id),
+    revealedBoards,
+    results: Array.isArray(stored.results) ? stored.results.filter(result =>
+      result && typeof result.id === "string" && typeof result.name === "string" &&
+      typeof result.won === "boolean" && Number.isInteger(result.attempts)
+    ) : [],
+  }
+}
 
 export default class WordleParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
@@ -163,389 +345,609 @@ export default class WordleParty implements Party.Server {
   state: GameState | null = null
 
   async onStart() {
-    // Try to load existing state
-    const stored = await this.room.storage.get<GameState>("state")
-    if (stored) {
-      this.state = stored
+    void getValidWords()
+    const stored = await this.room.storage.get<unknown>("state")
+    if (!stored) return
+    const normalized = normalizeStoredState(stored, this.room.id)
+    if (!normalized) {
+      await this.room.storage.delete("state")
+      return
     }
+    this.state = normalized
+    this.pruneDisconnectedPlayers()
+    if (Object.keys(this.state.players).length === 0) {
+      this.state = null
+      await this.room.storage.delete("state")
+      await this.room.storage.deleteAlarm()
+      return
+    }
+    await this.saveState()
   }
 
   async saveState() {
-    if (this.state) {
-      await this.room.storage.put("state", this.state)
+    if (!this.state) return
+    await this.room.storage.put("state", this.state)
+    await this.scheduleCleanup()
+  }
+
+  async scheduleCleanup() {
+    if (!this.state) return
+    const now = Date.now()
+    const deadlines: number[] = []
+    if (this.state.status === "waiting" && Object.keys(this.state.players).length === 0) {
+      deadlines.push(now + LOBBY_DISCONNECT_TTL_MS)
+    }
+    for (const player of Object.values(this.state.players)) {
+      if (player.connected || player.disconnectedAt === null) continue
+      const ttl = this.state.status === "waiting" ? LOBBY_DISCONNECT_TTL_MS : DISCONNECTED_PLAYER_TTL_MS
+      if (this.state.status !== "finished") deadlines.push(Math.max(now + 1, player.disconnectedAt + ttl))
+      if (!player.graceHandled && (this.state.status === "playing" || player.id === this.state.hostId)) {
+        deadlines.push(Math.max(now + 1, player.disconnectedAt + RECONNECT_GRACE_MS))
+      }
+    }
+    const hasConnectedPlayers = Object.values(this.state.players).some(player => player.connected)
+    if (this.state.status === "finished" && !hasConnectedPlayers && this.state.finishedAt !== null) {
+      deadlines.push(Math.max(now + 1, this.state.finishedAt + DISCONNECTED_PLAYER_TTL_MS))
+    }
+
+    if (deadlines.length > 0) await this.room.storage.setAlarm(Math.min(...deadlines))
+    else await this.room.storage.deleteAlarm()
+  }
+
+  bumpRevision() {
+    if (this.state) this.state.revision++
+  }
+
+  toPublicPlayer(player: Player): PublicPlayer {
+    const hideResult = this.state?.status === "playing" && this.state.mode === "classic" && this.state.revealMode === "at-end"
+    return {
+      id: player.id,
+      name: player.name,
+      attempts: hideResult ? 0 : player.attempts,
+      completed: hideResult ? false : player.completed,
+      won: hideResult ? false : player.won,
+      joinedAt: player.joinedAt,
+      connected: player.connected,
+      readyForNextTurn: player.readyForNextTurn,
     }
   }
 
   getPublicState(): PublicGameState {
-    if (!this.state) {
-      throw new Error("No game state")
-    }
+    if (!this.state) throw new Error("No game state")
+    const visiblePlayers = this.state.status === "waiting"
+      ? Object.values(this.state.players)
+      : Object.values(this.state.players).filter(player => this.state!.participantIds.includes(player.id))
+    const players = Object.fromEntries(visiblePlayers.map(player => [player.id, this.toPublicPlayer(player)]))
+    const waitingFor = this.state.mode === "classic" && this.state.revealMode === "after-round" && this.state.status === "playing"
+      ? Object.values(this.state.players)
+          .filter(player => this.state!.participantIds.includes(player.id) && player.connected && !player.completed && !player.readyForNextTurn)
+          .map(player => player.id)
+      : []
 
-    const publicState: PublicGameState = {
+    return {
+      protocolVersion: WORDLE_PROTOCOL_VERSION,
+      revision: this.state.revision,
+      roundId: this.state.roundId,
       roomCode: this.state.roomCode,
       mode: this.state.mode,
       revealMode: this.state.revealMode,
       hostId: this.state.hostId,
-      players: this.state.players,
+      players,
       status: this.state.status,
       maxPlayers: this.state.maxPlayers,
-      winnerId: this.state.winnerId,
+      winnerIds: this.state.winnerIds,
+      winnerId: this.state.winnerIds[0] ?? null,
+      targetWord: this.state.status === "finished" ? this.state.targetWord : null,
       currentTurn: this.state.currentTurn,
+      waitingFor,
+      revealedBoards: this.state.revealMode === "after-round" || this.state.status === "finished"
+        ? cloneBoards(this.state.revealedBoards)
+        : {},
+      results: this.state.status === "finished" ? this.state.results : [],
     }
-
-    // Only include target word when game is playing or finished
-    if (this.state.status !== "waiting") {
-      publicState.targetWord = this.state.targetWord
-    }
-
-    return publicState
   }
 
-  broadcast(message: ServerMessage, exclude?: string) {
-    const msg = JSON.stringify(message)
+  getPrivateState(player: Player): PrivatePlayerState {
+    return {
+      playerId: player.id,
+      guesses: player.guesses.map(row => row.map(tile => ({ ...tile }))),
+      attempts: player.attempts,
+      completed: player.completed,
+      won: player.won,
+    }
+  }
+
+  makeMessage(payload: ServerPayload): ServerMessage {
+    return {
+      ...payload,
+      protocolVersion: WORDLE_PROTOCOL_VERSION,
+      revision: this.state?.revision ?? 0,
+      roundId: this.state?.roundId ?? "",
+    }
+  }
+
+  send(conn: Party.Connection, payload: ServerPayload) {
+    try {
+      conn.send(JSON.stringify(this.makeMessage(payload)))
+    } catch (error) {
+      console.error(`Failed to send Wordle message to ${conn.id}:`, error)
+    }
+  }
+
+  broadcast(payload: ServerPayload) {
+    const message = JSON.stringify(this.makeMessage(payload))
     for (const conn of this.room.getConnections()) {
-      if (conn.id !== exclude) {
-        conn.send(msg)
+      if (!this.state?.players[conn.id]) continue
+      try {
+        conn.send(message)
+      } catch (error) {
+        console.error(`Failed to broadcast Wordle message to ${conn.id}:`, error)
       }
     }
   }
 
-  send(conn: Party.Connection, message: ServerMessage) {
-    conn.send(JSON.stringify(message))
+  broadcastState() {
+    this.broadcast({ type: "state", state: this.getPublicState() })
+  }
+
+  sendResync(conn: Party.Connection) {
+    if (!this.state) return
+    const player = this.state.players[conn.id]
+    if (!player) return
+    this.send(conn, { type: "private-state", player: this.getPrivateState(player) })
+    this.send(conn, { type: "state", state: this.getPublicState() })
+  }
+
+  electHost(excludingId?: string): string {
+    if (!this.state) return ""
+    const candidates = Object.values(this.state.players)
+      .filter(player => player.id !== excludingId && isPresent(player))
+      .sort((a, b) => a.joinedAt - b.joinedAt)
+    return candidates[0]?.id ?? ""
+  }
+
+  pruneDisconnectedPlayers() {
+    if (!this.state || this.state.status === "finished") return
+    const ttl = this.state.status === "waiting" ? LOBBY_DISCONNECT_TTL_MS : DISCONNECTED_PLAYER_TTL_MS
+    const cutoff = Date.now() - ttl
+    for (const [credential, player] of Object.entries(this.state.players)) {
+      if (player.connected || player.disconnectedAt === null || player.disconnectedAt > cutoff) continue
+      delete this.state.players[credential]
+      if (player.id === this.state.hostId) this.state.hostId = this.electHost(player.id)
+    }
+  }
+
+  syncClassicPlayer(player: Player) {
+    if (!this.state || this.state.status !== "playing" || this.state.mode !== "classic" || this.state.revealMode !== "after-round") return
+    if (player.readyForNextTurn || player.completed) return
+    while (player.guesses.length < this.state.currentTurn) player.guesses.push([])
+    player.attempts = player.guesses.length
+    if (player.attempts >= MAX_GUESSES) player.completed = true
+  }
+
+  finishGame(raceWinnerId?: string) {
+    if (!this.state || this.state.status !== "playing") return
+    const players = Object.values(this.state.players).filter(player => this.state!.participantIds.includes(player.id))
+    this.state.status = "finished"
+    this.state.finishedAt = Date.now()
+    this.state.results = players.map(player => ({
+      id: player.id,
+      name: player.name,
+      won: player.won,
+      attempts: player.attempts,
+    }))
+    this.state.revealedBoards = cloneBoards(Object.fromEntries(players.map(player => [player.id, player.guesses])))
+
+    if (raceWinnerId) {
+      this.state.winnerIds = [raceWinnerId]
+      return
+    }
+    const winners = players.filter(player => player.won)
+    const best = winners.length > 0 ? Math.min(...winners.map(player => player.attempts)) : null
+    this.state.winnerIds = best === null ? [] : winners.filter(player => player.attempts === best).map(player => player.id)
+  }
+
+  finishIfEveryoneDone() {
+    if (!this.state || this.state.status !== "playing") return
+    const now = Date.now()
+    const activePlayers = Object.values(this.state.players).filter(player =>
+      this.state!.participantIds.includes(player.id) && (
+        player.connected || (player.disconnectedAt !== null && now - player.disconnectedAt < RECONNECT_GRACE_MS)
+      )
+    )
+    if (activePlayers.length > 0 && activePlayers.every(player => player.completed)) this.finishGame()
+  }
+
+  advanceClassicRound(): { turn: number; playerGuesses: Record<string, EvaluatedLetter[][]> } | null {
+    if (!this.state || this.state.status !== "playing" || this.state.mode !== "classic" || this.state.revealMode !== "after-round") return null
+    const now = Date.now()
+    const roundPlayers = Object.values(this.state.players).filter(player => this.state!.participantIds.includes(player.id))
+    const waiting = roundPlayers.some(player =>
+      !player.completed && !player.readyForNextTurn &&
+      (player.connected || (player.disconnectedAt !== null && now - player.disconnectedAt < RECONNECT_GRACE_MS))
+    )
+    const submitted = roundPlayers.filter(player => player.readyForNextTurn)
+    if (waiting || submitted.length === 0) {
+      this.finishIfEveryoneDone()
+      return null
+    }
+
+    for (const player of submitted) {
+      this.state.revealedBoards[player.id] = player.guesses.map(row => row.map(tile => ({ ...tile })))
+      player.readyForNextTurn = false
+    }
+    this.state.currentTurn = Math.min(MAX_GUESSES, this.state.currentTurn + 1)
+    const reveal = { turn: this.state.currentTurn, playerGuesses: cloneBoards(this.state.revealedBoards) }
+    this.finishIfEveryoneDone()
+    return this.state.status === "finished" ? null : reveal
+  }
+
+  canControl(senderId: string): boolean {
+    if (!this.state || !this.state.players[senderId] || !isPresent(this.state.players[senderId])) return false
+    return this.state.players[senderId].id === this.state.hostId
   }
 
   async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
-    // Parse URL for room creation params
     const url = new URL(ctx.request.url)
-    const mode = (url.searchParams.get("mode") as GameMode) || "race"
-    const revealMode = (url.searchParams.get("revealMode") as RevealMode) || "after-round"
+    if (url.searchParams.get("protocolVersion") !== String(WORDLE_PROTOCOL_VERSION)) {
+      this.send(conn, { type: "error", message: "Wordle was updated. Refresh this page to continue." })
+      conn.close(1008, "Incompatible Wordle client")
+      return
+    }
+
+    const modeParam = url.searchParams.get("mode")
+    const revealParam = url.searchParams.get("revealMode")
+    const mode = isGameMode(modeParam) ? modeParam : "race"
+    const revealMode = mode === "race" ? "at-end" : isRevealMode(revealParam) ? revealParam : "after-round"
     const isHost = url.searchParams.get("host") === "true"
 
-    // Create new game if this is the host and no state exists
     if (isHost && !this.state) {
       this.state = {
+        schemaVersion: STATE_SCHEMA_VERSION,
+        revision: 1,
+        roundId: crypto.randomUUID(),
         roomCode: this.room.id,
         mode,
         revealMode,
-        hostId: conn.id,
-        targetWord: getRandomWord(),
+        hostId: "",
+        targetWord: "",
         players: {},
         status: "waiting",
-        maxPlayers: 8,
-        winnerId: null,
+        maxPlayers: MAX_PLAYERS,
+        winnerIds: [],
         startedAt: null,
         finishedAt: null,
         currentTurn: 0,
+        participantIds: [],
+        revealedBoards: {},
+        results: [],
       }
       await this.saveState()
     }
 
-    // Send current state to connecting player
-    if (this.state) {
-      this.send(conn, { type: "state", state: this.getPublicState() })
-    } else {
+    if (!this.state) {
       this.send(conn, { type: "error", message: "Game not found" })
+      return
     }
+
+    const returning = markConnected(this.state.players, conn.id)
+    if (!returning) return
+    returning.disconnectedAt = null
+    returning.graceHandled = false
+    this.syncClassicPlayer(returning)
+    const roundReveal = this.advanceClassicRound()
+    this.finishIfEveryoneDone()
+    this.bumpRevision()
+    await this.saveState()
+    this.sendResync(conn)
+    if (roundReveal) this.broadcast({ type: "round-reveal", ...roundReveal })
+    this.broadcastState()
   }
 
-  async onMessage(message: string, sender: Party.Connection) {
+  isCurrentRound(roundId: unknown, sender: Party.Connection): boolean {
+    if (this.state && roundId === this.state.roundId) return true
+    this.send(sender, { type: "error", message: "That Wordle round is no longer active." })
+    this.sendResync(sender)
+    return false
+  }
+
+  async onMessage(message: string | ArrayBuffer | ArrayBufferView, sender: Party.Connection) {
     if (!this.state) return
+    if (typeof message !== "string") {
+      this.send(sender, { type: "error", message: "Invalid Wordle message" })
+      return
+    }
 
     try {
-      const data: ClientMessage = JSON.parse(message)
+      const data = JSON.parse(message) as Partial<ClientMessage>
+      if (data.protocolVersion !== WORDLE_PROTOCOL_VERSION) {
+        this.send(sender, { type: "error", message: "Wordle was updated. Refresh this page to continue." })
+        return
+      }
+      if (data.type !== "join" && !this.state.players[sender.id]) {
+        this.send(sender, { type: "error", message: "Join the game before sending actions" })
+        return
+      }
 
       switch (data.type) {
         case "join": {
-          const returning = markConnected(this.state.players, sender.id);
+          const name = typeof data.name === "string" ? data.name.trim().slice(0, 20) : ""
+          if (!name) {
+            this.send(sender, { type: "error", message: "Enter a player name" })
+            return
+          }
+
+          const returning = this.state.players[sender.id]
           if (returning) {
-            // A reconnect, not a new player - never rejected mid-game.
-            returning.name = data.name || returning.name;
-            await this.saveState();
-            this.broadcast({ type: "player-joined", player: returning });
-            this.broadcast({ type: "state", state: this.getPublicState() });
-            break;
+            returning.connected = true
+            returning.disconnectedAt = null
+            returning.graceHandled = false
+            if (this.state.status !== "finished") returning.name = name
+            this.syncClassicPlayer(returning)
+          } else {
+            if (this.state.status !== "waiting") {
+              this.send(sender, { type: "error", message: "Game already started" })
+              return
+            }
+            if (Object.keys(this.state.players).length >= this.state.maxPlayers) this.pruneDisconnectedPlayers()
+            if (Object.keys(this.state.players).length >= this.state.maxPlayers) {
+              this.send(sender, { type: "error", message: "Game is full" })
+              return
+            }
+            this.state.players[sender.id] = {
+              id: crypto.randomUUID(),
+              name,
+              attempts: 0,
+              completed: false,
+              won: false,
+              guesses: [],
+              joinedAt: Date.now(),
+              connected: true,
+              disconnectedAt: null,
+              graceHandled: false,
+              readyForNextTurn: false,
+            }
+          }
+          const joinedPlayer = this.state.players[sender.id]
+          if (!this.state.hostId || !Object.values(this.state.players).some(player => player.id === this.state!.hostId)) {
+            this.state.hostId = joinedPlayer.id
           }
 
-          if (this.state.status !== "waiting") {
-            this.send(sender, { type: "error", message: "Game already started" })
-            return
-          }
-
-          if (Object.keys(this.state.players).length >= this.state.maxPlayers) {
-            this.send(sender, { type: "error", message: "Game is full" })
-            return
-          }
-
-          const player: Player = {
-            id: sender.id,
-            name: data.name,
-            attempts: 0,
-            completed: false,
-            won: false,
-            guesses: [],
-            currentGuess: 0,
-            joinedAt: Date.now(),
-            connected: true,
-            readyForNextTurn: false,
-          }
-
-          this.state.players[sender.id] = player
+          this.bumpRevision()
           await this.saveState()
-
-          // Notify everyone
-          this.broadcast({ type: "player-joined", player })
-          this.broadcast({ type: "state", state: this.getPublicState() })
+          this.send(sender, { type: "private-state", player: this.getPrivateState(this.state.players[sender.id]) })
+          this.broadcastState()
           break
         }
 
         case "start": {
-          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
+          if (!this.isCurrentRound(data.roundId, sender)) return
+          if (this.state.status !== "waiting") {
+            this.send(sender, { type: "error", message: "Game is not waiting to start" })
+            return
+          }
+          if (!this.canControl(sender.id)) {
             this.send(sender, { type: "error", message: "Only host can start" })
             return
           }
 
-          if (presentCount(this.state.players) < 2) {
-            this.send(sender, { type: "error", message: "Need at least 2 players" })
+          const liveIds = new Set(Array.from(this.room.getConnections(), connection => connection.id))
+          for (const [credential, player] of Object.entries(this.state.players)) {
+            player.connected = liveIds.has(credential)
+            player.disconnectedAt = player.connected ? null : player.disconnectedAt ?? Date.now()
+          }
+          if (Object.values(this.state.players).filter(isPresent).length < 2) {
+            this.bumpRevision()
+            await this.saveState()
+            this.broadcastState()
+            this.send(sender, { type: "error", message: "Need at least 2 connected players" })
+            return
+          }
+          this.pruneDisconnectedPlayers()
+          const disconnectedPlayers = Object.values(this.state.players).filter(player => !player.connected)
+          if (disconnectedPlayers.length > 0) {
+            this.bumpRevision()
+            await this.saveState()
+            this.broadcastState()
+            this.send(sender, { type: "error", message: "Wait for all players to reconnect before starting" })
             return
           }
 
+          this.state.targetWord = getRandomWord()
           this.state.status = "playing"
           this.state.startedAt = Date.now()
-          // Generate a new word when starting
-          this.state.targetWord = getRandomWord()
-          await this.saveState()
-
-          this.broadcast({
-            type: "game-started",
-            targetWord: this.state.targetWord,
-          })
-          this.broadcast({ type: "state", state: this.getPublicState() })
-          break
-        }
-
-        case "guess": {
-          if (this.state.status !== "playing") return
-
-          const player = this.state.players[sender.id]
-          if (!player || player.completed) return
-
-          // In classic mode, block if player already submitted for this turn
-          if (this.state.mode === "classic" && player.readyForNextTurn) {
-            this.send(sender, { type: "error", message: "Waiting for other players..." })
-            return
-          }
-
-          player.attempts++
-          player.currentGuess++
-          player.guesses.push(data.result as unknown as string[])
-
-          // Mode-specific behavior
-          if (this.state.mode === "race") {
-            await this.saveState()
-            // In race mode, broadcast progress (attempt count only)
-            this.broadcast(
-              { type: "player-progress", playerId: sender.id, attempts: player.attempts },
-              sender.id
-            )
-          } else if (this.state.mode === "classic") {
-            // Classic mode - behavior depends on revealMode
-            player.readyForNextTurn = true
-            await this.saveState()
-
-            if (this.state.revealMode === "after-round") {
-              // After-round reveal: wait for all players, then reveal guesses
-              const activePlayers = Object.values(this.state.players).filter(p => !p.completed)
-              const waitingFor = activePlayers.filter(p => !p.readyForNextTurn).map(p => p.name)
-
-              if (waitingFor.length > 0) {
-                // Notify everyone who we're waiting for
-                this.broadcast({ type: "waiting-for-players", waitingFor })
-              } else {
-                // All players submitted - reveal guesses and move to next turn
-                const playerGuesses: Record<string, string[]> = {}
-                for (const p of activePlayers) {
-                  const lastGuess = p.guesses[p.guesses.length - 1]
-                  if (lastGuess) {
-                    playerGuesses[p.id] = lastGuess as unknown as string[]
-                  }
-                  p.readyForNextTurn = false // Reset for next turn
-                }
-
-                this.state.currentTurn++
-                await this.saveState()
-
-                this.broadcast({
-                  type: "turn-complete",
-                  turn: this.state.currentTurn,
-                  playerGuesses,
-                })
-                this.broadcast({ type: "state", state: this.getPublicState() })
-              }
-            }
-            // at-end reveal: don't broadcast anything until game complete
-          }
-          break
-        }
-
-        case "complete": {
-          if (this.state.status !== "playing") return
-
-          const player = this.state.players[sender.id]
-          if (!player || player.completed) return
-
-          player.completed = true
-          player.won = data.won
-          player.attempts = data.attempts
-          player.readyForNextTurn = true // Mark as done for classic mode
-          await this.saveState()
-
-          // Mode-specific completion handling
-          if (this.state.mode === "race") {
-            // Broadcast completion to everyone
-            this.broadcast({
-              type: "player-completed",
-              playerId: sender.id,
-              won: data.won,
-              attempts: data.attempts,
-            })
-
-            // In race mode, first winner ends the game immediately
-            if (data.won && !this.state.winnerId) {
-              this.state.winnerId = sender.id
-              this.state.status = "finished"
-              this.state.finishedAt = Date.now()
-              await this.saveState()
-
-              const results: PlayerResult[] = Object.values(this.state.players).map((p) => ({
-                id: p.id,
-                name: p.name,
-                won: p.won,
-                attempts: p.attempts,
-              }))
-
-              this.broadcast({
-                type: "game-over",
-                winnerId: this.state.winnerId,
-                results,
-              })
-            }
-          } else if (this.state.mode === "classic" && this.state.revealMode === "after-round") {
-            // In classic mode with after-round reveal, broadcast completion
-            this.broadcast({
-              type: "player-completed",
-              playerId: sender.id,
-              won: data.won,
-              attempts: data.attempts,
-            })
-
-            // Check if this was the last active player for this turn
-            const activePlayers = Object.values(this.state.players).filter(p => !p.completed)
-            const waitingFor = activePlayers.filter(p => !p.readyForNextTurn).map(p => p.name)
-
-            if (waitingFor.length > 0) {
-              this.broadcast({ type: "waiting-for-players", waitingFor })
-            }
-          }
-          // In classic mode with at-end reveal, don't broadcast individual completions
-
-          // Check if all players completed (for all modes)
-          const allCompleted = Object.values(this.state.players).every((p) => p.completed)
-          if (allCompleted && this.state.status === "playing") {
-            this.state.status = "finished"
-            this.state.finishedAt = Date.now()
-
-            // Find winner (fewest attempts among winners)
-            const winners = Object.values(this.state.players).filter((p) => p.won)
-            if (winners.length > 0) {
-              winners.sort((a, b) => a.attempts - b.attempts)
-              this.state.winnerId = winners[0].id
-            }
-
-            await this.saveState()
-
-            const results: PlayerResult[] = Object.values(this.state.players).map((p) => ({
-              id: p.id,
-              name: p.name,
-              won: p.won,
-              attempts: p.attempts,
-            }))
-
-            this.broadcast({
-              type: "game-over",
-              winnerId: this.state.winnerId,
-              results,
-            })
-          }
-
-          this.broadcast({ type: "state", state: this.getPublicState() })
-          break
-        }
-
-        case "leave": {
-          delete this.state.players[sender.id]
-
-          // If host leaves, assign new host
-          if (sender.id === this.state.hostId) {
-            const next = nextHost(this.state.players, sender.id);
-            if (next) this.state.hostId = next;
-          }
-
-          await this.saveState()
-          this.broadcast({ type: "player-left", playerId: sender.id })
-          this.broadcast({ type: "state", state: this.getPublicState() })
-          break
-        }
-
-        case "restart": {
-          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
-            this.send(sender, { type: "error", message: "Only host can restart" })
-            return
-          }
-
-          // Reset game state to waiting
-          this.state.status = "waiting"
-          this.state.targetWord = getRandomWord()
-          this.state.winnerId = null
-          this.state.startedAt = null
           this.state.finishedAt = null
           this.state.currentTurn = 0
-
-          // Reset player states
+          this.state.participantIds = Object.values(this.state.players).map(player => player.id)
+          this.state.winnerIds = []
+          this.state.revealedBoards = {}
+          this.state.results = []
           for (const player of Object.values(this.state.players)) {
             player.attempts = 0
             player.completed = false
             player.won = false
             player.guesses = []
-            player.currentGuess = 0
             player.readyForNextTurn = false
           }
 
+          this.bumpRevision()
           await this.saveState()
-          this.broadcast({ type: "game-restarted" })
-          this.broadcast({ type: "state", state: this.getPublicState() })
+          this.broadcastState()
+          for (const conn of this.room.getConnections()) {
+            const player = this.state.players[conn.id]
+            if (player) this.send(conn, { type: "private-state", player: this.getPrivateState(player) })
+          }
+          break
+        }
+
+        case "guess": {
+          if (!this.isCurrentRound(data.roundId, sender)) return
+          if (this.state.status !== "playing") return
+          let player = this.state.players[sender.id]
+          if (!player || !this.state.participantIds.includes(player.id) || !player.connected || player.completed) return
+          if (this.state.mode === "classic" && this.state.revealMode === "after-round" && player.readyForNextTurn) {
+            this.send(sender, { type: "error", message: "Waiting for other players..." })
+            return
+          }
+          if (player.attempts >= MAX_GUESSES) return
+
+          const word = typeof data.word === "string" ? data.word.trim().toUpperCase() : ""
+          if (!/^[A-Z]{5}$/.test(word)) {
+            this.send(sender, { type: "error", message: "Enter a five-letter word" })
+            return
+          }
+          const validWords = await getValidWords()
+          if (!validWords.has(word)) {
+            this.send(sender, { type: "error", message: "Not in word list" })
+            return
+          }
+
+          if (data.roundId !== this.state.roundId || this.state.status !== "playing") return
+          player = this.state.players[sender.id]
+          if (!player || !this.state.participantIds.includes(player.id) || !player.connected || player.completed) return
+          if (this.state.mode === "classic" && this.state.revealMode === "after-round" && player.readyForNextTurn) return
+          if (player.attempts >= MAX_GUESSES) return
+
+          const result = evaluateGuess(word, this.state.targetWord)
+          player.guesses.push(result)
+          player.attempts = player.guesses.length
+          player.won = word === this.state.targetWord
+          player.completed = player.won || player.attempts >= MAX_GUESSES
+          player.readyForNextTurn = this.state.mode === "classic" && this.state.revealMode === "after-round"
+
+          let roundReveal: ReturnType<WordleParty["advanceClassicRound"]> = null
+          if (this.state.mode === "race" && player.won) this.finishGame(player.id)
+          else if (this.state.mode === "classic" && this.state.revealMode === "after-round") roundReveal = this.advanceClassicRound()
+          else this.finishIfEveryoneDone()
+
+          this.bumpRevision()
+          await this.saveState()
+          this.send(sender, { type: "private-state", player: this.getPrivateState(player) })
+          if (roundReveal) this.broadcast({ type: "round-reveal", ...roundReveal })
+          this.broadcastState()
+          break
+        }
+
+        case "leave": {
+          const leavingPlayer = this.state.players[sender.id]
+          delete this.state.players[sender.id]
+          if (Object.keys(this.state.players).length === 0) {
+            this.state = null
+            await this.room.storage.delete("state")
+            await this.room.storage.deleteAlarm()
+            return
+          }
+          if (leavingPlayer?.id === this.state.hostId) this.state.hostId = this.electHost(leavingPlayer.id)
+          const roundReveal = this.advanceClassicRound()
+          this.finishIfEveryoneDone()
+          this.bumpRevision()
+          await this.saveState()
+          if (roundReveal) this.broadcast({ type: "round-reveal", ...roundReveal })
+          this.broadcastState()
+          break
+        }
+
+        case "restart": {
+          if (!this.isCurrentRound(data.roundId, sender)) return
+          if (this.state.status !== "finished") {
+            this.send(sender, { type: "error", message: "Game is not ready to restart" })
+            return
+          }
+          if (!this.canControl(sender.id)) {
+            this.send(sender, { type: "error", message: "Only host can restart" })
+            return
+          }
+
+          this.state.roundId = crypto.randomUUID()
+          this.state.status = "waiting"
+          this.state.targetWord = ""
+          this.state.startedAt = null
+          this.state.finishedAt = null
+          this.state.currentTurn = 0
+          this.state.participantIds = []
+          this.state.winnerIds = []
+          this.state.revealedBoards = {}
+          this.state.results = []
+          for (const player of Object.values(this.state.players)) {
+            player.attempts = 0
+            player.completed = false
+            player.won = false
+            player.guesses = []
+            player.readyForNextTurn = false
+          }
+
+          this.bumpRevision()
+          await this.saveState()
+          this.broadcastState()
           break
         }
       }
-    } catch (e) {
-      console.error("Error processing message:", e)
+    } catch (error) {
+      console.error("Error processing Wordle message:", error)
+      this.send(sender, { type: "error", message: "Could not process that Wordle action" })
     }
   }
 
-  async onClose(conn: Party.Connection) {
+  async handleDisconnect(conn: Party.Connection) {
     if (!this.state) return
+    const replacementIsOpen = Array.from(this.room.getConnections()).some(
+      connection => connection.id === conn.id && connection !== conn,
+    )
+    const player = this.state.players[conn.id]
+    if (replacementIsOpen || !player || !player.connected) return
 
-    // Remove player on disconnect
-    if (this.state.players[conn.id]) {
-      markDisconnected(this.state.players, conn.id);
+    markDisconnected(this.state.players, conn.id)
+    player.disconnectedAt = Date.now()
+    player.graceHandled = false
+    this.bumpRevision()
+    await this.saveState()
+    this.broadcastState()
+  }
 
-      // If host leaves, assign new host
-      // The host keeps the role across a blip; canControlGame lets someone else
-      // act only once the host is genuinely absent.
+  async onClose(conn: Party.Connection) {
+    await this.handleDisconnect(conn)
+  }
 
-      await this.saveState()
-      // No "player-left" here: they may be back in a moment, and the client
-      // removes players on that message.
-      this.broadcast({ type: "state", state: this.getPublicState() })
+  async onError(conn: Party.Connection, error: Error) {
+    console.error(`Wordle connection error for ${conn.id}:`, error)
+    await this.handleDisconnect(conn)
+  }
+
+  async onAlarm() {
+    if (!this.state) return
+    this.pruneDisconnectedPlayers()
+    if (Object.keys(this.state.players).length === 0) {
+      this.state = null
+      await this.room.storage.delete("state")
+      await this.room.storage.deleteAlarm()
+      return
     }
+
+    if (this.state.status === "finished" && !Object.values(this.state.players).some(player => player.connected) &&
+      this.state.finishedAt !== null &&
+      Date.now() - this.state.finishedAt >= DISCONNECTED_PLAYER_TTL_MS) {
+      this.state = null
+      await this.room.storage.delete("state")
+      await this.room.storage.deleteAlarm()
+      return
+    }
+
+    const host = Object.values(this.state.players).find(player => player.id === this.state!.hostId)
+    if (host && !host.connected && host.disconnectedAt !== null && Date.now() - host.disconnectedAt >= RECONNECT_GRACE_MS) {
+      this.state.hostId = this.electHost(host.id)
+    }
+
+    for (const player of Object.values(this.state.players)) {
+      if (!player.connected && player.disconnectedAt !== null && Date.now() - player.disconnectedAt >= RECONNECT_GRACE_MS) {
+        player.graceHandled = true
+      }
+    }
+
+    const roundReveal = this.advanceClassicRound()
+    this.finishIfEveryoneDone()
+    this.bumpRevision()
+    await this.saveState()
+    if (roundReveal) this.broadcast({ type: "round-reveal", ...roundReveal })
+    this.broadcastState()
   }
 }

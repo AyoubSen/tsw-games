@@ -1,286 +1,227 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import PartySocket from "partysocket"
 import { PARTYKIT_HOST, generateRoomCode, getPersistentPlayerId } from "@/lib/partykit"
-import type { ServerMessage, PublicGameState, GameMode, RevealMode } from "../../../../party/wordle"
+import {
+  WORDLE_PROTOCOL_VERSION,
+  type ClientMessage,
+  type EvaluatedLetter,
+  type PrivatePlayerState,
+  type ServerMessage,
+  type PublicGameState,
+  type GameMode,
+  type RevealMode,
+} from "../../../../party/wordle"
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
 
-// Data for the round reveal modal
 export interface RoundReveal {
   turn: number
-  playerGuesses: Record<string, string[]> // playerId -> [char, state][] serialized
+  playerGuesses: Record<string, EvaluatedLetter[][]>
 }
 
 export interface MultiplayerState {
   connectionStatus: ConnectionStatus
   gameState: PublicGameState | null
+  privatePlayer: PrivatePlayerState | null
   playerId: string | null
   error: string | null
-  isHost: boolean
-  waitingFor: string[] // Players we're waiting for in classic mode
-  isWaitingForOthers: boolean // True when current player has guessed and waiting
-  roundReveal: RoundReveal | null // Data for showing round reveal modal
+  waitingFor: string[]
+  isWaitingForOthers: boolean
+  roundReveal: RoundReveal | null
 }
 
-export function useMultiplayerWordle() {
-  const [state, setState] = useState<MultiplayerState>({
+function initialState(overrides: Partial<MultiplayerState> = {}): MultiplayerState {
+  return {
     connectionStatus: "disconnected",
     gameState: null,
+    privatePlayer: null,
     playerId: null,
     error: null,
-    isHost: false,
     waitingFor: [],
     isWaitingForOthers: false,
     roundReveal: null,
-  })
+    ...overrides,
+  }
+}
 
+export function useMultiplayerWordle() {
+  const [state, setState] = useState<MultiplayerState>(() => initialState())
   const socketRef = useRef<PartySocket | null>(null)
-  const playerNameRef = useRef<string>("")
-
-  const connect = useCallback((roomCode: string, isHost: boolean, mode: GameMode, revealMode: RevealMode, playerName: string) => {
-    // Disconnect existing socket
-    if (socketRef.current) {
-      socketRef.current.close()
-    }
-
-    playerNameRef.current = playerName
-
-    setState((prev) => ({
-      ...prev,
-      connectionStatus: "connecting",
-      error: null,
-      isHost,
-    }))
-
-    const socket = new PartySocket({
-      host: PARTYKIT_HOST,
-      room: roomCode,
-      id: getPersistentPlayerId("wordle", roomCode),
-      query: {
-        host: isHost.toString(),
-        mode,
-        revealMode,
-      },
-    })
-
-    socket.addEventListener("open", () => {
-      setState((prev) => ({
-        ...prev,
-        connectionStatus: "connected",
-        playerId: socket.id,
-      }))
-
-      // Auto-join with player name
-      socket.send(JSON.stringify({ type: "join", name: playerName }))
-    })
-
-    socket.addEventListener("message", (event) => {
-      try {
-        const message: ServerMessage = JSON.parse(event.data)
-        handleMessage(message)
-      } catch (e) {
-        console.error("Failed to parse message:", e)
-      }
-    })
-
-    socket.addEventListener("close", () => {
-      setState((prev) => ({
-        ...prev,
-        connectionStatus: "disconnected",
-      }))
-    })
-
-    socket.addEventListener("error", () => {
-      setState((prev) => ({
-        ...prev,
-        connectionStatus: "error",
-        error: "Connection failed",
-      }))
-    })
-
-    socketRef.current = socket
-  }, [])
+  const roomCodeRef = useRef("")
+  const roundIdRef = useRef("")
+  const revisionRef = useRef(0)
 
   const handleMessage = useCallback((message: ServerMessage) => {
+    if (message.type === "error") {
+      const terminal = message.message === "Game not found" ||
+        message.message === "Game already started" ||
+        message.message === "Game is full"
+      if (terminal) {
+        const socket = socketRef.current
+        socketRef.current = null
+        socket?.close()
+        roundIdRef.current = ""
+        revisionRef.current = 0
+        setState(initialState({ connectionStatus: "error", error: message.message }))
+      } else {
+        setState(prev => ({ ...prev, error: message.message }))
+      }
+      return
+    }
+
+    if (message.revision < revisionRef.current) return
+    if (message.type !== "state" && roundIdRef.current && message.roundId !== roundIdRef.current) return
+    revisionRef.current = Math.max(revisionRef.current, message.revision)
+
     switch (message.type) {
       case "state":
-        setState((prev) => ({
+        roundIdRef.current = message.state.roundId
+        setState(prev => {
+          const roundChanged = prev.gameState?.roundId !== message.state.roundId
+          const ownPlayer = prev.playerId ? message.state.players[prev.playerId] : null
+          return {
+            ...prev,
+            connectionStatus: "connected",
+            gameState: message.state,
+            privatePlayer: roundChanged || message.state.status === "waiting" ? null : prev.privatePlayer,
+            waitingFor: message.state.waitingFor
+              .map(id => message.state.players[id]?.name)
+              .filter((name): name is string => Boolean(name)),
+            isWaitingForOthers: Boolean(ownPlayer?.readyForNextTurn),
+            roundReveal: roundChanged || message.state.status !== "playing" ? null : prev.roundReveal,
+            error: null,
+          }
+        })
+        break
+
+      case "private-state":
+        setState(prev => ({
           ...prev,
-          gameState: message.state,
+          playerId: message.player.playerId,
+          privatePlayer: message.player,
+          error: null,
         }))
         break
 
-      case "player-joined":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              players: {
-                ...prev.gameState.players,
-                [message.player.id]: message.player,
-              },
-            },
-          }
-        })
-        break
-
-      case "player-left":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          const newPlayers = { ...prev.gameState.players }
-          delete newPlayers[message.playerId]
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              players: newPlayers,
-            },
-          }
-        })
-        break
-
-      case "game-started":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              status: "playing",
-              targetWord: message.targetWord,
-            },
-          }
-        })
-        break
-
-      case "player-progress":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          const player = prev.gameState.players[message.playerId]
-          if (!player) return prev
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              players: {
-                ...prev.gameState.players,
-                [message.playerId]: {
-                  ...player,
-                  attempts: message.attempts,
-                },
-              },
-            },
-          }
-        })
-        break
-
-      case "player-completed":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          const player = prev.gameState.players[message.playerId]
-          if (!player) return prev
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              players: {
-                ...prev.gameState.players,
-                [message.playerId]: {
-                  ...player,
-                  completed: true,
-                  won: message.won,
-                  attempts: message.attempts,
-                },
-              },
-            },
-          }
-        })
-        break
-
-      case "game-over":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              status: "finished",
-              winnerId: message.winnerId,
-            },
-            waitingFor: [],
-          }
-        })
-        break
-
-      case "waiting-for-players":
-        setState((prev) => {
-          // If current player is NOT in waitingFor list, they are waiting for others
-          const currentPlayerName = prev.gameState?.players[prev.playerId || ""]?.name
-          const isWaiting = currentPlayerName ? !message.waitingFor.includes(currentPlayerName) : false
-          return {
-            ...prev,
-            waitingFor: message.waitingFor,
-            isWaitingForOthers: isWaiting,
-          }
-        })
-        break
-
-      case "turn-complete":
-        setState((prev) => ({
+      case "round-reveal":
+        setState(prev => ({
           ...prev,
-          waitingFor: [],
-          isWaitingForOthers: false,
           roundReveal: {
             turn: message.turn,
             playerGuesses: message.playerGuesses,
           },
         }))
         break
-
-      case "game-restarted":
-        // Reset will come through state message
-        setState((prev) => ({
-          ...prev,
-          waitingFor: [],
-          isWaitingForOthers: false,
-          roundReveal: null,
-        }))
-        break
-
-      case "error":
-        setState((prev) => ({
-          ...prev,
-          error: message.message,
-        }))
-        break
     }
+  }, [])
+
+  const connect = useCallback((roomCode: string, isHost: boolean, mode: GameMode, revealMode: RevealMode, playerName: string) => {
+    const previousSocket = socketRef.current
+    socketRef.current = null
+    previousSocket?.close()
+
+    roomCodeRef.current = roomCode
+    roundIdRef.current = ""
+    revisionRef.current = 0
+    const playerId = getPersistentPlayerId("wordle", roomCode)
+    setState(initialState({ connectionStatus: "connecting", playerId }))
+
+    const socket = new PartySocket({
+      host: PARTYKIT_HOST,
+      room: roomCode,
+      id: playerId,
+      query: {
+        host: isHost.toString(),
+        mode,
+        revealMode,
+        protocolVersion: String(WORDLE_PROTOCOL_VERSION),
+      },
+      maxEnqueuedMessages: 0,
+    })
+    socketRef.current = socket
+
+    socket.addEventListener("open", () => {
+      if (socketRef.current !== socket) return
+      revisionRef.current = 0
+      setState(prev => ({ ...prev, error: null }))
+      const join: ClientMessage = {
+        type: "join",
+        protocolVersion: WORDLE_PROTOCOL_VERSION,
+        name: playerName,
+      }
+      socket.send(JSON.stringify(join))
+    })
+
+    socket.addEventListener("message", event => {
+      if (socketRef.current !== socket) return
+      try {
+        const message = JSON.parse(event.data) as ServerMessage
+        if (message.protocolVersion !== WORDLE_PROTOCOL_VERSION) {
+          socketRef.current = null
+          socket.close(1008, "Incompatible Wordle server")
+          setState(initialState({
+            connectionStatus: "error",
+            error: "Wordle was updated. Refresh this page to continue.",
+          }))
+          return
+        }
+        handleMessage(message)
+      } catch (error) {
+        console.error("Failed to parse Wordle message:", error)
+      }
+    })
+
+    socket.addEventListener("close", () => {
+      if (socketRef.current !== socket) return
+      setState(prev => ({ ...prev, connectionStatus: "disconnected" }))
+    })
+
+    socket.addEventListener("error", () => {
+      if (socketRef.current !== socket) return
+      setState(prev => ({
+        ...prev,
+        connectionStatus: "disconnected",
+        error: null,
+      }))
+    })
+  }, [handleMessage])
+
+  const sendNow = useCallback((message: ClientMessage) => {
+    const socket = socketRef.current
+    if (!socket || socket.readyState !== 1) {
+      setState(prev => ({ ...prev, error: "Connection lost. Reconnecting..." }))
+      return false
+    }
+    socket.send(JSON.stringify(message))
+    return true
   }, [])
 
   const disconnect = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "leave" }))
-      socketRef.current.close()
-      socketRef.current = null
+    const socket = socketRef.current
+    socketRef.current = null
+    if (socket?.readyState === 1) {
+      const leave: ClientMessage = { type: "leave", protocolVersion: WORDLE_PROTOCOL_VERSION }
+      socket.send(JSON.stringify(leave))
     }
-    setState({
-      connectionStatus: "disconnected",
-      gameState: null,
-      playerId: null,
-      error: null,
-      isHost: false,
-      waitingFor: [],
-      isWaitingForOthers: false,
-      roundReveal: null,
-    })
+    socket?.close()
+    roomCodeRef.current = ""
+    roundIdRef.current = ""
+    revisionRef.current = 0
+    setState(initialState())
+  }, [])
+
+  const abandonReconnect = useCallback(() => {
+    const socket = socketRef.current
+    socketRef.current = null
+    socket?.close()
+    roomCodeRef.current = ""
+    roundIdRef.current = ""
+    revisionRef.current = 0
+    setState(initialState())
   }, [])
 
   const dismissReveal = useCallback(() => {
-    setState((prev) => ({
-      ...prev,
-      roundReveal: null,
-    }))
+    setState(prev => ({ ...prev, roundReveal: null }))
   }, [])
 
   const createGame = useCallback((mode: GameMode, revealMode: RevealMode, playerName: string) => {
@@ -290,51 +231,49 @@ export function useMultiplayerWordle() {
   }, [connect])
 
   const joinGame = useCallback((roomCode: string, playerName: string) => {
-    connect(roomCode.toUpperCase(), false, "race", "after-round", playerName) // Mode/revealMode don't matter for joining
+    connect(roomCode.toUpperCase(), false, "race", "after-round", playerName)
   }, [connect])
 
   const startGame = useCallback(() => {
-    if (socketRef.current && state.isHost) {
-      socketRef.current.send(JSON.stringify({ type: "start" }))
-    }
-  }, [state.isHost])
+    if (!roundIdRef.current) return
+    sendNow({ type: "start", protocolVersion: WORDLE_PROTOCOL_VERSION, roundId: roundIdRef.current })
+  }, [sendNow])
 
-  const sendGuess = useCallback((word: string, result: string[][]) => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "guess", word, result }))
-    }
-  }, [])
-
-  const sendComplete = useCallback((won: boolean, attempts: number) => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "complete", won, attempts }))
-    }
-  }, [])
+  const sendGuess = useCallback((word: string) => {
+    if (!roundIdRef.current) return false
+    return sendNow({
+      type: "guess",
+      protocolVersion: WORDLE_PROTOCOL_VERSION,
+      roundId: roundIdRef.current,
+      word,
+    })
+  }, [sendNow])
 
   const restartGame = useCallback(() => {
-    if (socketRef.current && state.isHost) {
-      socketRef.current.send(JSON.stringify({ type: "restart" }))
-    }
-  }, [state.isHost])
+    if (!roundIdRef.current) return
+    sendNow({ type: "restart", protocolVersion: WORDLE_PROTOCOL_VERSION, roundId: roundIdRef.current })
+  }, [sendNow])
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (socketRef.current) {
-        socketRef.current.close()
-      }
+      const socket = socketRef.current
+      socketRef.current = null
+      socket?.close()
     }
   }, [])
+
+  const isHost = Boolean(state.gameState && state.playerId && state.gameState.hostId === state.playerId)
 
   return {
     ...state,
+    isHost,
     createGame,
     joinGame,
     startGame,
     sendGuess,
-    sendComplete,
     restartGame,
     disconnect,
+    abandonReconnect,
     dismissReveal,
   }
 }

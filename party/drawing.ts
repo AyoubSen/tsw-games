@@ -22,6 +22,30 @@ export interface Guess {
   timestamp: number
 }
 
+export type DrawingGameMode = "classic" | "telephone"
+
+export type TelephoneEntry =
+  | { type: "text"; authorId: string; authorName: string; text: string }
+  | { type: "drawing"; authorId: string; authorName: string; strokes: Stroke[] }
+
+export interface TelephoneChain {
+  id: string
+  originPlayerId: string
+  originPlayerName: string
+  entries: TelephoneEntry[]
+}
+
+export interface TelephoneReaction {
+  playerId: string
+  playerName: string
+  emoji: string
+}
+
+export type TelephoneAssignment =
+  | { type: "write-prompt" }
+  | { type: "draw"; prompt: string }
+  | { type: "describe"; strokes: Stroke[] }
+
 // Player state
 export interface Player {
   id: string
@@ -39,6 +63,7 @@ export interface Player {
 // Game state
 export interface GameState {
   roomCode: string
+  mode: DrawingGameMode
   hostId: string
   players: Record<string, Player>
   status: "waiting" | "playing" | "round-end" | "finished"
@@ -54,12 +79,23 @@ export interface GameState {
   guesses: Guess[]
   usedWords: string[]
   correctGuessers: string[] // IDs of players who guessed correctly this round
+  telephoneStage: number
+  telephonePlayerOrder: string[]
+  telephoneSubmittedIds: string[]
+  telephoneChains: Record<string, TelephoneChain>
+  telephoneRevealChainIndex: number
+  telephoneRevealEntryIndex: number
+  telephoneRevealComplete: boolean
+  telephoneReactions: Record<string, TelephoneReaction[]>
+  playerTokens: Record<string, string>
 }
 
 // Public state (sent to clients - hides word from non-drawers)
 export interface PublicGameState {
   roomCode: string
+  mode: DrawingGameMode
   hostId: string
+  canControl: boolean
   players: Record<string, Player>
   status: "waiting" | "playing" | "round-end" | "finished"
   maxPlayers: number
@@ -73,6 +109,15 @@ export interface PublicGameState {
   strokes: Stroke[]
   guesses: Guess[]
   correctGuessers: string[]
+  telephoneStage: number
+  telephoneTotalStages: number
+  telephoneSubmittedIds: string[]
+  telephoneAssignment: TelephoneAssignment | null
+  telephoneChains: TelephoneChain[]
+  telephoneRevealChainIndex: number
+  telephoneRevealEntryIndex: number
+  telephoneRevealComplete: boolean
+  telephoneReactions: TelephoneReaction[]
 }
 
 // Message types from client
@@ -80,8 +125,21 @@ export type ClientMessage =
   | { type: "join"; name: string }
   | { type: "start" }
   | { type: "draw"; stroke: Stroke }
+  | { type: "undo"; requestId: string }
   | { type: "clear" }
   | { type: "guess"; text: string }
+  | { type: "telephone-submit"; stage: number; text?: string; strokes?: Stroke[] }
+  | {
+      type: "telephone-reveal-next"
+      chainIndex: number
+      entryIndex: number
+    }
+  | {
+      type: "telephone-react"
+      chainIndex: number
+      entryIndex: number
+      emoji: string
+    }
   | { type: "restart" }
   | { type: "leave" }
 
@@ -93,6 +151,7 @@ export type ServerMessage =
   | { type: "round-started"; drawerId: string; word: string | null; wordLength: number }
   | { type: "draw"; stroke: Stroke }
   | { type: "clear" }
+  | { type: "canvas-state"; strokes: Stroke[]; undoRequestId?: string }
   | { type: "guess"; guess: Guess }
   | { type: "correct-guess"; playerId: string; playerName: string }
   | { type: "round-ended"; word: string; scores: Record<string, number> }
@@ -124,6 +183,14 @@ const DRAWING_WORDS = [
   "vampire", "ghost", "angel",
 ]
 
+const TELEPHONE_REACTIONS = new Set([
+  "\u{1F602}",
+  "\u{1F525}",
+  "\u{1F44F}",
+  "\u{1F92F}",
+  "\u{2764}\u{FE0F}",
+])
+
 function getRandomWord(usedWords: string[]): string {
   const available = DRAWING_WORDS.filter((word) => !usedWords.includes(word))
   if (available.length === 0) {
@@ -132,16 +199,67 @@ function getRandomWord(usedWords: string[]): string {
   return available[Math.floor(Math.random() * available.length)]
 }
 
+function sanitizeStrokes(value: unknown): Stroke[] {
+  if (!Array.isArray(value)) return []
+
+  return value.slice(0, 1000).flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object") return []
+
+    const stroke = candidate as Partial<Stroke>
+    if (!Array.isArray(stroke.points)) return []
+
+    const points = stroke.points
+      .slice(0, 2000)
+      .filter(
+        (point) =>
+          point &&
+          Number.isFinite(point.x) &&
+          Number.isFinite(point.y) &&
+          point.x >= 0 &&
+          point.x <= 1200 &&
+          point.y >= 0 &&
+          point.y <= 800
+      )
+      .map((point) => ({ x: point.x, y: point.y }))
+    if (points.length < 2) return []
+
+    const color =
+      typeof stroke.color === "string" && /^#[0-9a-f]{6}$/i.test(stroke.color)
+        ? stroke.color
+        : "#000000"
+    const size = Number.isFinite(stroke.size)
+      ? Math.min(64, Math.max(1, stroke.size!))
+      : 8
+
+    return [{ points, color, size }]
+  })
+}
+
 export default class DrawingParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
   roundTimer: ReturnType<typeof setTimeout> | null = null
+  connectionTokens = new WeakMap<Party.Connection, string>()
 
   async onStart() {
     const stored = await this.room.storage.get<GameState>("state")
     if (stored) {
-      this.state = stored
+      this.state = {
+        ...stored,
+        mode: stored.mode ?? "classic",
+        telephoneStage: stored.telephoneStage ?? 0,
+        telephonePlayerOrder: stored.telephonePlayerOrder ?? [],
+        telephoneSubmittedIds: stored.telephoneSubmittedIds ?? [],
+        telephoneChains: stored.telephoneChains ?? {},
+        telephoneRevealChainIndex: stored.telephoneRevealChainIndex ?? 0,
+        telephoneRevealEntryIndex: stored.telephoneRevealEntryIndex ?? 0,
+        telephoneRevealComplete:
+          stored.telephoneRevealComplete ??
+          (stored.mode === "telephone" && stored.status === "finished"),
+        telephoneReactions: stored.telephoneReactions ?? {},
+        playerTokens: stored.playerTokens ?? {},
+      }
       // Resume round timer if game was in progress
       if (this.state.status === "playing" && this.state.roundStartedAt) {
         const elapsed = (Date.now() - this.state.roundStartedAt) / 1000
@@ -161,6 +279,12 @@ export default class DrawingParty implements Party.Server {
     }
   }
 
+  isAuthenticated(conn: Party.Connection): boolean {
+    if (!this.state) return false
+    const token = this.connectionTokens.get(conn)
+    return Boolean(token && this.state.playerTokens[conn.id] === token)
+  }
+
   getPublicState(forPlayerId?: string): PublicGameState {
     if (!this.state) {
       throw new Error("No game state")
@@ -169,10 +293,29 @@ export default class DrawingParty implements Party.Server {
     const isDrawer = forPlayerId === this.state.currentDrawerId
     // Show word to everyone during round-end, or to drawer during playing
     const showWord = this.state.status === "round-end" || isDrawer
+    const telephoneChains = this.state.telephonePlayerOrder
+      .map((id) => this.state!.telephoneChains[id])
+      .filter((chain): chain is TelephoneChain => Boolean(chain))
+    const revealedTelephoneChains = this.state.telephoneRevealComplete
+      ? telephoneChains
+      : telephoneChains
+          .slice(0, this.state.telephoneRevealChainIndex + 1)
+          .map((chain, index) => ({
+            ...chain,
+            entries:
+              index < this.state!.telephoneRevealChainIndex
+                ? chain.entries
+                : chain.entries.slice(0, this.state!.telephoneRevealEntryIndex + 1),
+          }))
+    const reactionKey = `${this.state.telephoneRevealChainIndex}:${this.state.telephoneRevealEntryIndex}`
 
     return {
       roomCode: this.state.roomCode,
+      mode: this.state.mode,
       hostId: this.state.hostId,
+      canControl: forPlayerId
+        ? canControlGame(this.state.players, this.state.hostId, forPlayerId)
+        : false,
       players: this.state.players,
       status: this.state.status,
       maxPlayers: this.state.maxPlayers,
@@ -186,7 +329,55 @@ export default class DrawingParty implements Party.Server {
       strokes: this.state.strokes,
       guesses: this.state.guesses,
       correctGuessers: this.state.correctGuessers,
+      telephoneStage: this.state.telephoneStage,
+      telephoneTotalStages: this.state.telephonePlayerOrder.length,
+      telephoneSubmittedIds: this.state.telephoneSubmittedIds,
+      telephoneAssignment: forPlayerId
+        ? this.getTelephoneAssignment(forPlayerId)
+        : null,
+      telephoneChains:
+        this.state.mode === "telephone" && this.state.status === "finished"
+          ? revealedTelephoneChains
+          : [],
+      telephoneRevealChainIndex: this.state.telephoneRevealChainIndex,
+      telephoneRevealEntryIndex: this.state.telephoneRevealEntryIndex,
+      telephoneRevealComplete: this.state.telephoneRevealComplete,
+      telephoneReactions: this.state.telephoneReactions[reactionKey] ?? [],
     }
+  }
+
+  getTelephoneAssignment(playerId: string): TelephoneAssignment | null {
+    if (
+      !this.state ||
+      this.state.mode !== "telephone" ||
+      this.state.status !== "playing"
+    ) {
+      return null
+    }
+
+    if (this.state.telephoneStage === 0) {
+      return { type: "write-prompt" }
+    }
+
+    const playerIndex = this.state.telephonePlayerOrder.indexOf(playerId)
+    if (playerIndex === -1) return null
+
+    const chainCount = this.state.telephonePlayerOrder.length
+    const chainIndex =
+      (playerIndex - this.state.telephoneStage + chainCount) % chainCount
+    const chainId = this.state.telephonePlayerOrder[chainIndex]
+    const chain = this.state.telephoneChains[chainId]
+    const previousEntry = chain?.entries[chain.entries.length - 1]
+
+    if (this.state.telephoneStage % 2 === 1 && previousEntry?.type === "text") {
+      return { type: "draw", prompt: previousEntry.text }
+    }
+
+    if (this.state.telephoneStage % 2 === 0 && previousEntry?.type === "drawing") {
+      return { type: "describe", strokes: previousEntry.strokes }
+    }
+
+    return null
   }
 
   broadcast(message: ServerMessage, exclude?: string) {
@@ -201,7 +392,12 @@ export default class DrawingParty implements Party.Server {
   broadcastState() {
     // Send personalized state to each player (drawer sees word, others don't)
     for (const conn of this.room.getConnections()) {
-      conn.send(JSON.stringify({ type: "state", state: this.getPublicState(conn.id) }))
+      conn.send(
+        JSON.stringify({
+          type: "state",
+          state: this.getPublicState(this.isAuthenticated(conn) ? conn.id : undefined),
+        })
+      )
     }
   }
 
@@ -213,7 +409,9 @@ export default class DrawingParty implements Party.Server {
     if (this.roundTimer) {
       clearTimeout(this.roundTimer)
     }
+    const roundStartedAt = this.state?.roundStartedAt
     this.roundTimer = setTimeout(async () => {
+      if (this.state?.roundStartedAt !== roundStartedAt) return
       await this.endRound()
     }, duration)
   }
@@ -276,8 +474,170 @@ export default class DrawingParty implements Party.Server {
     this.startRoundTimer(this.state.roundTimeLimit * 1000)
   }
 
+  async startTelephoneGame() {
+    if (!this.state) return
+
+    const players = Object.values(this.state.players)
+      .filter((player) => player.connected !== false)
+      .sort(
+      (a, b) => a.joinedAt - b.joinedAt
+      )
+    this.state.telephonePlayerOrder = players.map((player) => player.id)
+    this.state.telephoneChains = Object.fromEntries(
+      players.map((player) => [
+        player.id,
+        {
+          id: player.id,
+          originPlayerId: player.id,
+          originPlayerName: player.name,
+          entries: [],
+        },
+      ])
+    )
+    this.state.telephoneStage = 0
+    this.state.telephoneSubmittedIds = []
+    this.state.telephoneRevealChainIndex = 0
+    this.state.telephoneRevealEntryIndex = 0
+    this.state.telephoneRevealComplete = false
+    this.state.telephoneReactions = {}
+    this.state.status = "playing"
+    this.state.roundNumber = 1
+    this.state.totalRounds = players.length
+    this.state.roundStartedAt = Date.now()
+
+    await this.saveState()
+    this.broadcastState()
+    this.startRoundTimer(this.state.roundTimeLimit * 1000)
+  }
+
+  getTelephoneChainForPlayer(playerId: string): TelephoneChain | null {
+    if (!this.state) return null
+
+    const playerIndex = this.state.telephonePlayerOrder.indexOf(playerId)
+    if (playerIndex === -1) return null
+
+    const chainCount = this.state.telephonePlayerOrder.length
+    const chainIndex =
+      (playerIndex - this.state.telephoneStage + chainCount) % chainCount
+    const chainId = this.state.telephonePlayerOrder[chainIndex]
+    return this.state.telephoneChains[chainId] ?? null
+  }
+
+  addTelephoneEntry(
+    playerId: string,
+    entry:
+      | { type: "text"; text: string }
+      | { type: "drawing"; strokes: Stroke[] }
+  ) {
+    if (!this.state) return
+
+    const player = this.state.players[playerId]
+    const originalChain = this.state.telephoneChains[playerId]
+    const chain = this.getTelephoneChainForPlayer(playerId)
+    if (!chain) return
+
+    chain.entries.push({
+      ...entry,
+      authorId: playerId,
+      authorName: player?.name ?? originalChain?.originPlayerName ?? "Player",
+    } as TelephoneEntry)
+    this.state.telephoneSubmittedIds.push(playerId)
+  }
+
+  async submitTelephoneEntry(
+    playerId: string,
+    submission: Extract<ClientMessage, { type: "telephone-submit" }>
+  ) {
+    if (
+      !this.state ||
+      this.state.mode !== "telephone" ||
+      this.state.status !== "playing" ||
+      submission.stage !== this.state.telephoneStage ||
+      !this.state.telephonePlayerOrder.includes(playerId) ||
+      this.state.telephoneSubmittedIds.includes(playerId)
+    ) {
+      return
+    }
+
+    if (this.state.telephoneStage % 2 === 1) {
+      const strokes = sanitizeStrokes(submission.strokes)
+      this.addTelephoneEntry(playerId, { type: "drawing", strokes })
+    } else {
+      const text = submission.text?.trim().slice(0, 120)
+      if (!text) return
+      this.addTelephoneEntry(playerId, { type: "text", text })
+    }
+
+    if (
+      this.state.telephoneSubmittedIds.length ===
+      this.state.telephonePlayerOrder.length
+    ) {
+      await this.advanceTelephoneStage()
+    } else {
+      await this.saveState()
+      this.broadcastState()
+    }
+  }
+
+  async advanceTelephoneStage() {
+    if (!this.state || this.state.mode !== "telephone") return
+
+    if (this.roundTimer) {
+      clearTimeout(this.roundTimer)
+      this.roundTimer = null
+    }
+
+    const missingPlayers = this.state.telephonePlayerOrder.filter(
+      (id) => !this.state!.telephoneSubmittedIds.includes(id)
+    )
+    for (const playerId of missingPlayers) {
+      if (this.state.telephoneStage % 2 === 1) {
+        this.addTelephoneEntry(playerId, { type: "drawing", strokes: [] })
+      } else {
+        this.addTelephoneEntry(playerId, { type: "text", text: "No description" })
+      }
+    }
+
+    if (this.state.telephoneStage + 1 >= this.state.telephonePlayerOrder.length) {
+      await this.endGame()
+      return
+    }
+
+    this.state.telephoneStage++
+    this.state.roundNumber = this.state.telephoneStage + 1
+    this.state.telephoneSubmittedIds = []
+    this.state.roundStartedAt = Date.now()
+
+    for (const playerId of this.state.telephonePlayerOrder) {
+      if (!this.state.players[playerId]) {
+        if (this.state.telephoneStage % 2 === 1) {
+          this.addTelephoneEntry(playerId, { type: "drawing", strokes: [] })
+        } else {
+          this.addTelephoneEntry(playerId, { type: "text", text: "No description" })
+        }
+      }
+    }
+
+    if (
+      this.state.telephoneSubmittedIds.length ===
+      this.state.telephonePlayerOrder.length
+    ) {
+      await this.advanceTelephoneStage()
+      return
+    }
+
+    await this.saveState()
+    this.broadcastState()
+    this.startRoundTimer(this.state.roundTimeLimit * 1000)
+  }
+
   async endRound() {
     if (!this.state || this.state.status !== "playing") return
+
+    if (this.state.mode === "telephone") {
+      await this.advanceTelephoneStage()
+      return
+    }
 
     if (this.roundTimer) {
       clearTimeout(this.roundTimer)
@@ -316,6 +676,11 @@ export default class DrawingParty implements Party.Server {
     }
 
     this.state.status = "finished"
+    if (this.state.mode === "telephone") {
+      this.state.telephoneRevealChainIndex = 0
+      this.state.telephoneRevealEntryIndex = 0
+      this.state.telephoneRevealComplete = false
+    }
     await this.saveState()
 
     const results: PlayerResult[] = Object.values(this.state.players)
@@ -335,10 +700,14 @@ export default class DrawingParty implements Party.Server {
     const isHost = url.searchParams.get("host") === "true"
     const roundTimeLimit = parseInt(url.searchParams.get("roundTimeLimit") || "60", 10)
     const roundsPerPlayer = parseInt(url.searchParams.get("roundsPerPlayer") || "1", 10)
+    const mode = url.searchParams.get("mode") === "telephone" ? "telephone" : "classic"
+    const playerToken = url.searchParams.get("playerToken") || ""
+    if (playerToken) this.connectionTokens.set(conn, playerToken)
 
     if (isHost && !this.state) {
       this.state = {
         roomCode: this.room.id,
+        mode,
         hostId: conn.id,
         players: {},
         status: "waiting",
@@ -354,12 +723,24 @@ export default class DrawingParty implements Party.Server {
         guesses: [],
         usedWords: [],
         correctGuessers: [],
+        telephoneStage: 0,
+        telephonePlayerOrder: [],
+        telephoneSubmittedIds: [],
+        telephoneChains: {},
+        telephoneRevealChainIndex: 0,
+        telephoneRevealEntryIndex: 0,
+        telephoneRevealComplete: false,
+        telephoneReactions: {},
+        playerTokens: {},
       }
       await this.saveState()
     }
 
     if (this.state) {
-      this.send(conn, { type: "state", state: this.getPublicState(conn.id) })
+      this.send(conn, {
+        type: "state",
+        state: this.getPublicState(this.isAuthenticated(conn) ? conn.id : undefined),
+      })
     } else {
       this.send(conn, { type: "error", message: "Game not found" })
     }
@@ -371,12 +752,31 @@ export default class DrawingParty implements Party.Server {
     try {
       const data: ClientMessage = JSON.parse(message)
 
+      if (data.type !== "join" && !this.isAuthenticated(sender)) {
+        this.send(sender, { type: "error", message: "Invalid player session" })
+        return
+      }
+
       switch (data.type) {
         case "join": {
           // A reconnect, not a new player. broadcastState is per-connection,
           // so a returning drawer gets the word back and guessers do not.
+          const playerToken = this.connectionTokens.get(sender)
+          if (!playerToken) {
+            this.send(sender, { type: "error", message: "Invalid player session" })
+            return
+          }
+
+          const returningPlayer = this.state.players[sender.id]
+          const expectedToken = this.state.playerTokens[sender.id]
+          if (returningPlayer && expectedToken && expectedToken !== playerToken) {
+            this.send(sender, { type: "error", message: "Invalid player session" })
+            return
+          }
+
           const returning = markConnected(this.state.players, sender.id)
           if (returning) {
+            this.state.playerTokens[sender.id] = playerToken
             returning.name = data.name || returning.name
             await this.saveState()
             this.broadcast({ type: "player-joined", player: returning })
@@ -407,8 +807,12 @@ export default class DrawingParty implements Party.Server {
           }
 
           this.state.players[sender.id] = player
+          this.state.playerTokens[sender.id] = playerToken
           // Total rounds = number of players * rounds per player
-          this.state.totalRounds = Object.keys(this.state.players).length * this.state.roundsPerPlayer
+          this.state.totalRounds =
+            this.state.mode === "telephone"
+              ? Object.keys(this.state.players).length
+              : Object.keys(this.state.players).length * this.state.roundsPerPlayer
           await this.saveState()
 
           this.broadcast({ type: "player-joined", player })
@@ -422,43 +826,101 @@ export default class DrawingParty implements Party.Server {
             return
           }
 
-          if (Object.keys(this.state.players).length < 2) {
-            this.send(sender, { type: "error", message: "Need at least 2 players" })
+          if (this.state.status !== "waiting") {
+            this.send(sender, { type: "error", message: "Game already started" })
             return
           }
 
-          // Total rounds = number of players * rounds per player
-          this.state.totalRounds = Object.keys(this.state.players).length * this.state.roundsPerPlayer
-          await this.saveState()
+          const availablePlayers = Object.values(this.state.players).filter(
+            (player) => player.connected !== false
+          )
+          const minimumPlayers = this.state.mode === "telephone" ? 3 : 2
+          if (availablePlayers.length < minimumPlayers) {
+            this.send(sender, {
+              type: "error",
+              message: `Need at least ${minimumPlayers} players`,
+            })
+            return
+          }
 
-          await this.startNewRound()
+          if (this.state.mode === "telephone") {
+            for (const player of Object.values(this.state.players)) {
+              if (player.connected === false) {
+                delete this.state.players[player.id]
+                delete this.state.playerTokens[player.id]
+              }
+            }
+            await this.startTelephoneGame()
+          } else {
+            // Total rounds = number of players * rounds per player
+            this.state.totalRounds = Object.keys(this.state.players).length * this.state.roundsPerPlayer
+            await this.saveState()
+            await this.startNewRound()
+          }
           break
         }
 
         case "draw": {
-          if (this.state.status !== "playing") return
-          if (sender.id !== this.state.currentDrawerId) return
+          if (
+            this.state.mode !== "classic" ||
+            this.state.status !== "playing" ||
+            sender.id !== this.state.currentDrawerId
+          ) {
+            this.send(sender, { type: "canvas-state", strokes: this.state.strokes })
+            return
+          }
 
           this.state.strokes.push(data.stroke)
           await this.saveState()
 
-          // Broadcast to everyone except the drawer
-          this.broadcast({ type: "draw", stroke: data.stroke }, sender.id)
+          this.broadcast({ type: "canvas-state", strokes: this.state.strokes })
+          break
+        }
+
+        case "undo": {
+          if (
+            this.state.mode !== "classic" ||
+            this.state.status !== "playing" ||
+            sender.id !== this.state.currentDrawerId ||
+            this.state.strokes.length === 0
+          ) {
+            this.send(sender, {
+              type: "canvas-state",
+              strokes: this.state.strokes,
+              undoRequestId: data.requestId,
+            })
+            return
+          }
+
+          this.state.strokes.pop()
+          await this.saveState()
+          this.broadcast({
+            type: "canvas-state",
+            strokes: this.state.strokes,
+            undoRequestId: data.requestId,
+          })
           break
         }
 
         case "clear": {
-          if (this.state.status !== "playing") return
-          if (sender.id !== this.state.currentDrawerId) return
+          if (
+            this.state.mode !== "classic" ||
+            this.state.status !== "playing" ||
+            sender.id !== this.state.currentDrawerId
+          ) {
+            this.send(sender, { type: "canvas-state", strokes: this.state.strokes })
+            return
+          }
 
           this.state.strokes = []
           await this.saveState()
 
-          this.broadcast({ type: "clear" })
+          this.broadcast({ type: "canvas-state", strokes: this.state.strokes })
           break
         }
 
         case "guess": {
+          if (this.state.mode !== "classic") return
           if (this.state.status !== "playing") return
           if (sender.id === this.state.currentDrawerId) return // Drawer can't guess
 
@@ -536,6 +998,97 @@ export default class DrawingParty implements Party.Server {
           break
         }
 
+        case "telephone-submit": {
+          await this.submitTelephoneEntry(sender.id, data)
+          break
+        }
+
+        case "telephone-reveal-next": {
+          if (
+            this.state.mode !== "telephone" ||
+            this.state.status !== "finished" ||
+            this.state.telephoneRevealComplete
+          ) {
+            return
+          }
+
+          if (
+            data.chainIndex !== this.state.telephoneRevealChainIndex ||
+            data.entryIndex !== this.state.telephoneRevealEntryIndex
+          ) {
+            return
+          }
+
+          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
+            this.send(sender, { type: "error", message: "Only host can reveal" })
+            return
+          }
+
+          const chainId =
+            this.state.telephonePlayerOrder[this.state.telephoneRevealChainIndex]
+          const chain = this.state.telephoneChains[chainId]
+          if (!chain) return
+
+          if (this.state.telephoneRevealEntryIndex + 1 < chain.entries.length) {
+            this.state.telephoneRevealEntryIndex++
+          } else if (
+            this.state.telephoneRevealChainIndex + 1 <
+            this.state.telephonePlayerOrder.length
+          ) {
+            this.state.telephoneRevealChainIndex++
+            this.state.telephoneRevealEntryIndex = 0
+          } else {
+            this.state.telephoneRevealComplete = true
+          }
+
+          await this.saveState()
+          this.broadcastState()
+          break
+        }
+
+        case "telephone-react": {
+          if (
+            this.state.mode !== "telephone" ||
+            this.state.status !== "finished" ||
+            this.state.telephoneRevealComplete ||
+            data.chainIndex !== this.state.telephoneRevealChainIndex ||
+            data.entryIndex !== this.state.telephoneRevealEntryIndex ||
+            !TELEPHONE_REACTIONS.has(data.emoji)
+          ) {
+            return
+          }
+
+          const player = this.state.players[sender.id]
+          if (!player) return
+
+          const reactionKey = `${data.chainIndex}:${data.entryIndex}`
+          const reactions = this.state.telephoneReactions[reactionKey] ?? []
+          const existingIndex = reactions.findIndex(
+            (reaction) => reaction.playerId === sender.id
+          )
+
+          if (existingIndex === -1) {
+            reactions.push({
+              playerId: sender.id,
+              playerName: player.name,
+              emoji: data.emoji,
+            })
+          } else if (reactions[existingIndex].emoji === data.emoji) {
+            reactions.splice(existingIndex, 1)
+          } else {
+            reactions[existingIndex] = {
+              playerId: sender.id,
+              playerName: player.name,
+              emoji: data.emoji,
+            }
+          }
+
+          this.state.telephoneReactions[reactionKey] = reactions
+          await this.saveState()
+          this.broadcastState()
+          break
+        }
+
         case "restart": {
           // Only host can restart, and only when game is finished
           if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
@@ -545,6 +1098,14 @@ export default class DrawingParty implements Party.Server {
 
           if (this.state.status !== "finished") {
             this.send(sender, { type: "error", message: "Game is not finished" })
+            return
+          }
+
+          if (
+            this.state.mode === "telephone" &&
+            !this.state.telephoneRevealComplete
+          ) {
+            this.send(sender, { type: "error", message: "Finish the reveal first" })
             return
           }
 
@@ -558,6 +1119,14 @@ export default class DrawingParty implements Party.Server {
           this.state.guesses = []
           this.state.usedWords = []
           this.state.correctGuessers = []
+          this.state.telephoneStage = 0
+          this.state.telephonePlayerOrder = []
+          this.state.telephoneSubmittedIds = []
+          this.state.telephoneChains = {}
+          this.state.telephoneRevealChainIndex = 0
+          this.state.telephoneRevealEntryIndex = 0
+          this.state.telephoneRevealComplete = false
+          this.state.telephoneReactions = {}
 
           // Reset player states
           for (const player of Object.values(this.state.players)) {
@@ -569,7 +1138,10 @@ export default class DrawingParty implements Party.Server {
           }
 
           // Recalculate total rounds
-          this.state.totalRounds = Object.keys(this.state.players).length * this.state.roundsPerPlayer
+          this.state.totalRounds =
+            this.state.mode === "telephone"
+              ? Object.keys(this.state.players).length
+              : Object.keys(this.state.players).length * this.state.roundsPerPlayer
 
           await this.saveState()
           this.broadcast({ type: "game-restarted" })
@@ -579,18 +1151,43 @@ export default class DrawingParty implements Party.Server {
 
         case "leave": {
           delete this.state.players[sender.id]
+          delete this.state.playerTokens[sender.id]
 
           if (sender.id === this.state.hostId) {
             const next = nextHost(this.state.players, sender.id)
             if (next) this.state.hostId = next
           }
 
-          // If drawer leaves during a round, end the round
+          // If drawer leaves during a classic round, end the round
           if (
+            this.state.mode === "classic" &&
             this.state.status === "playing" &&
             sender.id === this.state.currentDrawerId
           ) {
             await this.endRound()
+          }
+
+          if (
+            this.state.mode === "telephone" &&
+            this.state.status === "playing" &&
+            this.state.telephonePlayerOrder.includes(sender.id) &&
+            !this.state.telephoneSubmittedIds.includes(sender.id)
+          ) {
+            if (this.state.telephoneStage % 2 === 1) {
+              this.addTelephoneEntry(sender.id, { type: "drawing", strokes: [] })
+            } else {
+              this.addTelephoneEntry(sender.id, {
+                type: "text",
+                text: "No description",
+              })
+            }
+
+            if (
+              this.state.telephoneSubmittedIds.length ===
+              this.state.telephonePlayerOrder.length
+            ) {
+              await this.advanceTelephoneStage()
+            }
           }
 
           await this.saveState()
@@ -607,7 +1204,7 @@ export default class DrawingParty implements Party.Server {
   async onClose(conn: Party.Connection) {
     if (!this.state) return
 
-    if (this.state.players[conn.id]) {
+    if (this.state.players[conn.id] && this.isAuthenticated(conn)) {
       markDisconnected(this.state.players, conn.id)
 
       // Host keeps the role across a blip; canControlGame covers a real absence.
@@ -621,5 +1218,6 @@ export default class DrawingParty implements Party.Server {
       // No "player-left": they may be back shortly and clients remove on that.
       this.broadcastState()
     }
+    this.connectionTokens.delete(conn)
   }
 }

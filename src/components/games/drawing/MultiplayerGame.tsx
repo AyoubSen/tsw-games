@@ -23,8 +23,12 @@ interface MultiplayerGameProps {
   isHost: boolean
   strokes: Stroke[]
   guesses: Guess[]
+  undoPending: boolean
+  canvasRevision: number
+  connected: boolean
   onStroke: (stroke: Stroke) => void
   onClear: () => void
+  onUndo: () => void
   onGuess: (text: string) => void
   onRestart: () => void
   onLeave: () => void
@@ -36,14 +40,18 @@ export function MultiplayerGame({
   isHost,
   strokes,
   guesses,
+  undoPending,
+  canvasRevision,
+  connected,
   onStroke,
   onClear,
+  onUndo,
   onGuess,
   onRestart,
   onLeave,
 }: MultiplayerGameProps) {
   const [selectedColor, setSelectedColor] = useState("#000000")
-  const [selectedSize, setSelectedSize] = useState(4)
+  const [selectedSize, setSelectedSize] = useState(8)
   const [timeLeft, setTimeLeft] = useState(gameState.roundTimeLimit)
 
   const isDrawer = playerId === gameState.currentDrawerId
@@ -93,7 +101,7 @@ export function MultiplayerGame({
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-120px)] max-w-5xl mx-auto p-2 gap-2">
+    <div className="mx-auto flex min-h-[calc(100vh-120px)] w-full max-w-[1440px] flex-col gap-3 p-3 md:p-4">
       {/* Header */}
       <div className="flex items-center justify-between px-2">
         <Badge variant="outline" className="text-xs">
@@ -123,16 +131,17 @@ export function MultiplayerGame({
       />
 
       {/* Main Game Area */}
-      <div className="flex-1 flex flex-col md:flex-row gap-2 min-h-0">
+      <div className="grid flex-1 items-start gap-4 md:grid-cols-[minmax(0,1fr)_20rem]">
         {/* Canvas Section */}
-        <div className="flex-1 flex flex-col gap-2 min-w-0">
+        <div className="flex min-w-0 flex-col gap-3">
           <Canvas
             strokes={strokes}
             isDrawer={isDrawer}
             onStroke={onStroke}
             color={selectedColor}
             size={selectedSize}
-            disabled={!isPlaying || isRoundEnd}
+            disabled={!connected || !isPlaying || isRoundEnd || undoPending}
+            revision={canvasRevision}
           />
 
           {/* Toolbar for drawer */}
@@ -143,7 +152,9 @@ export function MultiplayerGame({
               onColorChange={setSelectedColor}
               onSizeChange={setSelectedSize}
               onClear={onClear}
-              disabled={!isPlaying}
+              onUndo={onUndo}
+              canUndo={strokes.length > 0}
+              disabled={!connected || !isPlaying || undoPending}
             />
           ) : (
             <div className="text-center text-sm text-muted-foreground py-2">
@@ -157,7 +168,7 @@ export function MultiplayerGame({
         </div>
 
         {/* Chat/Guesses Section */}
-        <Card className="md:w-72 flex flex-col min-h-[200px] md:min-h-0">
+        <Card className="flex min-h-[240px] flex-col md:h-full md:max-h-[956px]">
           <CardHeader className="py-2 px-3">
             <CardTitle className="text-sm">Guesses</CardTitle>
           </CardHeader>

@@ -1,6 +1,9 @@
 import { useRef, useEffect, useCallback, useState } from "react"
 import type { Stroke } from "../../../../party/drawing"
 
+const CANVAS_WIDTH = 1200
+const CANVAS_HEIGHT = 800
+
 interface CanvasProps {
   strokes: Stroke[]
   isDrawer: boolean
@@ -8,6 +11,7 @@ interface CanvasProps {
   color: string
   size: number
   disabled?: boolean
+  revision?: number
 }
 
 export function Canvas({
@@ -17,12 +21,13 @@ export function Canvas({
   color,
   size,
   disabled = false,
+  revision = 0,
 }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
   const [isDrawing, setIsDrawing] = useState(false)
   const currentStrokeRef = useRef<{ x: number; y: number }[]>([])
   const lastRenderedStrokesRef = useRef<number>(0)
+  const lastRevisionRef = useRef(revision)
 
   // Get canvas context
   const getContext = useCallback(() => {
@@ -95,6 +100,12 @@ export function Canvas({
     const ctx = getContext()
     if (!ctx) return
 
+    if (revision !== lastRevisionRef.current) {
+      redrawCanvas()
+      lastRevisionRef.current = revision
+      return
+    }
+
     // If we have fewer strokes than before (canvas was cleared), redraw everything
     if (strokes.length < lastRenderedStrokesRef.current) {
       redrawCanvas()
@@ -107,31 +118,7 @@ export function Canvas({
     }
 
     lastRenderedStrokesRef.current = strokes.length
-  }, [strokes, getContext, drawStroke, redrawCanvas])
-
-  // Initialize canvas
-  useEffect(() => {
-    const canvas = canvasRef.current
-    const container = containerRef.current
-    if (!canvas || !container) return
-
-    // Set canvas size - use larger dimensions for better drawing experience
-    const resizeCanvas = () => {
-      const rect = container.getBoundingClientRect()
-      // Allow up to 600px on larger screens, minimum 300px
-      const maxSize = window.innerWidth >= 768 ? 600 : 500
-      const size = Math.min(rect.width - 16, maxSize)
-      canvas.width = size
-      canvas.height = size
-      canvas.style.width = `${size}px`
-      canvas.style.height = `${size}px`
-      redrawCanvas()
-    }
-
-    resizeCanvas()
-    window.addEventListener("resize", resizeCanvas)
-    return () => window.removeEventListener("resize", resizeCanvas)
-  }, [redrawCanvas])
+  }, [strokes, revision, getContext, drawStroke, redrawCanvas])
 
   // Drawing handlers
   const startDrawing = useCallback((clientX: number, clientY: number) => {
@@ -222,12 +209,13 @@ export function Canvas({
 
   return (
     <div
-      ref={containerRef}
-      className="w-full flex justify-center"
+      className="mx-auto flex w-full max-w-[1200px] justify-center"
     >
       <canvas
         ref={canvasRef}
-        className={`border-2 rounded-lg bg-white ${
+        width={CANVAS_WIDTH}
+        height={CANVAS_HEIGHT}
+        className={`aspect-[3/2] h-auto w-full touch-none rounded-xl border-2 bg-white shadow-sm ${
           isDrawer && !disabled
             ? "cursor-crosshair border-primary"
             : "border-border"

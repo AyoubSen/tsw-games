@@ -1,4 +1,4 @@
-import { Eraser, Trash2 } from "lucide-react"
+import { Eraser, Trash2, Undo2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 const COLORS = [
@@ -15,9 +15,9 @@ const COLORS = [
 ]
 
 const SIZES = [
-  { value: 4, label: "S" },
-  { value: 8, label: "M" },
-  { value: 16, label: "L" },
+  { value: 8, label: "S" },
+  { value: 16, label: "M" },
+  { value: 32, label: "L" },
 ]
 
 interface ToolbarProps {
@@ -26,6 +26,8 @@ interface ToolbarProps {
   onColorChange: (color: string) => void
   onSizeChange: (size: number) => void
   onClear: () => void
+  onUndo: () => void
+  canUndo: boolean
   disabled?: boolean
 }
 
@@ -35,6 +37,8 @@ export function Toolbar({
   onColorChange,
   onSizeChange,
   onClear,
+  onUndo,
+  canUndo,
   disabled = false,
 }: ToolbarProps) {
   return (
@@ -87,6 +91,17 @@ export function Toolbar({
       <div className="w-px h-6 bg-border" />
 
       {/* Clear */}
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onUndo}
+        disabled={disabled || !canUndo}
+        className="h-8"
+      >
+        <Undo2 className="w-4 h-4 mr-1" />
+        Undo
+      </Button>
+
       <Button
         variant="destructive"
         size="sm"

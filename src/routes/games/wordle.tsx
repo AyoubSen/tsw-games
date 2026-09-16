@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useMultiplayerSession } from '@/lib/multiplayerSession'
+import { parseInviteSearch } from '@/lib/inviteLinks'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft, RotateCcw, Loader2, Database } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -19,11 +20,15 @@ import { MultiplayerGame } from '@/components/games/wordle/MultiplayerGame'
 import { useMultiplayerWordle } from '@/components/games/wordle/useMultiplayerWordle'
 import type { GameMode, RevealMode } from '../../../party/wordle'
 
-export const Route = createFileRoute('/games/wordle')({ component: WordlePage })
+export const Route = createFileRoute('/games/wordle')({
+  validateSearch: parseInviteSearch,
+  component: WordlePage,
+})
 
 type GameView = 'select' | 'single' | 'multiplayer-lobby' | 'multiplayer-game'
 
 function WordlePage() {
+  const { room: invitedRoomCode } = Route.useSearch()
   const [view, setView] = useState<GameView>('select')
 
   // Single player state
@@ -39,6 +44,7 @@ function WordlePage() {
     hasGameState: !!multiplayer.gameState,
     error: multiplayer.error,
     connectionStatus: multiplayer.connectionStatus,
+    inviteRoomCode: invitedRoomCode,
     onAbandon: multiplayer.abandonReconnect,
   });
 
@@ -113,11 +119,13 @@ function WordlePage() {
           <div className="w-[60px]" /> {/* Spacer for centering */}
         </div>
         <GameModeSelector
+          key={invitedRoomCode ?? 'menu'}
           onSinglePlayer={handleSinglePlayer}
           onCreateMultiplayer={handleCreateMultiplayer}
           onJoinMultiplayer={handleJoinMultiplayer}
           isConnecting={multiplayer.connectionStatus === 'connecting'}
           error={multiplayer.error}
+          initialRoomCode={invitedRoomCode}
         />
       </div>
     )

@@ -11,6 +11,7 @@ import {
 	MultiplayerSetupCard,
 } from "@/components/multiplayer/shared";
 import { Button } from "@/components/ui/button";
+import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
 import {
 	Card,
 	CardContent,
@@ -20,6 +21,7 @@ import {
 } from "@/components/ui/card";
 
 export const Route = createFileRoute("/games/wordchain")({
+	validateSearch: parseInviteSearch,
 	component: WordChainPage,
 });
 
@@ -40,14 +42,19 @@ const HEART_OPTIONS = [
 ];
 
 function WordChainPage() {
+	const { room: invitedRoomCode } = Route.useSearch();
 	const [view, setView] = useState<GameView>("select");
 	const [playerName, setPlayerName] = useState("");
-	const [joinRoomCode, setJoinRoomCode] = useState("");
+	const [joinRoomCode, setJoinRoomCode] = useState(invitedRoomCode ?? "");
 	const [turnTimeLimit, setTurnTimeLimit] = useState(15);
 	const [gameMode, setGameMode] = useState<"casual" | "hardcore">("casual");
 	const [maxHearts, setMaxHearts] = useState(3);
 	const [message, setMessage] = useState<string | null>(null);
 	const [copiedRoomCode, setCopiedRoomCode] = useState(false);
+
+	useEffect(() => {
+		if (invitedRoomCode) setJoinRoomCode(invitedRoomCode);
+	}, [invitedRoomCode]);
 
 	const multiplayer = useMultiplayerWordchain();
 
@@ -58,6 +65,7 @@ function WordChainPage() {
 		hasGameState: !!multiplayer.gameState,
 		error: multiplayer.error,
 		connectionStatus: multiplayer.connectionStatus,
+		inviteRoomCode: invitedRoomCode,
 		onAbandon: multiplayer.disconnect,
 	});
 	const multiplayerGameState = multiplayer.gameState;
@@ -141,11 +149,13 @@ function WordChainPage() {
 		}
 
 		try {
-			await navigator.clipboard.writeText(multiplayer.gameState.roomCode);
+			await navigator.clipboard.writeText(
+				getInviteLink(multiplayer.gameState.roomCode),
+			);
 			setCopiedRoomCode(true);
 			window.setTimeout(() => setCopiedRoomCode(false), 1600);
 		} catch {
-			setMessage("Could not copy the room code.");
+			setMessage("Could not copy the invite link.");
 		}
 	};
 

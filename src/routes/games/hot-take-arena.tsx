@@ -17,12 +17,14 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import type { HotTakePack } from "@/lib/hotTakePrompts";
+import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
 import type {
 	HotTakePosition,
 	HotTakeSettings,
 } from "../../../party/hot-take-arena";
 
 export const Route = createFileRoute("/games/hot-take-arena")({
+	validateSearch: parseInviteSearch,
 	component: HotTakeArenaPage,
 });
 
@@ -118,9 +120,10 @@ const POSITION_OPTIONS: Array<{
 ];
 
 function HotTakeArenaPage() {
+	const { room: invitedRoomCode } = Route.useSearch();
 	const [view, setView] = useState<HotTakeArenaView>("setup");
 	const [playerName, setPlayerName] = useState("");
-	const [joinRoomCode, setJoinRoomCode] = useState("");
+	const [joinRoomCode, setJoinRoomCode] = useState(invitedRoomCode ?? "");
 	const [rounds, setRounds] = useState(5);
 	const [roundTimeLimit, setRoundTimeLimit] = useState(30);
 	const [promptPack, setPromptPack] = useState<HotTakePack>("mixed");
@@ -129,6 +132,10 @@ function HotTakeArenaPage() {
 	const [now, setNow] = useState(Date.now());
 	const [selectedPosition, setSelectedPosition] =
 		useState<HotTakePosition | null>(null);
+
+	useEffect(() => {
+		if (invitedRoomCode) setJoinRoomCode(invitedRoomCode);
+	}, [invitedRoomCode]);
 
 	const multiplayer = useMultiplayerHotTakeArena();
 
@@ -139,6 +146,7 @@ function HotTakeArenaPage() {
 		hasGameState: !!multiplayer.gameState,
 		error: multiplayer.error,
 		connectionStatus: multiplayer.connectionStatus,
+		inviteRoomCode: invitedRoomCode,
 		onAbandon: multiplayer.disconnect,
 	});
 	const activeRoundNumber = multiplayer.gameState?.roundNumber;
@@ -267,11 +275,13 @@ function HotTakeArenaPage() {
 		}
 
 		try {
-			await navigator.clipboard.writeText(multiplayer.gameState.roomCode);
+			await navigator.clipboard.writeText(
+				getInviteLink(multiplayer.gameState.roomCode),
+			);
 			setCopiedRoomCode(true);
 			window.setTimeout(() => setCopiedRoomCode(false), 1600);
 		} catch {
-			setMessage("Could not copy the room code.");
+			setMessage("Could not copy the invite link.");
 		}
 	};
 

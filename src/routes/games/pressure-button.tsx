@@ -25,10 +25,12 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
 import type { PressurePromptPack } from "@/lib/pressurePrompts";
 import type { PressureButtonSettings } from "../../../party/pressure-button";
 
 export const Route = createFileRoute("/games/pressure-button")({
+	validateSearch: parseInviteSearch,
 	component: PressureButtonPage,
 });
 
@@ -74,9 +76,10 @@ const PROMPT_PACK_OPTIONS: Array<{
 ];
 
 function PressureButtonPage() {
+	const { room: invitedRoomCode } = Route.useSearch();
 	const [view, setView] = useState<PressureButtonView>("setup");
 	const [playerName, setPlayerName] = useState("");
-	const [joinRoomCode, setJoinRoomCode] = useState("");
+	const [joinRoomCode, setJoinRoomCode] = useState(invitedRoomCode ?? "");
 	const [turns, setTurns] = useState(8);
 	const [answerTimeLimit, setAnswerTimeLimit] = useState(20);
 	const [promptPack, setPromptPack] = useState<PressurePromptPack>("mixed");
@@ -84,6 +87,10 @@ function PressureButtonPage() {
 	const [message, setMessage] = useState<string | null>(null);
 	const [copiedRoomCode, setCopiedRoomCode] = useState(false);
 	const [now, setNow] = useState(Date.now());
+
+	useEffect(() => {
+		if (invitedRoomCode) setJoinRoomCode(invitedRoomCode);
+	}, [invitedRoomCode]);
 
 	const multiplayer = useMultiplayerPressureButton();
 
@@ -94,6 +101,7 @@ function PressureButtonPage() {
 		hasGameState: !!multiplayer.gameState,
 		error: multiplayer.error,
 		connectionStatus: multiplayer.connectionStatus,
+		inviteRoomCode: invitedRoomCode,
 		onAbandon: multiplayer.disconnect,
 	});
 	const activeTurnNumber = multiplayer.gameState?.turnNumber;
@@ -228,11 +236,11 @@ function PressureButtonPage() {
 		}
 
 		try {
-			await navigator.clipboard.writeText(gameState.roomCode);
+			await navigator.clipboard.writeText(getInviteLink(gameState.roomCode));
 			setCopiedRoomCode(true);
 			window.setTimeout(() => setCopiedRoomCode(false), 1600);
 		} catch {
-			setMessage("Could not copy the room code.");
+			setMessage("Could not copy the invite link.");
 		}
 	};
 

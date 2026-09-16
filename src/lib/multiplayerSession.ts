@@ -55,6 +55,8 @@ interface UseMultiplayerSessionOptions {
   hasGameState: boolean
   error: string | null
   connectionStatus: string
+  /** An explicit invite takes priority unless it points to the saved room. */
+  inviteRoomCode?: string
   /**
    * Called when a resume fails - the room is gone or unreachable. Wire this to
    * the hook's `disconnect` so the stale error never reaches the menu.
@@ -75,6 +77,7 @@ export function useMultiplayerSession({
   hasGameState,
   error,
   connectionStatus,
+  inviteRoomCode,
   onAbandon,
 }: UseMultiplayerSessionOptions) {
   const [isResuming, setIsResuming] = useState(false)
@@ -109,11 +112,12 @@ export function useMultiplayerSession({
 
     const record = readSession(game)
     if (!record) return
+    if (inviteRoomCode && record.roomCode !== inviteRoomCode) return
 
     suppressRef.current = true
     setIsResuming(true)
     joinRef.current(record.roomCode, record.name)
-  }, [game])
+  }, [game, inviteRoomCode])
 
   useEffect(() => {
     if (!isResuming) return

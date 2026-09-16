@@ -25,10 +25,12 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
 import type { SyncUpPromptPack } from "@/lib/syncUpPrompts";
 import type { SyncUpSettings } from "../../../party/sync-up";
 
 export const Route = createFileRoute("/games/sync-up")({
+	validateSearch: parseInviteSearch,
 	component: SyncUpPage,
 });
 
@@ -54,9 +56,10 @@ const PROMPT_PACK_OPTIONS: Array<{
 ];
 
 function SyncUpPage() {
+	const { room: invitedRoomCode } = Route.useSearch();
 	const [view, setView] = useState<SyncUpView>("setup");
 	const [playerName, setPlayerName] = useState("");
-	const [joinRoomCode, setJoinRoomCode] = useState("");
+	const [joinRoomCode, setJoinRoomCode] = useState(invitedRoomCode ?? "");
 	const [rounds, setRounds] = useState(5);
 	const [roundTimeLimit, setRoundTimeLimit] = useState(45);
 	const [promptPack, setPromptPack] = useState<SyncUpPromptPack>("mixed");
@@ -64,6 +67,10 @@ function SyncUpPage() {
 	const [message, setMessage] = useState<string | null>(null);
 	const [copiedRoomCode, setCopiedRoomCode] = useState(false);
 	const [now, setNow] = useState(Date.now());
+
+	useEffect(() => {
+		if (invitedRoomCode) setJoinRoomCode(invitedRoomCode);
+	}, [invitedRoomCode]);
 
 	const multiplayer = useMultiplayerSyncUp();
 
@@ -74,6 +81,7 @@ function SyncUpPage() {
 		hasGameState: !!multiplayer.gameState,
 		error: multiplayer.error,
 		connectionStatus: multiplayer.connectionStatus,
+		inviteRoomCode: invitedRoomCode,
 		onAbandon: multiplayer.disconnect,
 	});
 	const activeRoundNumber = multiplayer.gameState?.roundNumber;
@@ -202,11 +210,13 @@ function SyncUpPage() {
 		}
 
 		try {
-			await navigator.clipboard.writeText(multiplayer.gameState.roomCode);
+			await navigator.clipboard.writeText(
+				getInviteLink(multiplayer.gameState.roomCode),
+			);
 			setCopiedRoomCode(true);
 			window.setTimeout(() => setCopiedRoomCode(false), 1600);
 		} catch {
-			setMessage("Could not copy the room code.");
+			setMessage("Could not copy the invite link.");
 		}
 	};
 

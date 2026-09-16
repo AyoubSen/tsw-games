@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Copy, Check, Crown, Users, LogOut, Play, Clock, MessageSquare, Moon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { getInviteLink } from "@/lib/inviteLinks"
 import type { PublicGameState } from "../../../../party/mafia"
 
 interface MultiplayerLobbyProps {
@@ -25,9 +26,13 @@ export function MultiplayerLobby({
   const canStart = isHost && players.length >= 5
 
   const copyCode = async () => {
-    await navigator.clipboard.writeText(gameState.roomCode)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    try {
+      await navigator.clipboard.writeText(getInviteLink(gameState.roomCode))
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (error) {
+      console.error("Failed to copy invite link:", error)
+    }
   }
 
   const { settings } = gameState
@@ -44,7 +49,12 @@ export function MultiplayerLobby({
               <code className="text-4xl font-mono font-bold tracking-widest bg-muted px-4 py-2 rounded-lg">
                 {gameState.roomCode}
               </code>
-              <Button variant="ghost" size="icon" onClick={copyCode}>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={copyCode}
+                aria-label={copied ? "Invite link copied" : "Copy invite link"}
+              >
                 {copied ? (
                   <Check className="w-5 h-5 text-green-500" />
                 ) : (
@@ -53,7 +63,7 @@ export function MultiplayerLobby({
               </Button>
             </div>
             <p className="text-sm text-muted-foreground">
-              Share this code with friends to join
+              Copy the invite link or share the room code
             </p>
           </CardContent>
         </Card>

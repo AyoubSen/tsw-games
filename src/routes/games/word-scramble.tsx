@@ -28,6 +28,7 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
 import {
 	buildWordScramblePuzzles,
 	pickNextWordScramblePuzzle,
@@ -49,6 +50,7 @@ import type {
 } from "../../../party/word-scramble";
 
 export const Route = createFileRoute("/games/word-scramble")({
+	validateSearch: parseInviteSearch,
 	component: WordScramblePage,
 });
 
@@ -108,6 +110,7 @@ function getScrambledTiles(
 }
 
 function WordScramblePage() {
+	const { room: invitedRoomCode } = Route.useSearch();
 	const [view, setView] = useState<GameView>("select");
 	const [loadingWords, setLoadingWords] = useState(!isWordsLoaded());
 	const [globalMessage, setGlobalMessage] = useState<string | null>(null);
@@ -122,7 +125,7 @@ function WordScramblePage() {
 	const [singleHintWord, setSingleHintWord] = useState<string | null>(null);
 
 	const [playerName, setPlayerName] = useState("");
-	const [joinRoomCode, setJoinRoomCode] = useState("");
+	const [joinRoomCode, setJoinRoomCode] = useState(invitedRoomCode ?? "");
 	const [roundTimeLimit, setRoundTimeLimit] = useState(60);
 	const [difficulty, setDifficulty] = useState<ScrambleDifficulty>("normal");
 	const [claimVisibility, setClaimVisibility] =
@@ -134,6 +137,10 @@ function WordScramblePage() {
 	const [copiedRoomCode, setCopiedRoomCode] = useState(false);
 	const [now, setNow] = useState(Date.now());
 
+	useEffect(() => {
+		if (invitedRoomCode) setJoinRoomCode(invitedRoomCode);
+	}, [invitedRoomCode]);
+
 	const multiplayer = useMultiplayerWordScramble();
 
 	// Walk back into the room this tab was in before a reload.
@@ -143,6 +150,7 @@ function WordScramblePage() {
 		hasGameState: !!multiplayer.gameState,
 		error: multiplayer.error,
 		connectionStatus: multiplayer.connectionStatus,
+		inviteRoomCode: invitedRoomCode,
 		onAbandon: multiplayer.disconnect,
 	});
 
@@ -379,11 +387,13 @@ function WordScramblePage() {
 		}
 
 		try {
-			await navigator.clipboard.writeText(multiplayer.gameState.roomCode);
+			await navigator.clipboard.writeText(
+				getInviteLink(multiplayer.gameState.roomCode),
+			);
 			setCopiedRoomCode(true);
 			window.setTimeout(() => setCopiedRoomCode(false), 1600);
 		} catch {
-			setMultiplayerMessage("Could not copy the room code.");
+			setMultiplayerMessage("Could not copy the invite link.");
 		}
 	};
 

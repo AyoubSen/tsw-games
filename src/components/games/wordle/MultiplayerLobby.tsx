@@ -3,6 +3,7 @@ import { Copy, Check, Users, Crown, Loader2, Play } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { getInviteLink } from "@/lib/inviteLinks"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import type { PublicGameState } from "../../../../party/wordle"
 
@@ -31,9 +32,13 @@ export function MultiplayerLobby({
   const connectedCount = players.filter(player => player.connected).length
 
   const copyInviteCode = async () => {
-    await navigator.clipboard.writeText(gameState.roomCode)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    try {
+      await navigator.clipboard.writeText(getInviteLink(gameState.roomCode))
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (error) {
+      console.error("Failed to copy invite link:", error)
+    }
   }
 
   const canStart = isHost && connected && connectedCount >= 2 && connectedCount === playerCount
@@ -44,7 +49,7 @@ export function MultiplayerLobby({
         <CardHeader className="text-center pb-2">
           <CardTitle className="text-lg">Waiting for Players</CardTitle>
           <CardDescription className="text-sm">
-            Share the invite code with your friends to join
+            Share the invite link with your friends to join
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 pt-2">
@@ -59,6 +64,7 @@ export function MultiplayerLobby({
                 variant="outline"
                 size="icon"
                 onClick={copyInviteCode}
+                aria-label={copied ? "Invite link copied" : "Copy invite link"}
                 className="shrink-0 h-9 w-9"
               >
                 {copied ? (

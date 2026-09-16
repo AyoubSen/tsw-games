@@ -248,9 +248,10 @@ export function useMultiplayerSudoku() {
     setState(initialState())
   }, [])
 
-  const resumeSession = useCallback(() => {
+  const resumeSession = useCallback((inviteRoomCode?: string) => {
     const record = readSession()
     if (!record) return false
+    if (inviteRoomCode && record.roomCode !== inviteRoomCode) return false
     resumingRef.current = true
     connect(record.roomCode, false, record.name)
     return true

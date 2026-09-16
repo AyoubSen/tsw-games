@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { parseInviteSearch } from '@/lib/inviteLinks'
 import { GameModeSelector } from '@/components/games/poker/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/poker/MultiplayerLobby'
 import { MultiplayerGame } from '@/components/games/poker/MultiplayerGame'
@@ -9,7 +10,10 @@ import { MultiplayerGame as MultiplayerGameV2 } from '@/components/games/poker/v
 import { useMultiplayerPoker, type PokerSettings } from '@/components/games/poker/useMultiplayerPoker'
 import { cn } from '@/lib/utils'
 
-export const Route = createFileRoute('/games/poker')({ component: PokerPage })
+export const Route = createFileRoute('/games/poker')({
+  validateSearch: parseInviteSearch,
+  component: PokerPage,
+})
 
 type GameView = 'select' | 'lobby' | 'game'
 type UIVersion = 'v1' | 'v2'
@@ -44,6 +48,7 @@ function VersionToggle({ version, onChange }: { version: UIVersion; onChange: (v
 }
 
 function PokerPage() {
+  const { room: invitedRoomCode } = Route.useSearch()
   const [view, setView] = useState<GameView>('select')
   const [uiVersion, setUiVersion] = useState<UIVersion>('v2')
   const multiplayer = useMultiplayerPoker()
@@ -109,10 +114,12 @@ function PokerPage() {
           <div className="w-[60px]" />
         </div>
         <GameModeSelector
+          key={invitedRoomCode ?? 'menu'}
           onCreateMultiplayer={handleCreateMultiplayer}
           onJoinMultiplayer={handleJoinMultiplayer}
           isConnecting={multiplayer.connectionStatus === 'connecting'}
           error={multiplayer.error}
+          initialRoomCode={invitedRoomCode}
         />
       </div>
     )

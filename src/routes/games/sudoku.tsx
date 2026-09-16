@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft, Clock, RotateCcw, Trophy, Pause, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { parseInviteSearch } from '@/lib/inviteLinks'
 import { GameModeSelector } from '@/components/games/sudoku/GameModeSelector'
 import { SudokuBoard } from '@/components/games/sudoku/SudokuBoard'
 import { NumberPad } from '@/components/games/sudoku/NumberPad'
@@ -11,7 +12,10 @@ import { useSudoku, type Difficulty, type GameMode } from '@/components/games/su
 import { useMultiplayerSudoku } from '@/components/games/sudoku/useMultiplayerSudoku'
 import { useSudokuKeyboard } from '@/components/games/sudoku/useSudokuKeyboard'
 
-export const Route = createFileRoute('/games/sudoku')({ component: SudokuPage })
+export const Route = createFileRoute('/games/sudoku')({
+  validateSearch: parseInviteSearch,
+  component: SudokuPage,
+})
 
 type GameView = 'select' | 'single' | 'multiplayer-lobby' | 'multiplayer-game'
 
@@ -29,6 +33,7 @@ const DIFFICULTY_LABELS: Record<Difficulty, string> = {
 }
 
 function SudokuPage() {
+  const { room: invitedRoomCode } = Route.useSearch()
   const [view, setView] = useState<GameView>('select')
   const [isResuming, setIsResuming] = useState(false)
 
@@ -61,8 +66,8 @@ function SudokuPage() {
   useEffect(() => {
     if (hasAttemptedResume.current) return
     hasAttemptedResume.current = true
-    setIsResuming(resumeSession())
-  }, [resumeSession])
+    setIsResuming(resumeSession(invitedRoomCode))
+  }, [invitedRoomCode, resumeSession])
 
   // Give up the "resuming" placeholder once we land somewhere real.
   useEffect(() => {
@@ -146,11 +151,13 @@ function SudokuPage() {
           <div className="w-[60px]" />
         </div>
         <GameModeSelector
+          key={invitedRoomCode ?? 'menu'}
           onStartSinglePlayer={handleStartSinglePlayer}
           onCreateMultiplayer={handleCreateMultiplayer}
           onJoinMultiplayer={handleJoinMultiplayer}
           isConnecting={multiplayer.connectionStatus === 'connecting'}
           error={multiplayer.error}
+          initialRoomCode={invitedRoomCode}
         />
       </div>
     )

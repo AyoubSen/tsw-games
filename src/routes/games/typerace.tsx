@@ -12,6 +12,7 @@ import {
 	MultiplayerSetupCard,
 } from "@/components/multiplayer/shared";
 import { Button } from "@/components/ui/button";
+import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
 import {
 	Card,
 	CardContent,
@@ -22,6 +23,7 @@ import {
 import type { GameMode } from "../../../party/typerace";
 
 export const Route = createFileRoute("/games/typerace")({
+	validateSearch: parseInviteSearch,
 	component: TypeRacePage,
 });
 
@@ -48,12 +50,17 @@ const MULTIPLAYER_MODES: Array<{
 ];
 
 function TypeRacePage() {
+	const { room: invitedRoomCode } = Route.useSearch();
 	const [view, setView] = useState<GameView>("select");
 	const [playerName, setPlayerName] = useState("");
-	const [joinRoomCode, setJoinRoomCode] = useState("");
+	const [joinRoomCode, setJoinRoomCode] = useState(invitedRoomCode ?? "");
 	const [selectedMode, setSelectedMode] = useState<GameMode>("race");
 	const [message, setMessage] = useState<string | null>(null);
 	const [copiedRoomCode, setCopiedRoomCode] = useState(false);
+
+	useEffect(() => {
+		if (invitedRoomCode) setJoinRoomCode(invitedRoomCode);
+	}, [invitedRoomCode]);
 
 	const singlePlayer = useTypeRace();
 	const multiplayer = useMultiplayerTypeRace();
@@ -65,6 +72,7 @@ function TypeRacePage() {
 		hasGameState: !!multiplayer.gameState,
 		error: multiplayer.error,
 		connectionStatus: multiplayer.connectionStatus,
+		inviteRoomCode: invitedRoomCode,
 		onAbandon: multiplayer.disconnect,
 	});
 	const multiplayerGameState = multiplayer.gameState;
@@ -147,11 +155,13 @@ function TypeRacePage() {
 		}
 
 		try {
-			await navigator.clipboard.writeText(multiplayer.gameState.roomCode);
+			await navigator.clipboard.writeText(
+				getInviteLink(multiplayer.gameState.roomCode),
+			);
 			setCopiedRoomCode(true);
 			window.setTimeout(() => setCopiedRoomCode(false), 1600);
 		} catch {
-			setMessage("Could not copy the room code.");
+			setMessage("Could not copy the invite link.");
 		}
 	};
 

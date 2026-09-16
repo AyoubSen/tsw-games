@@ -11,6 +11,7 @@ interface GameModeSelectorProps {
   onJoinMultiplayer: (roomCode: string, playerName: string) => void
   isConnecting: boolean
   error: string | null
+  initialRoomCode?: string
 }
 
 type Step = "mode" | "create" | "join"
@@ -38,10 +39,11 @@ export function GameModeSelector({
   onJoinMultiplayer,
   isConnecting,
   error,
+  initialRoomCode = "",
 }: GameModeSelectorProps) {
-  const [step, setStep] = useState<Step>("mode")
+  const [step, setStep] = useState<Step>(initialRoomCode ? "join" : "mode")
   const [playerName, setPlayerName] = useState("")
-  const [roomCode, setRoomCode] = useState("")
+  const [roomCode, setRoomCode] = useState(initialRoomCode)
 
   const [discussionTime, setDiscussionTime] = useState(90)
   const [votingTime, setVotingTime] = useState(30)

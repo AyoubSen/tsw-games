@@ -2,16 +2,21 @@ import { useState, useEffect } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { parseInviteSearch } from '@/lib/inviteLinks'
 import { GameModeSelector } from '@/components/games/mafia/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/mafia/MultiplayerLobby'
 import { MultiplayerGame } from '@/components/games/mafia/MultiplayerGame'
 import { useMultiplayerMafia, type MafiaSettings } from '@/components/games/mafia/useMultiplayerMafia'
 
-export const Route = createFileRoute('/games/mafia')({ component: MafiaPage })
+export const Route = createFileRoute('/games/mafia')({
+  validateSearch: parseInviteSearch,
+  component: MafiaPage,
+})
 
 type GameView = 'select' | 'lobby' | 'game'
 
 function MafiaPage() {
+  const { room: invitedRoomCode } = Route.useSearch()
   const [view, setView] = useState<GameView>('select')
   const multiplayer = useMultiplayerMafia()
 
@@ -70,10 +75,12 @@ function MafiaPage() {
           <div className="w-[60px]" />
         </div>
         <GameModeSelector
+          key={invitedRoomCode ?? 'menu'}
           onCreateMultiplayer={handleCreateMultiplayer}
           onJoinMultiplayer={handleJoinMultiplayer}
           isConnecting={multiplayer.connectionStatus === 'connecting'}
           error={multiplayer.error}
+          initialRoomCode={invitedRoomCode}
         />
       </div>
     )

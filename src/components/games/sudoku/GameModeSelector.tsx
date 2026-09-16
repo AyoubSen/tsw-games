@@ -11,6 +11,7 @@ interface GameModeSelectorProps {
   onJoinMultiplayer: (roomCode: string, playerName: string) => void
   isConnecting: boolean
   error: string | null
+  initialRoomCode?: string
 }
 
 const DIFFICULTIES: { value: Difficulty; label: string; description: string }[] = [
@@ -26,12 +27,15 @@ export function GameModeSelector({
   onJoinMultiplayer,
   isConnecting,
   error,
+  initialRoomCode = '',
 }: GameModeSelectorProps) {
   const [selectedDifficulty, setSelectedDifficulty] = useState<Difficulty>('medium')
   const [selectedGameMode, setSelectedGameMode] = useState<GameMode>('normal')
-  const [mode, setMode] = useState<'select' | 'single' | 'create' | 'join'>('select')
+  const [mode, setMode] = useState<'select' | 'single' | 'create' | 'join'>(
+    initialRoomCode ? 'join' : 'select',
+  )
   const [playerName, setPlayerName] = useState('')
-  const [roomCode, setRoomCode] = useState('')
+  const [roomCode, setRoomCode] = useState(initialRoomCode)
 
   const handleStartSinglePlayer = () => {
     onStartSinglePlayer(selectedDifficulty, selectedGameMode)

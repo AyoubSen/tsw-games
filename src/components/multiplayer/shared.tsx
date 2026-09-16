@@ -213,8 +213,17 @@ export function RoomCodeCard({ roomCode, copied, onCopy }: RoomCodeCardProps) {
 					<p className="mt-2 text-2xl font-black tracking-[0.25em]">
 						{roomCode}
 					</p>
+					<p className="mt-1 text-xs text-muted-foreground">
+						Copy the invite link or share the code
+					</p>
 				</div>
-				<Button type="button" variant="outline" size="sm" onClick={onCopy}>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					onClick={onCopy}
+					aria-label={copied ? "Invite link copied" : "Copy invite link"}
+				>
 					{copied ? (
 						<Check className="h-4 w-4" />
 					) : (

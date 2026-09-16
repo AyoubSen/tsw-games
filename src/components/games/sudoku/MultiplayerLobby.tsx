@@ -2,6 +2,7 @@ import { Copy, Check, Users, Crown } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { getInviteLink } from '@/lib/inviteLinks'
 import type { PublicGameState } from '../../../../party/sudoku'
 
 interface MultiplayerLobbyProps {
@@ -26,7 +27,7 @@ export function MultiplayerLobby({ gameState, playerId, isHost, connected, error
 
   const copyRoomCode = async () => {
     try {
-      await navigator.clipboard.writeText(gameState.roomCode)
+      await navigator.clipboard.writeText(getInviteLink(gameState.roomCode))
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch (e) {
@@ -51,6 +52,7 @@ export function MultiplayerLobby({ gameState, playerId, isHost, connected, error
             <button
               type="button"
               onClick={copyRoomCode}
+              aria-label={copied ? 'Invite link copied' : 'Copy invite link'}
               className="inline-flex items-center gap-2 px-4 py-2 bg-muted rounded-lg hover:bg-muted/80 transition-colors"
             >
               <span className="text-2xl font-mono font-bold tracking-widest">
@@ -63,7 +65,7 @@ export function MultiplayerLobby({ gameState, playerId, isHost, connected, error
               )}
             </button>
             <p className="text-xs text-muted-foreground mt-2">
-              Share this code with friends to join
+              Copy the invite link or share the room code
             </p>
           </div>
 

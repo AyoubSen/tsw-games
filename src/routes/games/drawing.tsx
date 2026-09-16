@@ -14,6 +14,7 @@ import {
 	MultiplayerSetupCard,
 } from "@/components/multiplayer/shared";
 import { Button } from "@/components/ui/button";
+import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
 import {
 	Card,
 	CardContent,
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui/card";
 
 export const Route = createFileRoute("/games/drawing")({
+	validateSearch: parseInviteSearch,
 	component: DrawingPage,
 });
 
@@ -42,14 +44,19 @@ const ROUNDS_OPTIONS = [
 ];
 
 function DrawingPage() {
+	const { room: invitedRoomCode } = Route.useSearch();
 	const [view, setView] = useState<GameView>("select");
 	const [playerName, setPlayerName] = useState("");
-	const [joinRoomCode, setJoinRoomCode] = useState("");
+	const [joinRoomCode, setJoinRoomCode] = useState(invitedRoomCode ?? "");
 	const [roundTimeLimit, setRoundTimeLimit] = useState(60);
 	const [roundsPerPlayer, setRoundsPerPlayer] = useState(1);
 	const [mode, setMode] = useState<DrawingGameMode>("classic");
 	const [message, setMessage] = useState<string | null>(null);
 	const [copiedRoomCode, setCopiedRoomCode] = useState(false);
+
+	useEffect(() => {
+		if (invitedRoomCode) setJoinRoomCode(invitedRoomCode);
+	}, [invitedRoomCode]);
 
 	const multiplayer = useMultiplayerDrawing();
 	const multiplayerGameState = multiplayer.gameState;
@@ -131,11 +138,13 @@ function DrawingPage() {
 		}
 
 		try {
-			await navigator.clipboard.writeText(multiplayer.gameState.roomCode);
+			await navigator.clipboard.writeText(
+				getInviteLink(multiplayer.gameState.roomCode),
+			);
 			setCopiedRoomCode(true);
 			window.setTimeout(() => setCopiedRoomCode(false), 1600);
 		} catch {
-			setMessage("Could not copy the room code.");
+			setMessage("Could not copy the invite link.");
 		}
 	};
 

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { parseInviteSearch } from '@/lib/inviteLinks'
 import { GameModeSelector } from '@/components/games/codenames/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/codenames/MultiplayerLobby'
 import { TeamSelector } from '@/components/games/codenames/TeamSelector'
@@ -9,11 +10,15 @@ import { MultiplayerGame } from '@/components/games/codenames/MultiplayerGame'
 import { useMultiplayerCodenames, type GameSettings } from '@/components/games/codenames/useMultiplayerCodenames'
 import type { Team, PlayerRole } from '../../../party/codenames'
 
-export const Route = createFileRoute('/games/codenames')({ component: CodenamesPage })
+export const Route = createFileRoute('/games/codenames')({
+  validateSearch: parseInviteSearch,
+  component: CodenamesPage,
+})
 
 type GameView = 'select' | 'lobby' | 'team-selection' | 'game'
 
 function CodenamesPage() {
+  const { room: invitedRoomCode } = Route.useSearch()
   const [view, setView] = useState<GameView>('select')
 
   const multiplayer = useMultiplayerCodenames()
@@ -82,10 +87,12 @@ function CodenamesPage() {
           <div className="w-[60px]" />
         </div>
         <GameModeSelector
+          key={invitedRoomCode ?? 'menu'}
           onCreateMultiplayer={handleCreateMultiplayer}
           onJoinMultiplayer={handleJoinMultiplayer}
           isConnecting={multiplayer.connectionStatus === 'connecting'}
           error={multiplayer.error}
+          initialRoomCode={invitedRoomCode}
         />
       </div>
     )

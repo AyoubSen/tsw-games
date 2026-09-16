@@ -33,6 +33,7 @@ This document tracks planned improvements and new game ideas for the TSW Games p
 - [ ] **Kick Player** - Let host remove disruptive players
 - [ ] **Auto-Reconnect** - Handle network drops gracefully
 - [ ] **Game History** - View past games and results
+- [x] **Invite Links** - Open the correct game and room directly from a shared URL
 
 ---
 

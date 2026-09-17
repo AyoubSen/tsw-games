@@ -16,10 +16,16 @@ const KEYBOARD_ROWS = [
 ]
 
 function getKeyStyle(state?: LetterState): string {
-  if (state && state !== 'empty' && state !== 'tbd') {
-    return 'bg-zinc-700 hover:bg-zinc-600 text-zinc-400 border-zinc-700'
+  switch (state) {
+    case 'correct':
+      return 'bg-green-600 hover:bg-green-500 text-white border-green-600'
+    case 'present':
+      return 'bg-yellow-500 hover:bg-yellow-400 text-white border-yellow-500'
+    case 'absent':
+      return 'bg-zinc-700 hover:bg-zinc-600 text-zinc-400 border-zinc-700'
+    default:
+      return 'bg-zinc-500 hover:bg-zinc-400 text-white border-zinc-500'
   }
-  return 'bg-zinc-500 hover:bg-zinc-400 text-white border-zinc-500'
 }
 
 export function Keyboard({ usedLetters, onKey, onEnter, onBackspace }: KeyboardProps) {

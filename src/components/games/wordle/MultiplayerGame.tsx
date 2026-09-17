@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { Copy, Check, Trophy, Users, Clock, X, RotateCcw } from "lucide-react"
+import { Copy, Check, Trophy, Users, Clock, X, RotateCcw, Eye, EyeOff } from "lucide-react"
 import { Board } from "./Board"
 import { Keyboard } from "./Keyboard"
 import { MiniBoard } from "./MiniBoard"
@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import type { PrivatePlayerState, PublicGameState } from "../../../../party/wordle"
-import type { Letter, LetterState } from "./useWordle"
+import { buildKnownPattern, type Letter, type LetterState } from "./useWordle"
 import type { RoundReveal } from "./useMultiplayerWordle"
 
 type UsedLetters = Record<string, LetterState>
@@ -59,6 +59,7 @@ export function MultiplayerGame({
   const [showResults, setShowResults] = useState(gameState.status === "finished")
   const [copied, setCopied] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [visualization, setVisualization] = useState<Letter[] | null>(null)
   const previousAttemptsRef = useRef(privatePlayer?.attempts ?? 0)
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -85,6 +86,8 @@ export function MultiplayerGame({
     return used
   }, [guesses])
 
+  const knownPattern = useMemo(() => buildKnownPattern(guesses, WORD_LENGTH), [guesses])
+
   const currentRow = Math.min(privatePlayer?.attempts ?? 0, MAX_GUESSES)
   const canPlay = connected && gameState.status === "playing" && Boolean(privatePlayer) &&
     !privatePlayer?.completed && !isWaitingForOthers && !submitting && roundReveal === null && !showResults
@@ -105,6 +108,7 @@ export function MultiplayerGame({
     }
     previousAttemptsRef.current = privatePlayer.attempts
     setCurrentGuess("")
+    setVisualization(null)
     setSubmitting(false)
   }, [privatePlayer])
 
@@ -115,7 +119,10 @@ export function MultiplayerGame({
   }, [error, showMessage])
 
   useEffect(() => {
-    if (gameState.status === "finished") setShowResults(true)
+    if (gameState.status === "finished") {
+      setVisualization(null)
+      setShowResults(true)
+    }
   }, [gameState.status])
 
   useEffect(() => {
@@ -127,6 +134,7 @@ export function MultiplayerGame({
   }, [])
 
   const submitGuess = useCallback(() => {
+    if (visualization) return
     if (!canPlay) {
       if (!connected) showMessage("Reconnecting...")
       else if (isWaitingForOthers) showMessage("Waiting for other players...")
@@ -140,17 +148,27 @@ export function MultiplayerGame({
       return
     }
     if (onGuess(currentGuess)) setSubmitting(true)
-  }, [canPlay, connected, currentGuess, isWaitingForOthers, onGuess, showMessage])
+  }, [canPlay, connected, currentGuess, isWaitingForOthers, onGuess, showMessage, visualization])
 
   const addLetter = useCallback((letter: string) => {
     if (!canPlay) return
+    setVisualization(null)
     setCurrentGuess(prev => prev.length < WORD_LENGTH ? prev + letter.toUpperCase() : prev)
   }, [canPlay])
 
   const removeLetter = useCallback(() => {
     if (!canPlay) return
+    if (visualization) {
+      setVisualization(null)
+      return
+    }
     setCurrentGuess(prev => prev.slice(0, -1))
-  }, [canPlay])
+  }, [canPlay, visualization])
+
+  const toggleVisualization = useCallback(() => {
+    if (!canPlay || currentGuess || !knownPattern) return
+    setVisualization(current => current ? null : knownPattern)
+  }, [canPlay, currentGuess, knownPattern])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -257,8 +275,20 @@ export function MultiplayerGame({
           revealRow={revealRow}
           maxGuesses={MAX_GUESSES}
           wordLength={WORD_LENGTH}
+          visualization={visualization}
         />
-        <div className={`w-full max-w-lg ${canPlay ? "" : "pointer-events-none opacity-60"}`}>
+        <div className={`w-full max-w-lg space-y-3 ${canPlay ? "" : "pointer-events-none opacity-60"}`}>
+          <div className="flex justify-center">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={toggleVisualization}
+              disabled={!knownPattern || currentGuess.length > 0}
+            >
+              {visualization ? <EyeOff className="w-4 h-4 mr-2" /> : <Eye className="w-4 h-4 mr-2" />}
+              {visualization ? "Clear visualization" : "Visualize known letters"}
+            </Button>
+          </div>
           <Keyboard
             usedLetters={usedLetters}
             onKey={addLetter}

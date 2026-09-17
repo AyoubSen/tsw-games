@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useMultiplayerSession } from '@/lib/multiplayerSession'
 import { parseInviteSearch } from '@/lib/inviteLinks'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { ArrowLeft, RotateCcw, Loader2, Database } from 'lucide-react'
+import { ArrowLeft, RotateCcw, Loader2, Database, Eye, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -30,9 +30,14 @@ type GameView = 'select' | 'single' | 'multiplayer-lobby' | 'multiplayer-game'
 function WordlePage() {
   const { room: invitedRoomCode } = Route.useSearch()
   const [view, setView] = useState<GameView>('select')
+  const [isSingleResultOpen, setIsSingleResultOpen] = useState(false)
 
   // Single player state
   const singlePlayer = useWordle()
+
+  useEffect(() => {
+    setIsSingleResultOpen(singlePlayer.gameStatus === 'won' || singlePlayer.gameStatus === 'lost')
+  }, [singlePlayer.gameStatus])
 
   // Multiplayer state
   const multiplayer = useMultiplayerWordle()
@@ -151,9 +156,11 @@ function WordlePage() {
       maxGuesses,
       wordLength,
       revealedWord,
+      visualization,
+      canVisualize,
+      toggleVisualization,
     } = singlePlayer
 
-    const showDialog = gameStatus === 'won' || gameStatus === 'lost'
     const isLoading = gameStatus === 'loading'
 
     return (
@@ -199,9 +206,21 @@ function WordlePage() {
               revealRow={revealRow}
               maxGuesses={maxGuesses}
               wordLength={wordLength}
+              visualization={visualization}
             />
 
-            <div className="w-full max-w-lg">
+            <div className="w-full max-w-lg space-y-3">
+              <div className="flex justify-center">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={toggleVisualization}
+                  disabled={!canVisualize}
+                >
+                  {visualization ? <EyeOff className="w-4 h-4 mr-2" /> : <Eye className="w-4 h-4 mr-2" />}
+                  {visualization ? 'Clear visualization' : 'Visualize known letters'}
+                </Button>
+              </div>
               <Keyboard
                 usedLetters={usedLetters}
                 onKey={addLetter}
@@ -212,7 +231,7 @@ function WordlePage() {
           </div>
         )}
 
-        <Dialog open={showDialog} onOpenChange={() => {}}>
+        <Dialog open={isSingleResultOpen} onOpenChange={setIsSingleResultOpen}>
           <DialogContent className="sm:max-w-md" onPointerDownOutside={(e) => e.preventDefault()}>
             <DialogHeader>
               <DialogTitle className="text-center text-2xl">

@@ -9,6 +9,7 @@ interface BoardProps {
   revealRow: number | null
   maxGuesses: number
   wordLength: number
+  visualization?: Letter[] | null
 }
 
 function getTileStyle(state: LetterState): string {
@@ -64,6 +65,7 @@ export function Board({
   revealRow,
   maxGuesses,
   wordLength,
+  visualization,
 }: BoardProps) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -89,6 +91,17 @@ export function Board({
                     letter={guess[colIndex]}
                     index={colIndex}
                     shouldReveal={shouldReveal}
+                  />
+                )
+              }
+
+              if (isCurrentRow && visualization) {
+                return (
+                  <Tile
+                    key={colIndex}
+                    letter={visualization[colIndex]}
+                    index={colIndex}
+                    shouldReveal={false}
                   />
                 )
               }

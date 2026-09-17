@@ -20,6 +20,22 @@ export type GameStatus = 'loading' | 'playing' | 'won' | 'lost'
 const MAX_GUESSES = 6
 const WORD_LENGTH = 5
 
+export function buildKnownPattern(guesses: Letter[][], wordLength: number): Letter[] | null {
+  const pattern: Letter[] = Array.from({ length: wordLength }, () => ({ char: 'X', state: 'tbd' }))
+  let hasCorrectLetter = false
+
+  for (const guess of guesses) {
+    guess.forEach((letter, index) => {
+      if (letter.state === 'correct') {
+        pattern[index] = letter
+        hasCorrectLetter = true
+      }
+    })
+  }
+
+  return hasCorrectLetter ? pattern : null
+}
+
 function evaluateGuess(guess: string, target: string): Letter[] {
   const result: Letter[] = []
   const targetChars = target.split('')
@@ -90,6 +106,7 @@ export function useWordle() {
   const [answerCount, setAnswerCount] = useState(0)
   const [validCount, setValidCount] = useState(0)
   const [revealedWord, setRevealedWord] = useState<string | null>(null)
+  const [visualization, setVisualization] = useState<Letter[] | null>(null)
 
   // Use ref to track if we're in the middle of resetting
   const isResetting = useRef(false)
@@ -131,6 +148,8 @@ export function useWordle() {
   const addLetter = useCallback((letter: string) => {
     if (isResetting.current) return
 
+    setVisualization(null)
+
     setCurrentGuess((prev) => {
       if (prev.length >= WORD_LENGTH) return prev
       return prev + letter.toUpperCase()
@@ -140,12 +159,23 @@ export function useWordle() {
   const removeLetter = useCallback(() => {
     if (isResetting.current) return
 
+    if (visualization) {
+      setVisualization(null)
+      return
+    }
+
     setCurrentGuess((prev) => prev.slice(0, -1))
-  }, [])
+  }, [visualization])
+
+  const toggleVisualization = useCallback(() => {
+    if (isResetting.current || gameStatus !== 'playing' || currentGuess) return
+    setVisualization((current) => current ? null : buildKnownPattern(guesses, WORD_LENGTH))
+  }, [currentGuess, gameStatus, guesses])
 
   const submitGuess = useCallback(() => {
     if (isResetting.current) return
     if (gameStatus !== 'playing') return
+    if (visualization) return
 
     if (currentGuess.length !== WORD_LENGTH) {
       showMessage('Not enough letters')
@@ -185,7 +215,7 @@ export function useWordle() {
 
     setCurrentGuess('')
     setCurrentRow((prev) => prev + 1)
-  }, [currentGuess, currentRow, gameStatus, targetWord, showMessage])
+  }, [currentGuess, currentRow, gameStatus, targetWord, showMessage, visualization])
 
   const resetGame = useCallback(() => {
     if (!isWordsLoaded()) return
@@ -204,6 +234,7 @@ export function useWordle() {
     setShake(false)
     setRevealRow(null)
     setMessage(null)
+    setVisualization(null)
 
     // Allow input again after a short delay
     setTimeout(() => {
@@ -269,9 +300,12 @@ export function useWordle() {
     answerCount,
     validCount,
     revealedWord,
+    visualization,
+    canVisualize: gameStatus === 'playing' && currentGuess.length === 0 && buildKnownPattern(guesses, WORD_LENGTH) !== null,
     addLetter,
     removeLetter,
     submitGuess,
+    toggleVisualization,
     resetGame,
     maxGuesses: MAX_GUESSES,
     wordLength: WORD_LENGTH,

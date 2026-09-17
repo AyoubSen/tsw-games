@@ -4,13 +4,6 @@ import { parseInviteSearch } from '@/lib/inviteLinks'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft, RotateCcw, Loader2, Database, Eye, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Board } from '@/components/games/wordle/Board'
 import { Keyboard } from '@/components/games/wordle/Keyboard'
 import { useWordle } from '@/components/games/wordle/useWordle'
@@ -30,14 +23,9 @@ type GameView = 'select' | 'single' | 'multiplayer-lobby' | 'multiplayer-game'
 function WordlePage() {
   const { room: invitedRoomCode } = Route.useSearch()
   const [view, setView] = useState<GameView>('select')
-  const [isSingleResultOpen, setIsSingleResultOpen] = useState(false)
 
   // Single player state
   const singlePlayer = useWordle()
-
-  useEffect(() => {
-    setIsSingleResultOpen(singlePlayer.gameStatus === 'won' || singlePlayer.gameStatus === 'lost')
-  }, [singlePlayer.gameStatus])
 
   // Multiplayer state
   const multiplayer = useMultiplayerWordle()
@@ -155,6 +143,7 @@ function WordlePage() {
       resetGame,
       maxGuesses,
       wordLength,
+      targetWord,
       revealedWord,
       visualization,
       canVisualize,
@@ -162,6 +151,8 @@ function WordlePage() {
     } = singlePlayer
 
     const isLoading = gameStatus === 'loading'
+    const isFinished = gameStatus === 'won' || gameStatus === 'lost'
+    const resultWord = gameStatus === 'won' ? targetWord : revealedWord
 
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background flex flex-col">
@@ -198,6 +189,24 @@ function WordlePage() {
               </div>
             )}
 
+            {isFinished && (
+              <div className="grid w-full max-w-2xl items-center gap-3 sm:grid-cols-[1fr_auto_1fr]">
+                <div className="hidden sm:block" />
+                <div className="text-center sm:col-start-2">
+                  <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                    {gameStatus === 'won' ? 'Correct word' : 'The word was'}
+                  </p>
+                  <p className="mt-1 text-3xl font-bold uppercase tracking-[0.25em] text-green-500">
+                    {resultWord}
+                  </p>
+                </div>
+                <Button onClick={resetGame} size="sm" className="justify-self-center sm:justify-self-end">
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Play Again
+                </Button>
+              </div>
+            )}
+
             <Board
               guesses={guesses}
               currentGuess={currentGuess}
@@ -231,35 +240,6 @@ function WordlePage() {
           </div>
         )}
 
-        <Dialog open={isSingleResultOpen} onOpenChange={setIsSingleResultOpen}>
-          <DialogContent className="sm:max-w-md" onPointerDownOutside={(e) => e.preventDefault()}>
-            <DialogHeader>
-              <DialogTitle className="text-center text-2xl">
-                {gameStatus === 'won' ? 'Congratulations!' : 'Game Over'}
-              </DialogTitle>
-              <DialogDescription className="text-center">
-                {gameStatus === 'won' ? (
-                  <span>
-                    You got it in <strong>{currentRow}</strong> {currentRow === 1 ? 'try' : 'tries'}!
-                  </span>
-                ) : (
-                  <span>
-                    The word was <strong className="text-foreground">{revealedWord}</strong>
-                  </span>
-                )}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="flex flex-col gap-2 pt-2">
-              <Button onClick={resetGame} className="w-full">
-                <RotateCcw className="w-4 h-4 mr-2" />
-                Play Again
-              </Button>
-              <Button variant="outline" onClick={handleBackToSelect} className="w-full">
-                Back to Mode Select
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
       </div>
     )
   }

@@ -8,14 +8,15 @@ interface MiniBoardProps {
   playerName: string
   isCurrentPlayer?: boolean
   highlighted?: boolean // Highlight the last row
+  colorblind?: boolean
 }
 
-function getMiniTileStyle(state: string): string {
+function getMiniTileStyle(state: string, colorblind: boolean): string {
   switch (state) {
     case 'correct':
-      return 'bg-green-600'
+      return colorblind ? 'bg-blue-600' : 'bg-green-600'
     case 'present':
-      return 'bg-yellow-500'
+      return colorblind ? 'bg-orange-500' : 'bg-yellow-500'
     case 'absent':
       return 'bg-zinc-700'
     default:
@@ -30,6 +31,7 @@ export function MiniBoard({
   playerName,
   isCurrentPlayer,
   highlighted,
+  colorblind = false,
 }: MiniBoardProps) {
   return (
     <div className="flex flex-col items-center gap-1">
@@ -63,7 +65,7 @@ export function MiniBoard({
                     key={colIndex}
                     className={cn(
                       "w-4 h-4 rounded-sm flex items-center justify-center text-[9px] font-bold text-white",
-                      getMiniTileStyle(state)
+                      getMiniTileStyle(state, colorblind)
                     )}
                   >
                     {letterData?.char ?? ''}

@@ -1,6 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import PartySocket from "partysocket"
-import { PARTYKIT_HOST, generateRoomCode, getPersistentPlayerId } from "@/lib/partykit"
+import {
+  PARTYKIT_HOST,
+  clearPersistentPlayerId,
+  generateRoomCode,
+  getPersistentPlayerId,
+  leavePartySocket,
+} from "@/lib/partykit"
 import {
   WORDLE_PROTOCOL_VERSION,
   type ClientMessage,
@@ -10,6 +16,7 @@ import {
   type PublicGameState,
   type GameMode,
   type RevealMode,
+  type SeriesLength,
 } from "../../../../party/wordle"
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
@@ -55,6 +62,7 @@ export function useMultiplayerWordle() {
     if (message.type === "error") {
       const terminal = message.message === "Game not found" ||
         message.message === "Game already started" ||
+        message.message === "Series already started" ||
         message.message === "Game is full"
       if (terminal) {
         const socket = socketRef.current
@@ -115,7 +123,15 @@ export function useMultiplayerWordle() {
     }
   }, [])
 
-  const connect = useCallback((roomCode: string, isHost: boolean, mode: GameMode, revealMode: RevealMode, playerName: string) => {
+  const connect = useCallback((
+    roomCode: string,
+    isHost: boolean,
+    mode: GameMode,
+    revealMode: RevealMode,
+    hardMode: boolean,
+    seriesLength: SeriesLength,
+    playerName: string,
+  ) => {
     const previousSocket = socketRef.current
     socketRef.current = null
     previousSocket?.close()
@@ -134,6 +150,8 @@ export function useMultiplayerWordle() {
         host: isHost.toString(),
         mode,
         revealMode,
+        hardMode: hardMode.toString(),
+        seriesLength: String(seriesLength),
         protocolVersion: String(WORDLE_PROTOCOL_VERSION),
       },
       maxEnqueuedMessages: 0,
@@ -198,12 +216,13 @@ export function useMultiplayerWordle() {
 
   const disconnect = useCallback(() => {
     const socket = socketRef.current
+    const roomCode = roomCodeRef.current
     socketRef.current = null
-    if (socket?.readyState === 1) {
+    if (socket) {
       const leave: ClientMessage = { type: "leave", protocolVersion: WORDLE_PROTOCOL_VERSION }
-      socket.send(JSON.stringify(leave))
+      leavePartySocket(socket, leave)
     }
-    socket?.close()
+    if (roomCode) clearPersistentPlayerId("wordle", roomCode)
     roomCodeRef.current = ""
     roundIdRef.current = ""
     revisionRef.current = 0
@@ -224,14 +243,20 @@ export function useMultiplayerWordle() {
     setState(prev => ({ ...prev, roundReveal: null }))
   }, [])
 
-  const createGame = useCallback((mode: GameMode, revealMode: RevealMode, playerName: string) => {
+  const createGame = useCallback((
+    mode: GameMode,
+    revealMode: RevealMode,
+    hardMode: boolean,
+    seriesLength: SeriesLength,
+    playerName: string,
+  ) => {
     const roomCode = generateRoomCode()
-    connect(roomCode, true, mode, revealMode, playerName)
+    connect(roomCode, true, mode, revealMode, hardMode, seriesLength, playerName)
     return roomCode
   }, [connect])
 
   const joinGame = useCallback((roomCode: string, playerName: string) => {
-    connect(roomCode.toUpperCase(), false, "race", "after-round", playerName)
+    connect(roomCode.toUpperCase(), false, "race", "after-round", false, 1, playerName)
   }, [connect])
 
   const startGame = useCallback(() => {

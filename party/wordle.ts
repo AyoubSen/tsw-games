@@ -1,16 +1,17 @@
 import type * as Party from "partykit/server"
 import { isPresent, markConnected, markDisconnected } from "./shared/presence"
 
-export const WORDLE_PROTOCOL_VERSION = 3
-const STATE_SCHEMA_VERSION = 3
+export const WORDLE_PROTOCOL_VERSION = 4
+const STATE_SCHEMA_VERSION = 4
 const MAX_PLAYERS = 8
 const MAX_GUESSES = 6
 const DISCONNECTED_PLAYER_TTL_MS = 30 * 60 * 1000
 const LOBBY_DISCONNECT_TTL_MS = 30 * 1000
 const RECONNECT_GRACE_MS = 15 * 1000
 
-export type GameMode = "race" | "classic"
+export type GameMode = "race" | "classic" | "one-lie"
 export type RevealMode = "after-round" | "at-end"
+export type SeriesLength = 1 | 3 | 5
 export type TileState = "correct" | "present" | "absent"
 
 export interface EvaluatedLetter {
@@ -65,6 +66,12 @@ export interface GameState {
   roomCode: string
   mode: GameMode
   revealMode: RevealMode
+  hardMode: boolean
+  seriesLength: SeriesLength
+  seriesRound: number
+  seriesScores: Record<string, number>
+  seriesWinnerIds: string[]
+  seriesComplete: boolean
   hostId: string
   targetWord: string
   /** Players keyed by their private reconnect credential (the PartyKit connection ID). */
@@ -87,6 +94,12 @@ export interface PublicGameState {
   roomCode: string
   mode: GameMode
   revealMode: RevealMode
+  hardMode: boolean
+  seriesLength: SeriesLength
+  seriesRound: number
+  seriesScores: Record<string, number>
+  seriesWinnerIds: string[]
+  seriesComplete: boolean
   hostId: string
   players: Record<string, PublicPlayer>
   status: "waiting" | "playing" | "finished"
@@ -218,11 +231,15 @@ function getRandomWord(): string {
 }
 
 function isGameMode(value: unknown): value is GameMode {
-  return value === "race" || value === "classic"
+  return value === "race" || value === "classic" || value === "one-lie"
 }
 
 function isRevealMode(value: unknown): value is RevealMode {
   return value === "after-round" || value === "at-end"
+}
+
+function parseSeriesLength(value: unknown): SeriesLength {
+  return value === 3 || value === "3" ? 3 : value === 5 || value === "5" ? 5 : 1
 }
 
 function evaluateGuess(guess: string, target: string): EvaluatedLetter[] {
@@ -247,6 +264,48 @@ function evaluateGuess(guess: string, target: string): EvaluatedLetter[] {
     }
   }
   return result
+}
+
+function applyOneLie(result: EvaluatedLetter[], seed: string): EvaluatedLetter[] {
+  const candidates = result
+    .map((tile, index) => tile.state === "correct" ? -1 : index)
+    .filter(index => index >= 0)
+  if (candidates.length === 0) return result
+
+  let hash = 0
+  for (const char of seed) hash = Math.imul(31, hash) + char.charCodeAt(0) | 0
+  const lieIndex = candidates[Math.abs(hash) % candidates.length]
+  return result.map((tile, index) => index === lieIndex
+    ? { ...tile, state: tile.state === "present" ? "absent" : "present" }
+    : tile)
+}
+
+function getHardModeError(word: string, guesses: EvaluatedLetter[][]): string | null {
+  const requiredCounts = new Map<string, number>()
+
+  for (const guess of guesses) {
+    const rowCounts = new Map<string, number>()
+    for (let index = 0; index < guess.length; index++) {
+      const tile = guess[index]
+      if (tile.state === "correct" && word[index] !== tile.char) {
+        return `${tile.char} must stay in position ${index + 1}`
+      }
+      if (tile.state === "present" && word[index] === tile.char) {
+        return `${tile.char} cannot be used in position ${index + 1}`
+      }
+      if (tile.state === "correct" || tile.state === "present") {
+        rowCounts.set(tile.char, (rowCounts.get(tile.char) ?? 0) + 1)
+      }
+    }
+    for (const [char, count] of rowCounts) {
+      requiredCounts.set(char, Math.max(requiredCounts.get(char) ?? 0, count))
+    }
+  }
+
+  for (const [char, count] of requiredCounts) {
+    if (word.split(char).length - 1 < count) return `Guess must contain ${char}`
+  }
+  return null
 }
 
 function cloneBoards(boards: Record<string, EvaluatedLetter[][]>): Record<string, EvaluatedLetter[][]> {
@@ -318,7 +377,18 @@ function normalizeStoredState(value: unknown, roomCode: string): GameState | nul
     roundId: typeof stored.roundId === "string" && stored.roundId ? stored.roundId : crypto.randomUUID(),
     roomCode,
     mode: stored.mode,
-    revealMode: stored.mode === "race" ? "at-end" : stored.revealMode,
+    revealMode: stored.mode === "classic" ? stored.revealMode : "at-end",
+    hardMode: stored.mode === "one-lie" ? false : Boolean(stored.hardMode),
+    seriesLength: parseSeriesLength(stored.seriesLength),
+    seriesRound: Number.isInteger(stored.seriesRound) ? Math.max(1, stored.seriesRound!) : 1,
+    seriesScores: stored.seriesScores && typeof stored.seriesScores === "object"
+      ? Object.fromEntries(Object.entries(stored.seriesScores).filter((entry): entry is [string, number] =>
+          typeof entry[1] === "number" && Number.isInteger(entry[1]) && entry[1] >= 0))
+      : {},
+    seriesWinnerIds: Array.isArray(stored.seriesWinnerIds)
+      ? stored.seriesWinnerIds.filter(id => typeof id === "string")
+      : [],
+    seriesComplete: Boolean(stored.seriesComplete),
     hostId: normalizedHost,
     targetWord,
     players,
@@ -381,7 +451,7 @@ export default class WordleParty implements Party.Server {
       if (player.connected || player.disconnectedAt === null) continue
       const ttl = this.state.status === "waiting" ? LOBBY_DISCONNECT_TTL_MS : DISCONNECTED_PLAYER_TTL_MS
       if (this.state.status !== "finished") deadlines.push(Math.max(now + 1, player.disconnectedAt + ttl))
-      if (!player.graceHandled && (this.state.status === "playing" || player.id === this.state.hostId)) {
+      if (!player.graceHandled && this.state.status === "playing") {
         deadlines.push(Math.max(now + 1, player.disconnectedAt + RECONNECT_GRACE_MS))
       }
     }
@@ -431,6 +501,12 @@ export default class WordleParty implements Party.Server {
       roomCode: this.state.roomCode,
       mode: this.state.mode,
       revealMode: this.state.revealMode,
+      hardMode: this.state.hardMode,
+      seriesLength: this.state.seriesLength,
+      seriesRound: this.state.seriesRound,
+      seriesScores: { ...this.state.seriesScores },
+      seriesWinnerIds: [...this.state.seriesWinnerIds],
+      seriesComplete: this.state.seriesComplete,
       hostId: this.state.hostId,
       players,
       status: this.state.status,
@@ -513,6 +589,7 @@ export default class WordleParty implements Party.Server {
     for (const [credential, player] of Object.entries(this.state.players)) {
       if (player.connected || player.disconnectedAt === null || player.disconnectedAt > cutoff) continue
       delete this.state.players[credential]
+      delete this.state.seriesScores[player.id]
       if (player.id === this.state.hostId) this.state.hostId = this.electHost(player.id)
     }
   }
@@ -540,22 +617,39 @@ export default class WordleParty implements Party.Server {
 
     if (raceWinnerId) {
       this.state.winnerIds = [raceWinnerId]
-      return
+    } else {
+      const winners = players.filter(player => player.won)
+      const best = winners.length > 0 ? Math.min(...winners.map(player => player.attempts)) : null
+      this.state.winnerIds = best === null ? [] : winners.filter(player => player.attempts === best).map(player => player.id)
     }
-    const winners = players.filter(player => player.won)
-    const best = winners.length > 0 ? Math.min(...winners.map(player => player.attempts)) : null
-    this.state.winnerIds = best === null ? [] : winners.filter(player => player.attempts === best).map(player => player.id)
+
+    for (const winnerId of this.state.winnerIds) {
+      this.state.seriesScores[winnerId] = (this.state.seriesScores[winnerId] ?? 0) + 1
+    }
+    const winsNeeded = Math.floor(this.state.seriesLength / 2) + 1
+    const reachedTarget = Object.values(this.state.seriesScores).some(score => score >= winsNeeded)
+    this.state.seriesComplete = this.state.seriesLength === 1 || reachedTarget || this.state.seriesRound >= this.state.seriesLength
+    if (this.state.seriesComplete && this.state.seriesLength > 1) {
+      const highScore = Math.max(0, ...Object.values(this.state.seriesScores))
+      this.state.seriesWinnerIds = highScore === 0
+        ? []
+        : Object.entries(this.state.seriesScores).filter(([, score]) => score === highScore).map(([id]) => id)
+    }
   }
 
-  finishIfEveryoneDone() {
-    if (!this.state || this.state.status !== "playing") return
+  finishIfEveryoneDone(): boolean {
+    if (!this.state || this.state.status !== "playing") return false
     const now = Date.now()
     const activePlayers = Object.values(this.state.players).filter(player =>
       this.state!.participantIds.includes(player.id) && (
         player.connected || (player.disconnectedAt !== null && now - player.disconnectedAt < RECONNECT_GRACE_MS)
       )
     )
-    if (activePlayers.length > 0 && activePlayers.every(player => player.completed)) this.finishGame()
+    if (activePlayers.length > 0 && activePlayers.every(player => player.completed)) {
+      this.finishGame()
+      return true
+    }
+    return false
   }
 
   advanceClassicRound(): { turn: number; playerGuesses: Record<string, EvaluatedLetter[][]> } | null {
@@ -578,8 +672,8 @@ export default class WordleParty implements Party.Server {
     }
     this.state.currentTurn = Math.min(MAX_GUESSES, this.state.currentTurn + 1)
     const reveal = { turn: this.state.currentTurn, playerGuesses: cloneBoards(this.state.revealedBoards) }
-    this.finishIfEveryoneDone()
-    return this.state.status === "finished" ? null : reveal
+    if (this.finishIfEveryoneDone()) return null
+    return reveal
   }
 
   canControl(senderId: string): boolean {
@@ -598,7 +692,9 @@ export default class WordleParty implements Party.Server {
     const modeParam = url.searchParams.get("mode")
     const revealParam = url.searchParams.get("revealMode")
     const mode = isGameMode(modeParam) ? modeParam : "race"
-    const revealMode = mode === "race" ? "at-end" : isRevealMode(revealParam) ? revealParam : "after-round"
+    const revealMode = mode === "classic" && isRevealMode(revealParam) ? revealParam : mode === "classic" ? "after-round" : "at-end"
+    const hardMode = mode !== "one-lie" && url.searchParams.get("hardMode") === "true"
+    const seriesLength = parseSeriesLength(url.searchParams.get("seriesLength"))
     const isHost = url.searchParams.get("host") === "true"
 
     if (isHost && !this.state) {
@@ -609,6 +705,12 @@ export default class WordleParty implements Party.Server {
         roomCode: this.room.id,
         mode,
         revealMode,
+        hardMode,
+        seriesLength,
+        seriesRound: 1,
+        seriesScores: {},
+        seriesWinnerIds: [],
+        seriesComplete: false,
         hostId: "",
         targetWord: "",
         players: {},
@@ -689,6 +791,10 @@ export default class WordleParty implements Party.Server {
               this.send(sender, { type: "error", message: "Game already started" })
               return
             }
+            if (this.state.seriesLength > 1 && this.state.seriesRound > 1) {
+              this.send(sender, { type: "error", message: "Series already started" })
+              return
+            }
             if (Object.keys(this.state.players).length >= this.state.maxPlayers) this.pruneDisconnectedPlayers()
             if (Object.keys(this.state.players).length >= this.state.maxPlayers) {
               this.send(sender, { type: "error", message: "Game is full" })
@@ -707,6 +813,7 @@ export default class WordleParty implements Party.Server {
               graceHandled: false,
               readyForNextTurn: false,
             }
+            this.state.seriesScores[this.state.players[sender.id].id] = 0
           }
           const joinedPlayer = this.state.players[sender.id]
           if (!this.state.hostId || !Object.values(this.state.players).some(player => player.id === this.state!.hostId)) {
@@ -801,14 +908,23 @@ export default class WordleParty implements Party.Server {
             this.send(sender, { type: "error", message: "Not in word list" })
             return
           }
-
           if (data.roundId !== this.state.roundId || this.state.status !== "playing") return
           player = this.state.players[sender.id]
           if (!player || !this.state.participantIds.includes(player.id) || !player.connected || player.completed) return
           if (this.state.mode === "classic" && this.state.revealMode === "after-round" && player.readyForNextTurn) return
           if (player.attempts >= MAX_GUESSES) return
+          if (this.state.hardMode) {
+            const hardModeError = getHardModeError(word, player.guesses)
+            if (hardModeError) {
+              this.send(sender, { type: "error", message: hardModeError })
+              return
+            }
+          }
 
-          const result = evaluateGuess(word, this.state.targetWord)
+          const evaluated = evaluateGuess(word, this.state.targetWord)
+          const result = this.state.mode === "one-lie" && word !== this.state.targetWord
+            ? applyOneLie(evaluated, `${this.state.roundId}:${word}:${player.attempts}`)
+            : evaluated
           player.guesses.push(result)
           player.attempts = player.guesses.length
           player.won = word === this.state.targetWord
@@ -816,7 +932,7 @@ export default class WordleParty implements Party.Server {
           player.readyForNextTurn = this.state.mode === "classic" && this.state.revealMode === "after-round"
 
           let roundReveal: ReturnType<WordleParty["advanceClassicRound"]> = null
-          if (this.state.mode === "race" && player.won) this.finishGame(player.id)
+          if ((this.state.mode === "race" || this.state.mode === "one-lie") && player.won) this.finishGame(player.id)
           else if (this.state.mode === "classic" && this.state.revealMode === "after-round") roundReveal = this.advanceClassicRound()
           else this.finishIfEveryoneDone()
 
@@ -831,6 +947,7 @@ export default class WordleParty implements Party.Server {
         case "leave": {
           const leavingPlayer = this.state.players[sender.id]
           delete this.state.players[sender.id]
+          if (leavingPlayer) delete this.state.seriesScores[leavingPlayer.id]
           if (Object.keys(this.state.players).length === 0) {
             this.state = null
             await this.room.storage.delete("state")
@@ -858,7 +975,16 @@ export default class WordleParty implements Party.Server {
             return
           }
 
+          const continueSeries = this.state.seriesLength > 1 && !this.state.seriesComplete
           this.state.roundId = crypto.randomUUID()
+          if (continueSeries) {
+            this.state.seriesRound++
+          } else {
+            this.state.seriesRound = 1
+            this.state.seriesScores = Object.fromEntries(Object.values(this.state.players).map(player => [player.id, 0]))
+          }
+          this.state.seriesWinnerIds = []
+          this.state.seriesComplete = false
           this.state.status = "waiting"
           this.state.targetWord = ""
           this.state.startedAt = null
@@ -930,11 +1056,6 @@ export default class WordleParty implements Party.Server {
       await this.room.storage.delete("state")
       await this.room.storage.deleteAlarm()
       return
-    }
-
-    const host = Object.values(this.state.players).find(player => player.id === this.state!.hostId)
-    if (host && !host.connected && host.disconnectedAt !== null && Date.now() - host.disconnectedAt >= RECONNECT_GRACE_MS) {
-      this.state.hostId = this.electHost(host.id)
     }
 
     for (const player of Object.values(this.state.players)) {

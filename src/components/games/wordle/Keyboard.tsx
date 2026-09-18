@@ -7,6 +7,7 @@ interface KeyboardProps {
   onKey: (key: string) => void
   onEnter: () => void
   onBackspace: () => void
+  colorblind?: boolean
 }
 
 const KEYBOARD_ROWS = [
@@ -15,12 +16,16 @@ const KEYBOARD_ROWS = [
   ['ENTER', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', 'BACKSPACE'],
 ]
 
-function getKeyStyle(state?: LetterState): string {
+function getKeyStyle(state: LetterState | undefined, colorblind: boolean): string {
   switch (state) {
     case 'correct':
-      return 'bg-green-600 hover:bg-green-500 text-white border-green-600'
+      return colorblind
+        ? 'bg-blue-600 hover:bg-blue-500 text-white border-blue-600'
+        : 'bg-green-600 hover:bg-green-500 text-white border-green-600'
     case 'present':
-      return 'bg-yellow-500 hover:bg-yellow-400 text-white border-yellow-500'
+      return colorblind
+        ? 'bg-orange-500 hover:bg-orange-400 text-white border-orange-500'
+        : 'bg-yellow-500 hover:bg-yellow-400 text-white border-yellow-500'
     case 'absent':
       return 'bg-zinc-700 hover:bg-zinc-600 text-zinc-400 border-zinc-700'
     default:
@@ -28,7 +33,7 @@ function getKeyStyle(state?: LetterState): string {
   }
 }
 
-export function Keyboard({ usedLetters, onKey, onEnter, onBackspace }: KeyboardProps) {
+export function Keyboard({ usedLetters, onKey, onEnter, onBackspace, colorblind = false }: KeyboardProps) {
   const handleClick = (key: string) => {
     if (key === 'ENTER') {
       onEnter()
@@ -64,7 +69,7 @@ export function Keyboard({ usedLetters, onKey, onEnter, onBackspace }: KeyboardP
                 onClick={() => handleClick(key)}
                 className={cn(
                   'h-14 min-w-0 touch-manipulation select-none rounded-md border text-[15px] font-semibold uppercase transition active:scale-[0.97]',
-                  getKeyStyle(state)
+                  getKeyStyle(state, colorblind)
                 )}
               >
                 {key === 'BACKSPACE' ? (

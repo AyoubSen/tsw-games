@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { Copy, Check, Trophy, Users, Clock, X, RotateCcw, Eye, EyeOff } from "lucide-react"
+import { Copy, Check, Trophy, Users, Clock, X, RotateCcw, Eye, EyeOff, Palette, Share2 } from "lucide-react"
 import { Board } from "./Board"
 import { Keyboard } from "./Keyboard"
 import { MiniBoard } from "./MiniBoard"
@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import type { PrivatePlayerState, PublicGameState } from "../../../../party/wordle"
-import { buildKnownPattern, type Letter, type LetterState } from "./useWordle"
+import { buildKnownPattern, buildShareText, type Letter, type LetterState } from "./useWordle"
 import type { RoundReveal } from "./useMultiplayerWordle"
 
 type UsedLetters = Record<string, LetterState>
@@ -32,6 +32,8 @@ interface MultiplayerGameProps {
   isWaitingForOthers: boolean
   roundReveal: RoundReveal | null
   onDismissReveal: () => void
+  colorblind: boolean
+  onToggleColorblind: () => void
 }
 
 const MAX_GUESSES = 6
@@ -51,13 +53,15 @@ export function MultiplayerGame({
   isWaitingForOthers,
   roundReveal,
   onDismissReveal,
+  colorblind,
+  onToggleColorblind,
 }: MultiplayerGameProps) {
   const [currentGuess, setCurrentGuess] = useState("")
   const [shake, setShake] = useState(false)
   const [revealRow, setRevealRow] = useState<number | null>(null)
   const [message, setMessage] = useState<string | null>(null)
-  const [showResults, setShowResults] = useState(gameState.status === "finished")
   const [copied, setCopied] = useState(false)
+  const [resultCopied, setResultCopied] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [visualization, setVisualization] = useState<Letter[] | null>(null)
   const previousAttemptsRef = useRef(privatePlayer?.attempts ?? 0)
@@ -90,7 +94,7 @@ export function MultiplayerGame({
 
   const currentRow = Math.min(privatePlayer?.attempts ?? 0, MAX_GUESSES)
   const canPlay = connected && gameState.status === "playing" && Boolean(privatePlayer) &&
-    !privatePlayer?.completed && !isWaitingForOthers && !submitting && roundReveal === null && !showResults
+    !privatePlayer?.completed && !isWaitingForOthers && !submitting && roundReveal === null
   const players = Object.values(gameState.players)
 
   const showMessage = useCallback((text: string, duration = 1800) => {
@@ -121,7 +125,6 @@ export function MultiplayerGame({
   useEffect(() => {
     if (gameState.status === "finished") {
       setVisualization(null)
-      setShowResults(true)
     }
   }, [gameState.status])
 
@@ -188,9 +191,30 @@ export function MultiplayerGame({
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const shareResult = async () => {
+    if (!privatePlayer) return
+    const modeName = gameState.mode === "one-lie"
+      ? "Wordle One Lie"
+      : gameState.hardMode ? "Wordle Hard" : "Wordle"
+    const label = gameState.seriesLength > 1
+      ? `${modeName} Round ${gameState.seriesRound}/${gameState.seriesLength}`
+      : modeName
+    await navigator.clipboard.writeText(buildShareText(
+      guesses,
+      privatePlayer.won,
+      privatePlayer.attempts,
+      label,
+      colorblind,
+    ))
+    setResultCopied(true)
+    setTimeout(() => setResultCopied(false), 2000)
+  }
+
   const modeLabel = gameState.mode === "race"
     ? "Race"
-    : gameState.revealMode === "after-round" ? "Classic (Rounds)" : "Classic (Hidden)"
+    : gameState.mode === "one-lie"
+      ? "One Lie"
+      : gameState.revealMode === "after-round" ? "Classic (Rounds)" : "Classic (Hidden)"
   const winners = gameState.winnerIds.map(id => gameState.results.find(result => result.id === id)).filter(Boolean)
   const results = gameState.results.length > 0
     ? [...gameState.results].sort((a, b) => {
@@ -199,12 +223,33 @@ export function MultiplayerGame({
         return a.attempts - b.attempts
       })
     : []
+  const resultTitle = gameState.winnerIds.includes(playerId)
+    ? "You Won!"
+    : winners.length === 1
+      ? `${winners[0]!.name} Won!`
+      : winners.length > 1 ? "Tie Game!" : "Game Over"
+  const seriesWinners = gameState.seriesWinnerIds
+    .map(id => players.find(player => player.id === id))
+    .filter(Boolean)
+  const displayTitle = gameState.seriesComplete && gameState.seriesLength > 1
+    ? gameState.seriesWinnerIds.includes(playerId)
+      ? "You Won the Series!"
+      : seriesWinners.length === 1
+        ? `${seriesWinners[0]!.name} Won the Series!`
+        : seriesWinners.length > 1 ? "Series Tied!" : resultTitle
+    : resultTitle
 
   return (
     <div className="min-h-[calc(100vh-73px)] bg-background flex flex-col">
       <div className="px-4 py-3 border-b border-border space-y-2">
         <div className="flex items-center justify-between">
-          <Badge variant="secondary">{modeLabel}</Badge>
+          <div className="flex gap-1">
+            <Badge variant="secondary">{modeLabel}</Badge>
+            {gameState.hardMode && <Badge variant="outline">Hard</Badge>}
+            {gameState.seriesLength > 1 && (
+              <Badge variant="outline">Round {gameState.seriesRound}/{gameState.seriesLength}</Badge>
+            )}
+          </div>
           <div className="flex items-center gap-1">
             <code className="text-sm font-mono bg-muted px-2 py-1 rounded">{gameState.roomCode}</code>
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={copyInviteCode}>
@@ -231,12 +276,15 @@ export function MultiplayerGame({
                   player.id === playerId
                     ? "bg-primary/20 text-primary"
                     : completed
-                      ? won ? "bg-green-500/20 text-green-600" : "bg-red-500/20 text-red-600"
+                      ? won
+                        ? colorblind ? "bg-blue-500/20 text-blue-500" : "bg-green-500/20 text-green-600"
+                        : "bg-red-500/20 text-red-600"
                       : "bg-muted text-muted-foreground"
                 }`}
               >
                 <span className="font-medium">{player.name}</span>
-                {gameState.mode === "race" && !completed && <span className="opacity-70">({attempts}/6)</span>}
+                {gameState.seriesLength > 1 && <span className="opacity-70">{gameState.seriesScores[player.id] ?? 0}W</span>}
+                {(gameState.mode === "race" || gameState.mode === "one-lie") && !completed && <span className="opacity-70">({attempts}/6)</span>}
                 {!player.connected && <span className="opacity-70">offline</span>}
                 {completed && (won ? <Trophy className="w-3 h-3" /> : <X className="w-3 h-3" />)}
               </div>
@@ -253,6 +301,9 @@ export function MultiplayerGame({
             )}
           </div>
         )}
+        {gameState.mode === "one-lie" && gameState.status === "playing" && (
+          <p className="text-sm text-muted-foreground">One yellow or gray tile in every incorrect row is lying.</p>
+        )}
         {!connected && <p className="text-sm text-muted-foreground">Connection lost. Your board is paused while reconnecting...</p>}
         {!privatePlayer && gameState.status === "playing" && <p className="text-sm text-muted-foreground">Restoring your board...</p>}
         {privatePlayer?.completed && gameState.status === "playing" && (
@@ -266,7 +317,38 @@ export function MultiplayerGame({
         </div>
       )}
 
-      <div className="flex-1 flex flex-col items-center justify-center gap-6 px-2 py-4 sm:px-4">
+      <div className="flex-1 flex flex-col items-center justify-start gap-6 px-2 py-4 sm:px-4">
+        {gameState.status === "finished" && (
+          <div className="grid w-full max-w-2xl items-center gap-3 sm:grid-cols-[1fr_auto_1fr]">
+            <div className="hidden sm:block" />
+            <div className="text-center sm:col-start-2">
+              <p className="text-sm font-semibold">{displayTitle}</p>
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">Correct word</p>
+              <p className={`mt-1 text-3xl font-bold uppercase tracking-[0.25em] ${colorblind ? "text-blue-500" : "text-green-500"}`}>
+                {gameState.targetWord}
+              </p>
+            </div>
+            <div className="flex flex-wrap justify-center gap-2 sm:justify-self-end">
+              <Button variant="outline" onClick={shareResult} disabled={!privatePlayer} size="sm">
+                {resultCopied ? <Check className="w-4 h-4 mr-2" /> : <Share2 className="w-4 h-4 mr-2" />}
+                {resultCopied ? "Copied" : "Share"}
+              </Button>
+              {isHost ? (
+                <Button onClick={onRestart} disabled={!connected} size="sm">
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  {gameState.seriesLength > 1
+                    ? gameState.seriesComplete ? "New Series" : "Next Round"
+                    : "Play Again"}
+                </Button>
+              ) : (
+                <p className="max-w-40 text-center text-xs text-muted-foreground">
+                  Waiting for host to start a new game...
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
         <Board
           guesses={guesses}
           currentGuess={currentGuess}
@@ -276,100 +358,93 @@ export function MultiplayerGame({
           maxGuesses={MAX_GUESSES}
           wordLength={WORD_LENGTH}
           visualization={visualization}
+          colorblind={colorblind}
         />
-        <div className={`w-full max-w-lg space-y-3 ${canPlay ? "" : "pointer-events-none opacity-60"}`}>
-          <div className="flex justify-center">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={toggleVisualization}
-              disabled={!knownPattern || currentGuess.length > 0}
-            >
-              {visualization ? <EyeOff className="w-4 h-4 mr-2" /> : <Eye className="w-4 h-4 mr-2" />}
-              {visualization ? "Clear visualization" : "Visualize known letters"}
-            </Button>
-          </div>
-          <Keyboard
-            usedLetters={usedLetters}
-            onKey={addLetter}
-            onEnter={submitGuess}
-            onBackspace={removeLetter}
-          />
-        </div>
-      </div>
 
-      <Dialog open={showResults} onOpenChange={open => open && setShowResults(true)}>
-        <DialogContent
-          className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-md"
-          showCloseButton={false}
-          onEscapeKeyDown={event => event.preventDefault()}
-          onPointerDownOutside={event => event.preventDefault()}
-        >
-          <DialogHeader>
-            <DialogTitle className="text-center text-2xl">
-              {gameState.winnerIds.includes(playerId)
-                ? "You Won!"
-                : winners.length === 1
-                  ? `${winners[0]!.name} Won!`
-                  : winners.length > 1 ? "Tie Game!" : "Game Over"}
-            </DialogTitle>
-            <DialogDescription className="text-center">
-              The word was <strong className="text-foreground">{gameState.targetWord}</strong>
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-2 pt-2">
-            <p className="text-sm font-medium text-center">Results</p>
-            <div className="space-y-1">
-              {results.map((player, index) => (
-                <div
-                  key={player.id}
-                  className={`flex items-center justify-between p-2 rounded-lg ${player.id === playerId ? "bg-primary/10" : "bg-muted/50"}`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium w-6">{index + 1}.</span>
-                    <span className="font-medium">{player.name}</span>
-                    {player.id === playerId && <Badge variant="outline" className="text-xs">You</Badge>}
-                  </div>
-                  {player.won ? (
+        {gameState.status === "finished" ? (
+          <div className="w-full max-w-2xl space-y-4">
+            <div className="space-y-2">
+              <p className="text-center text-sm font-medium">Results</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {results.map((player, index) => (
+                  <div
+                    key={player.id}
+                    className={`flex items-center justify-between rounded-lg p-2 ${player.id === playerId ? "bg-primary/10" : "bg-muted/50"}`}
+                  >
                     <div className="flex items-center gap-2">
-                      <Trophy className="w-4 h-4 text-yellow-500" />
-                      <span className="text-sm">{player.attempts}/6</span>
+                      <span className="w-6 text-sm font-medium">{index + 1}.</span>
+                      <span className="font-medium">{player.name}</span>
+                      {player.id === playerId && <Badge variant="outline" className="text-xs">You</Badge>}
                     </div>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">Failed</span>
-                  )}
-                </div>
-              ))}
+                    {gameState.seriesLength > 1 && (
+                      <Badge variant="secondary" className="ml-auto mr-2 text-xs">
+                        {gameState.seriesScores[player.id] ?? 0} wins
+                      </Badge>
+                    )}
+                    {player.won ? (
+                      <div className="flex items-center gap-2">
+                        <Trophy className="w-4 h-4 text-yellow-500" />
+                        <span className="text-sm">{player.attempts}/6</span>
+                      </div>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">Failed</span>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
 
-          {Object.keys(gameState.revealedBoards).length > 0 && (
-            <div className="flex flex-wrap justify-center gap-5 border-t pt-4">
-              {results.map(player => (
-                <MiniBoard
-                  key={player.id}
-                  guesses={gameState.revealedBoards[player.id] ?? []}
-                  playerName={player.name}
-                  isCurrentPlayer={player.id === playerId}
-                />
-              ))}
-            </div>
-          )}
-
-          <div className="flex flex-col gap-2 mt-4">
-            {isHost ? (
-              <Button onClick={onRestart} disabled={!connected} className="w-full">
-                <RotateCcw className="w-4 h-4 mr-2" />
-                Play Again
-              </Button>
-            ) : (
-              <p className="text-sm text-center text-muted-foreground">Waiting for host to start a new game...</p>
+            {Object.keys(gameState.revealedBoards).length > 0 && (
+              <div className="flex flex-wrap justify-center gap-5 border-t pt-4">
+                {results.map(player => (
+                  <MiniBoard
+                    key={player.id}
+                    guesses={gameState.revealedBoards[player.id] ?? []}
+                    playerName={player.name}
+                    isCurrentPlayer={player.id === playerId}
+                    colorblind={colorblind}
+                  />
+                ))}
+              </div>
             )}
-            <Button onClick={onLeave} variant="outline" className="w-full">Back to Menu</Button>
+
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button variant={colorblind ? "default" : "outline"} onClick={onToggleColorblind}>
+                <Palette className="w-4 h-4 mr-2" />
+                Colorblind
+              </Button>
+              <Button onClick={onLeave} variant="outline">Back to Menu</Button>
+            </div>
           </div>
-        </DialogContent>
-      </Dialog>
+        ) : (
+          <div className="w-full max-w-lg space-y-3">
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button variant={colorblind ? "default" : "outline"} size="sm" onClick={onToggleColorblind}>
+                <Palette className="w-4 h-4 mr-2" />
+                Colorblind
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={toggleVisualization}
+                disabled={!canPlay || !knownPattern || currentGuess.length > 0}
+              >
+                {visualization ? <EyeOff className="w-4 h-4 mr-2" /> : <Eye className="w-4 h-4 mr-2" />}
+                {visualization ? "Clear visualization" : "Visualize known letters"}
+              </Button>
+            </div>
+            <div className={canPlay ? "" : "pointer-events-none opacity-60"}>
+              <Keyboard
+                usedLetters={usedLetters}
+                onKey={addLetter}
+                onEnter={submitGuess}
+                onBackspace={removeLetter}
+                colorblind={colorblind}
+              />
+            </div>
+          </div>
+        )}
+      </div>
 
       <Dialog open={roundReveal !== null} onOpenChange={open => !open && onDismissReveal()}>
         <DialogContent className="sm:max-w-lg">
@@ -385,6 +460,7 @@ export function MultiplayerGame({
                 playerName={player.name}
                 isCurrentPlayer={player.id === playerId}
                 highlighted
+                colorblind={colorblind}
               />
             ))}
           </div>

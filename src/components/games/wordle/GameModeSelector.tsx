@@ -1,14 +1,20 @@
 import { useState } from "react"
-import { Users, User, Zap, Clock, ArrowLeft, Loader2 } from "lucide-react"
+import { Users, User, Zap, Clock, ArrowLeft, Loader2, BadgeQuestionMark, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
-import type { GameMode, RevealMode } from "../../../../party/wordle"
+import type { GameMode, RevealMode, SeriesLength } from "../../../../party/wordle"
 
 interface GameModeSelectorProps {
   onSinglePlayer: () => void
-  onCreateMultiplayer: (mode: GameMode, revealMode: RevealMode, playerName: string) => void
+  onCreateMultiplayer: (
+    mode: GameMode,
+    revealMode: RevealMode,
+    hardMode: boolean,
+    seriesLength: SeriesLength,
+    playerName: string,
+  ) => void
   onJoinMultiplayer: (roomCode: string, playerName: string) => void
   isConnecting: boolean
   error: string | null
@@ -29,6 +35,12 @@ const MULTIPLAYER_MODES: { mode: GameMode; label: string; description: string; i
     label: "Classic",
     description: "Everyone gets 6 guesses. Fewest attempts wins.",
     icon: <Clock className="w-5 h-5" />,
+  },
+  {
+    mode: "one-lie",
+    label: "One Lie",
+    description: "Race with one false yellow or gray clue in every incorrect guess.",
+    icon: <BadgeQuestionMark className="w-5 h-5" />,
   },
 ]
 
@@ -58,6 +70,8 @@ export function GameModeSelector({
   const [roomCode, setRoomCode] = useState(initialRoomCode)
   const [selectedMode, setSelectedMode] = useState<GameMode>("race")
   const [revealMode, setRevealMode] = useState<RevealMode>("after-round")
+  const [hardMode, setHardMode] = useState(false)
+  const [seriesLength, setSeriesLength] = useState<SeriesLength>(1)
 
   const handleBack = () => {
     if (step === "multiplayer-type") setStep("mode")
@@ -67,7 +81,7 @@ export function GameModeSelector({
 
   const handleCreateGame = () => {
     if (!playerName.trim()) return
-    onCreateMultiplayer(selectedMode, revealMode, playerName.trim())
+    onCreateMultiplayer(selectedMode, revealMode, hardMode, seriesLength, playerName.trim())
   }
 
   const handleJoinGame = () => {
@@ -181,7 +195,10 @@ export function GameModeSelector({
                 {MULTIPLAYER_MODES.map((modeOption) => (
                   <button
                     key={modeOption.mode}
-                    onClick={() => setSelectedMode(modeOption.mode)}
+                    onClick={() => {
+                      setSelectedMode(modeOption.mode)
+                      if (modeOption.mode === "one-lie") setHardMode(false)
+                    }}
                     className={cn(
                       "flex items-start gap-3 p-3 rounded-lg border text-left transition-colors",
                       selectedMode === modeOption.mode
@@ -239,6 +256,44 @@ export function GameModeSelector({
                 </div>
               </div>
             )}
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Match Length</label>
+              <div className="grid grid-cols-3 gap-2">
+                {([1, 3, 5] as SeriesLength[]).map(length => (
+                  <Button
+                    key={length}
+                    type="button"
+                    variant={seriesLength === length ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setSeriesLength(length)}
+                  >
+                    {length === 1 ? "Single" : `Best of ${length}`}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => selectedMode !== "one-lie" && setHardMode(current => !current)}
+              disabled={selectedMode === "one-lie"}
+              className={cn(
+                "flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors",
+                hardMode ? "border-primary bg-primary/5" : "border-border hover:border-primary/50",
+                selectedMode === "one-lie" && "cursor-not-allowed opacity-50",
+              )}
+            >
+              <ShieldCheck className="h-5 w-5" />
+              <div>
+                <p className="text-sm font-medium">Hard Mode {hardMode ? "On" : "Off"}</p>
+                <p className="text-xs text-muted-foreground">
+                  {selectedMode === "one-lie"
+                    ? "Unavailable when clues can lie"
+                    : "Future guesses must reuse every revealed hint"}
+                </p>
+              </div>
+            </button>
 
             {/* Player Name */}
             <div className="space-y-1.5">

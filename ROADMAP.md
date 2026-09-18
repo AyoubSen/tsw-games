@@ -1,6 +1,9 @@
 # TSW Games - Roadmap & Ideas
 
-This document tracks planned improvements and new game ideas for the TSW Games platform.
+This is a non-binding idea bank for the TSW Games platform, not a list of promised work.
+Items are suggestions to revisit when choosing what to build next; do not implement them
+automatically or treat their ordering as a commitment. Future planning sessions should
+check this file so useful ideas are not lost, while the user's current request always wins.
 
 ---
 
@@ -8,13 +11,38 @@ This document tracks planned improvements and new game ideas for the TSW Games p
 
 ### Wordle
 
-- [ ] **Hard Mode** - Force players to use revealed hints in subsequent guesses
+- [x] **Hard Mode** - Force players to use revealed hints in subsequent guesses
 - [ ] **Daily Challenge** - Shared daily word everyone competes on (leaderboard by attempts)
 - [ ] **Timed Mode** - Add a countdown timer per guess or total game time
 - [ ] **Custom Words** - Let the host pick a secret word for friends to guess
 - [ ] **Stats Tracking** - Win streaks, guess distribution chart, games played
-- [ ] **Share Results** - Generate the classic emoji grid to copy/share
-- [ ] **Rematch Button** - Quick restart with same players after game ends
+- [x] **Share Results** - Generate the classic emoji grid to copy/share
+- [x] **Rematch Button** - Quick restart with same players after game ends
+- [ ] **Themed Word Packs** - Optional categories such as movies, animals, or custom room lists
+- [x] **Best-of Series** - Carry match wins across several words with the same room
+- [x] **One Lie Mode** - Flip one deterministic yellow/gray clue per incorrect row
+- [x] **Colorblind Palette** - Persist a blue/orange alternative across boards, keys, and result grids
+- [ ] **Absurdle Mode** - Keep changing the candidate answer family to resist the player's guesses
+- [ ] **Dordle Mode** - Apply each guess to two simultaneous boards with a shared attempt limit
+- [ ] **Relay Mode** - Let a room cooperate on one board with rotating guess ownership
+- [ ] **Memory Mode** - Hide tile feedback after a short delay and test recall
+
+### Drawing
+
+- [x] **Telephone Mode** - Alternate private prompts, drawings, and descriptions, followed by a synchronized reveal
+- [x] **Reveal Reactions** - Let players react live as Telephone entries are revealed
+- [x] **Landscape Canvas and Undo** - Wider drawing surface with synchronized Classic undo
+- [ ] **Draw & Vote** - Everyone draws the same prompt, then anonymously votes for a favorite
+- [ ] **Drawing Replay** - Animate submitted drawings stroke-by-stroke during reveals
+- [ ] **Custom Prompt Packs** - Host-created themes, room prompts, and inside-joke packs
+- [ ] **Team Drawing** - Team-based rounds with shared scoring and rotating artists
+
+### Sudoku
+
+- [ ] **Race Mode** - Give everyone the same private puzzle and rank by time and mistakes
+- [ ] **Co-op Notes** - Synchronize candidate notes and show player-colored edits
+- [ ] **Daily Puzzle** - A shared seeded puzzle with streaks and friend-room results
+- [ ] **Mistake Rules** - Configurable strict, limited-mistake, and relaxed modes
 
 ### TypeRace
 
@@ -25,15 +53,19 @@ This document tracks planned improvements and new game ideas for the TSW Games p
 - [ ] **Practice Stats** - Track personal best WPM over time
 - [ ] **Custom Text** - Let host paste custom text to race on
 
-### Both Games (General Improvements)
+### Cross-Game Improvements
 
 - [ ] **In-Game Chat** - Simple message bubbles during lobby/game
 - [ ] **Sound Effects** - Key clicks, win/lose sounds, countdown beeps
 - [ ] **Spectator Mode** - Watch ongoing games without participating
 - [ ] **Kick Player** - Let host remove disruptive players
-- [ ] **Auto-Reconnect** - Handle network drops gracefully
+- [x] **Auto-Reconnect** - Handle network drops gracefully
 - [ ] **Game History** - View past games and results
+- [ ] **Game Night Rooms** - Keep one room code while switching games and carrying a session scoreboard
+- [ ] **Match Series** - Reusable best-of-three or best-of-five scoring across supported games
 - [x] **Invite Links** - Open the correct game and room directly from a shared URL
+- [ ] **Daily Challenges** - Shared seeded challenges with local streaks and optional friend rankings
+- [ ] **Accessibility Options** - Colorblind palettes, stronger contrast, reduced motion, and optional vibration feedback
 
 ---
 
@@ -60,8 +92,8 @@ This document tracks planned improvements and new game ideas for the TSW Games p
 
 ### Social Deduction / Party Games
 
-- [ ] **Codenames** - Two teams compete to identify their agents using one-word clues. Spymaster gives clue + number, team guesses words on grid.
-- [ ] **Mafia / Werewolf** - Hidden roles, day/night cycle. Villagers try to find the werewolves, werewolves try to eliminate villagers.
+- [x] **Codenames** - Two teams compete to identify their agents using one-word clues. Spymaster gives clue + number, team guesses words on grid.
+- [x] **Mafia / Werewolf** - Hidden roles, day/night cycle. Villagers try to find the werewolves, werewolves try to eliminate villagers.
 
 ### Interaction-First Ideas
 
@@ -89,7 +121,7 @@ This document tracks planned improvements and new game ideas for the TSW Games p
 ## Technical Debt & Infrastructure
 
 - [ ] Add error boundaries and better error handling
-- [ ] Implement auto-reconnect for WebSocket drops
+- [x] Implement auto-reconnect for WebSocket drops
 - [ ] Add rate limiting for room creation
 - [ ] Room cleanup for old/empty games
 - [ ] Mobile-optimized touch controls
@@ -108,5 +140,8 @@ _Move items here when done_
 - [x] TypeRace - Multiplayer (Race & Classic modes)
 - [x] TypeRace - WPM and accuracy tracking
 - [x] Drawing Game - Multiplayer draw and guess with real-time canvas sync
+- [x] Drawing Game - Telephone mode with private chains, synchronized reveals, and reactions
+- [x] Wordle - Mobile keyboard spacing and muted used-letter states
 - [x] Word Chain - Multiplayer word chaining with casual/hardcore modes and hearts system
 - [x] Word Scramble - Single-player anagram MVP using the local Wordle answer list
+- [x] Cross-game auto-reconnect with reload recovery and preserved player state

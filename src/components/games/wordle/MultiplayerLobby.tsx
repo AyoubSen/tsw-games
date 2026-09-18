@@ -30,6 +30,7 @@ export function MultiplayerLobby({
   const players = Object.values(gameState.players)
   const playerCount = players.length
   const connectedCount = players.filter(player => player.connected).length
+  const modeLabel = gameState.mode === "one-lie" ? "One Lie" : gameState.mode === "classic" ? "Classic" : "Race"
 
   const copyInviteCode = async () => {
     try {
@@ -83,7 +84,15 @@ export function MultiplayerLobby({
                 <Users className="w-4 h-4" />
                 Players ({connectedCount} connected, {playerCount}/{gameState.maxPlayers})
               </p>
-              <Badge variant="secondary" className="text-xs">{gameState.mode}</Badge>
+              <div className="flex gap-1">
+                <Badge variant="secondary" className="text-xs">{modeLabel}</Badge>
+                {gameState.hardMode && <Badge variant="outline" className="text-xs">Hard</Badge>}
+                {gameState.seriesLength > 1 && (
+                  <Badge variant="outline" className="text-xs">
+                    Round {gameState.seriesRound}/{gameState.seriesLength}
+                  </Badge>
+                )}
+              </div>
             </div>
 
             <div className="space-y-1.5">
@@ -102,6 +111,11 @@ export function MultiplayerLobby({
                     {!player.connected && <span className="text-xs text-muted-foreground">reconnecting...</span>}
                     {player.id === playerId && (
                       <Badge variant="outline" className="text-xs">You</Badge>
+                    )}
+                    {gameState.seriesLength > 1 && (
+                      <Badge variant="secondary" className="text-xs">
+                        {gameState.seriesScores[player.id] ?? 0} wins
+                      </Badge>
                     )}
                   </div>
                   {player.id === gameState.hostId && (

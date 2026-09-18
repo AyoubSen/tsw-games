@@ -36,6 +36,23 @@ export function buildKnownPattern(guesses: Letter[][], wordLength: number): Lett
   return hasCorrectLetter ? pattern : null
 }
 
+export function buildShareText(
+  guesses: Letter[][],
+  won: boolean,
+  attempts: number,
+  label = 'Wordle',
+  colorblind = false,
+): string {
+  const symbols = colorblind
+    ? { correct: '🟦', present: '🟧', absent: '⬛' }
+    : { correct: '🟩', present: '🟨', absent: '⬛' }
+  const grid = guesses
+    .filter(guess => guess.length > 0)
+    .map(guess => guess.map(letter => symbols[letter.state as keyof typeof symbols] ?? '⬛').join(''))
+    .join('\n')
+  return `${label} ${won ? attempts : 'X'}/${MAX_GUESSES}\n${grid}`
+}
+
 function evaluateGuess(guess: string, target: string): Letter[] {
   const result: Letter[] = []
   const targetChars = target.split('')
@@ -91,6 +108,34 @@ function updateUsedLetters(
   return updated
 }
 
+function getHardModeError(word: string, guesses: Letter[][]): string | null {
+  const requiredCounts = new Map<string, number>()
+
+  for (const guess of guesses) {
+    const rowCounts = new Map<string, number>()
+    for (let index = 0; index < guess.length; index++) {
+      const letter = guess[index]
+      if (letter.state === 'correct' && word[index] !== letter.char) {
+        return `${letter.char} must stay in position ${index + 1}`
+      }
+      if (letter.state === 'present' && word[index] === letter.char) {
+        return `${letter.char} cannot be used in position ${index + 1}`
+      }
+      if (letter.state === 'correct' || letter.state === 'present') {
+        rowCounts.set(letter.char, (rowCounts.get(letter.char) ?? 0) + 1)
+      }
+    }
+    for (const [char, count] of rowCounts) {
+      requiredCounts.set(char, Math.max(requiredCounts.get(char) ?? 0, count))
+    }
+  }
+
+  for (const [char, count] of requiredCounts) {
+    if (word.split(char).length - 1 < count) return `Guess must contain ${char}`
+  }
+  return null
+}
+
 export function useWordle() {
   const [targetWord, setTargetWord] = useState('')
   const [guesses, setGuesses] = useState<Letter[][]>(() =>
@@ -107,6 +152,7 @@ export function useWordle() {
   const [validCount, setValidCount] = useState(0)
   const [revealedWord, setRevealedWord] = useState<string | null>(null)
   const [visualization, setVisualization] = useState<Letter[] | null>(null)
+  const [hardMode, setHardMode] = useState(false)
 
   // Use ref to track if we're in the middle of resetting
   const isResetting = useRef(false)
@@ -172,6 +218,11 @@ export function useWordle() {
     setVisualization((current) => current ? null : buildKnownPattern(guesses, WORD_LENGTH))
   }, [currentGuess, gameStatus, guesses])
 
+  const toggleHardMode = useCallback(() => {
+    if (gameStatus !== 'playing' || currentRow > 0 || currentGuess) return
+    setHardMode(current => !current)
+  }, [currentGuess, currentRow, gameStatus])
+
   const submitGuess = useCallback(() => {
     if (isResetting.current) return
     if (gameStatus !== 'playing') return
@@ -187,6 +238,15 @@ export function useWordle() {
       showMessage('Not in word list')
       setShake(true)
       return
+    }
+
+    if (hardMode) {
+      const hardModeError = getHardModeError(currentGuess, guesses)
+      if (hardModeError) {
+        showMessage(hardModeError)
+        setShake(true)
+        return
+      }
     }
 
     const evaluated = evaluateGuess(currentGuess, targetWord)
@@ -215,7 +275,7 @@ export function useWordle() {
 
     setCurrentGuess('')
     setCurrentRow((prev) => prev + 1)
-  }, [currentGuess, currentRow, gameStatus, targetWord, showMessage, visualization])
+  }, [currentGuess, currentRow, gameStatus, targetWord, showMessage, visualization, hardMode, guesses])
 
   const resetGame = useCallback(() => {
     if (!isWordsLoaded()) return
@@ -301,11 +361,14 @@ export function useWordle() {
     validCount,
     revealedWord,
     visualization,
+    hardMode,
+    canToggleHardMode: gameStatus === 'playing' && currentRow === 0 && currentGuess.length === 0,
     canVisualize: gameStatus === 'playing' && currentGuess.length === 0 && buildKnownPattern(guesses, WORD_LENGTH) !== null,
     addLetter,
     removeLetter,
     submitGuess,
     toggleVisualization,
+    toggleHardMode,
     resetGame,
     maxGuesses: MAX_GUESSES,
     wordLength: WORD_LENGTH,

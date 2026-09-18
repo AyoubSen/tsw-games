@@ -2,16 +2,27 @@ import { useState, useEffect } from 'react'
 import { useMultiplayerSession } from '@/lib/multiplayerSession'
 import { parseInviteSearch } from '@/lib/inviteLinks'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { ArrowLeft, RotateCcw, Loader2, Database, Eye, EyeOff } from 'lucide-react'
+import {
+  ArrowLeft,
+  RotateCcw,
+  Loader2,
+  Database,
+  Eye,
+  EyeOff,
+  Palette,
+  ShieldCheck,
+  Share2,
+  Check,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Board } from '@/components/games/wordle/Board'
 import { Keyboard } from '@/components/games/wordle/Keyboard'
-import { useWordle } from '@/components/games/wordle/useWordle'
+import { buildShareText, useWordle } from '@/components/games/wordle/useWordle'
 import { GameModeSelector } from '@/components/games/wordle/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/wordle/MultiplayerLobby'
 import { MultiplayerGame } from '@/components/games/wordle/MultiplayerGame'
 import { useMultiplayerWordle } from '@/components/games/wordle/useMultiplayerWordle'
-import type { GameMode, RevealMode } from '../../../party/wordle'
+import type { GameMode, RevealMode, SeriesLength } from '../../../party/wordle'
 
 export const Route = createFileRoute('/games/wordle')({
   validateSearch: parseInviteSearch,
@@ -23,9 +34,29 @@ type GameView = 'select' | 'single' | 'multiplayer-lobby' | 'multiplayer-game'
 function WordlePage() {
   const { room: invitedRoomCode } = Route.useSearch()
   const [view, setView] = useState<GameView>('select')
+  const [colorblind, setColorblind] = useState(() =>
+    typeof window !== 'undefined' && window.localStorage.getItem('wordle-colorblind') === 'true')
+  const [singleResultCopied, setSingleResultCopied] = useState(false)
 
   // Single player state
   const singlePlayer = useWordle()
+
+  useEffect(() => {
+    window.localStorage.setItem('wordle-colorblind', String(colorblind))
+  }, [colorblind])
+
+  const shareSingleResult = async () => {
+    const text = buildShareText(
+      singlePlayer.guesses,
+      singlePlayer.gameStatus === 'won',
+      singlePlayer.currentRow,
+      singlePlayer.hardMode ? 'Wordle Hard' : 'Wordle',
+      colorblind,
+    )
+    await navigator.clipboard.writeText(text)
+    setSingleResultCopied(true)
+    setTimeout(() => setSingleResultCopied(false), 2000)
+  }
 
   // Multiplayer state
   const multiplayer = useMultiplayerWordle()
@@ -47,8 +78,14 @@ function WordlePage() {
   }
 
   // Handle multiplayer game creation
-  const handleCreateMultiplayer = (mode: GameMode, revealMode: RevealMode, playerName: string) => {
-    const createdRoom = multiplayer.createGame(mode, revealMode, playerName)
+  const handleCreateMultiplayer = (
+    mode: GameMode,
+    revealMode: RevealMode,
+    hardMode: boolean,
+    seriesLength: SeriesLength,
+    playerName: string,
+  ) => {
+    const createdRoom = multiplayer.createGame(mode, revealMode, hardMode, seriesLength, playerName)
     session.remember(createdRoom, playerName)
   }
 
@@ -148,6 +185,9 @@ function WordlePage() {
       visualization,
       canVisualize,
       toggleVisualization,
+      hardMode,
+      canToggleHardMode,
+      toggleHardMode,
     } = singlePlayer
 
     const isLoading = gameStatus === 'loading'
@@ -182,7 +222,7 @@ function WordlePage() {
             <p className="text-sm text-muted-foreground">Loading dictionary...</p>
           </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center gap-6 px-2 py-4 sm:px-4">
+          <div className="flex-1 flex flex-col items-center justify-start gap-6 px-2 py-4 sm:px-4">
             {message && (
               <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-foreground text-background px-4 py-2 rounded-lg font-semibold z-50 animate-fade-in">
                 {message}
@@ -196,14 +236,20 @@ function WordlePage() {
                   <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
                     {gameStatus === 'won' ? 'Correct word' : 'The word was'}
                   </p>
-                  <p className="mt-1 text-3xl font-bold uppercase tracking-[0.25em] text-green-500">
+                  <p className={`mt-1 text-3xl font-bold uppercase tracking-[0.25em] ${colorblind ? 'text-blue-500' : 'text-green-500'}`}>
                     {resultWord}
                   </p>
                 </div>
-                <Button onClick={resetGame} size="sm" className="justify-self-center sm:justify-self-end">
-                  <RotateCcw className="w-4 h-4 mr-2" />
-                  Play Again
-                </Button>
+                <div className="flex flex-wrap justify-center gap-2 sm:justify-self-end">
+                  <Button variant="outline" onClick={shareSingleResult} size="sm">
+                    {singleResultCopied ? <Check className="w-4 h-4 mr-2" /> : <Share2 className="w-4 h-4 mr-2" />}
+                    {singleResultCopied ? 'Copied' : 'Share'}
+                  </Button>
+                  <Button onClick={resetGame} size="sm">
+                    <RotateCcw className="w-4 h-4 mr-2" />
+                    Play Again
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -216,10 +262,24 @@ function WordlePage() {
               maxGuesses={maxGuesses}
               wordLength={wordLength}
               visualization={visualization}
+              colorblind={colorblind}
             />
 
             <div className="w-full max-w-lg space-y-3">
-              <div className="flex justify-center">
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button
+                  variant={hardMode ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={toggleHardMode}
+                  disabled={!canToggleHardMode}
+                >
+                  <ShieldCheck className="w-4 h-4 mr-2" />
+                  Hard {hardMode ? 'On' : 'Off'}
+                </Button>
+                <Button variant={colorblind ? 'default' : 'outline'} size="sm" onClick={() => setColorblind(value => !value)}>
+                  <Palette className="w-4 h-4 mr-2" />
+                  Colorblind
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
@@ -235,6 +295,7 @@ function WordlePage() {
                 onKey={addLetter}
                 onEnter={submitGuess}
                 onBackspace={removeLetter}
+                colorblind={colorblind}
               />
             </div>
           </div>
@@ -286,6 +347,8 @@ function WordlePage() {
         isWaitingForOthers={multiplayer.isWaitingForOthers}
         roundReveal={multiplayer.roundReveal}
         onDismissReveal={multiplayer.dismissReveal}
+        colorblind={colorblind}
+        onToggleColorblind={() => setColorblind(value => !value)}
       />
     )
   }

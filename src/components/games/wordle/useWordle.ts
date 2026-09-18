@@ -16,6 +16,7 @@ export interface Letter {
 }
 
 export type GameStatus = 'loading' | 'playing' | 'won' | 'lost'
+export type SinglePlayerMode = 'classic' | 'hard' | 'one-lie'
 
 const MAX_GUESSES = 6
 const WORD_LENGTH = 5
@@ -88,6 +89,22 @@ function evaluateGuess(guess: string, target: string): Letter[] {
   return result
 }
 
+function applyOneLie(result: Letter[], seed: string): Letter[] {
+  const candidates = result
+    .map((letter, index) => letter.state === 'correct' ? -1 : index)
+    .filter(index => index >= 0)
+  if (candidates.length === 0) return result
+
+  let hash = 0
+  for (const char of seed) hash = Math.imul(31, hash) + char.charCodeAt(0) | 0
+  const lieIndex = candidates[Math.abs(hash) % candidates.length]
+  return result.map((letter, index) => {
+    if (index !== lieIndex) return letter
+    const state: LetterState = letter.state === 'present' ? 'absent' : 'present'
+    return { ...letter, state }
+  })
+}
+
 function updateUsedLetters(
   current: Record<string, LetterState>,
   guess: Letter[]
@@ -153,6 +170,7 @@ export function useWordle() {
   const [revealedWord, setRevealedWord] = useState<string | null>(null)
   const [visualization, setVisualization] = useState<Letter[] | null>(null)
   const [hardMode, setHardMode] = useState(false)
+  const [oneLieMode, setOneLieMode] = useState(false)
 
   // Use ref to track if we're in the middle of resetting
   const isResetting = useRef(false)
@@ -219,9 +237,9 @@ export function useWordle() {
   }, [currentGuess, gameStatus, guesses])
 
   const toggleHardMode = useCallback(() => {
-    if (gameStatus !== 'playing' || currentRow > 0 || currentGuess) return
+    if (oneLieMode || gameStatus !== 'playing' || currentRow > 0 || currentGuess) return
     setHardMode(current => !current)
-  }, [currentGuess, currentRow, gameStatus])
+  }, [currentGuess, currentRow, gameStatus, oneLieMode])
 
   const submitGuess = useCallback(() => {
     if (isResetting.current) return
@@ -249,18 +267,21 @@ export function useWordle() {
       }
     }
 
+    const won = currentGuess === targetWord
     const evaluated = evaluateGuess(currentGuess, targetWord)
+    const displayedResult = oneLieMode && !won
+      ? applyOneLie(evaluated, `${targetWord}:${currentGuess}:${currentRow}`)
+      : evaluated
 
     setGuesses((prev) => {
       const newGuesses = [...prev]
-      newGuesses[currentRow] = evaluated
+      newGuesses[currentRow] = displayedResult
       return newGuesses
     })
 
-    setUsedLetters((prev) => updateUsedLetters(prev, evaluated))
+    setUsedLetters((prev) => updateUsedLetters(prev, displayedResult))
     setRevealRow(currentRow)
 
-    const won = currentGuess === targetWord
     const lost = !won && currentRow === MAX_GUESSES - 1
 
     if (won) {
@@ -275,7 +296,7 @@ export function useWordle() {
 
     setCurrentGuess('')
     setCurrentRow((prev) => prev + 1)
-  }, [currentGuess, currentRow, gameStatus, targetWord, showMessage, visualization, hardMode, guesses])
+  }, [currentGuess, currentRow, gameStatus, targetWord, showMessage, visualization, hardMode, guesses, oneLieMode])
 
   const resetGame = useCallback(() => {
     if (!isWordsLoaded()) return
@@ -301,6 +322,12 @@ export function useWordle() {
       isResetting.current = false
     }, 100)
   }, [])
+
+  const startGame = useCallback((mode: SinglePlayerMode) => {
+    setHardMode(mode === 'hard')
+    setOneLieMode(mode === 'one-lie')
+    resetGame()
+  }, [resetGame])
 
   // Clear shake after animation
   useEffect(() => {
@@ -362,13 +389,15 @@ export function useWordle() {
     revealedWord,
     visualization,
     hardMode,
-    canToggleHardMode: gameStatus === 'playing' && currentRow === 0 && currentGuess.length === 0,
+    oneLieMode,
+    canToggleHardMode: !oneLieMode && gameStatus === 'playing' && currentRow === 0 && currentGuess.length === 0,
     canVisualize: gameStatus === 'playing' && currentGuess.length === 0 && buildKnownPattern(guesses, WORD_LENGTH) !== null,
     addLetter,
     removeLetter,
     submitGuess,
     toggleVisualization,
     toggleHardMode,
+    startGame,
     resetGame,
     maxGuesses: MAX_GUESSES,
     wordLength: WORD_LENGTH,

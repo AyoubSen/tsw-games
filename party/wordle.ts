@@ -275,9 +275,11 @@ function applyOneLie(result: EvaluatedLetter[], seed: string): EvaluatedLetter[]
   let hash = 0
   for (const char of seed) hash = Math.imul(31, hash) + char.charCodeAt(0) | 0
   const lieIndex = candidates[Math.abs(hash) % candidates.length]
-  return result.map((tile, index) => index === lieIndex
-    ? { ...tile, state: tile.state === "present" ? "absent" : "present" }
-    : tile)
+  return result.map((tile, index) => {
+    if (index !== lieIndex) return tile
+    const state: TileState = tile.state === "present" ? "absent" : "present"
+    return { ...tile, state }
+  })
 }
 
 function getHardModeError(word: string, guesses: EvaluatedLetter[][]): string | null {

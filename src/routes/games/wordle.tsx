@@ -13,11 +13,12 @@ import {
   ShieldCheck,
   Share2,
   Check,
+  BadgeQuestionMark,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Board } from '@/components/games/wordle/Board'
 import { Keyboard } from '@/components/games/wordle/Keyboard'
-import { buildShareText, useWordle } from '@/components/games/wordle/useWordle'
+import { buildShareText, useWordle, type SinglePlayerMode } from '@/components/games/wordle/useWordle'
 import { GameModeSelector } from '@/components/games/wordle/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/wordle/MultiplayerLobby'
 import { MultiplayerGame } from '@/components/games/wordle/MultiplayerGame'
@@ -50,7 +51,7 @@ function WordlePage() {
       singlePlayer.guesses,
       singlePlayer.gameStatus === 'won',
       singlePlayer.currentRow,
-      singlePlayer.hardMode ? 'Wordle Hard' : 'Wordle',
+      singlePlayer.oneLieMode ? 'Wordle One Lie' : singlePlayer.hardMode ? 'Wordle Hard' : 'Wordle',
       colorblind,
     )
     await navigator.clipboard.writeText(text)
@@ -73,7 +74,8 @@ function WordlePage() {
   });
 
   // Handle single player selection
-  const handleSinglePlayer = () => {
+  const handleSinglePlayer = (mode: SinglePlayerMode) => {
+    singlePlayer.startGame(mode)
     setView('single')
   }
 
@@ -188,6 +190,7 @@ function WordlePage() {
       hardMode,
       canToggleHardMode,
       toggleHardMode,
+      oneLieMode,
     } = singlePlayer
 
     const isLoading = gameStatus === 'loading'
@@ -229,6 +232,12 @@ function WordlePage() {
               </div>
             )}
 
+            {oneLieMode && !isFinished && (
+              <p className="text-sm text-muted-foreground">
+                One yellow or gray tile in every incorrect row is lying.
+              </p>
+            )}
+
             {isFinished && (
               <div className="grid w-full max-w-2xl items-center gap-3 sm:grid-cols-[1fr_auto_1fr]">
                 <div className="hidden sm:block" />
@@ -267,15 +276,22 @@ function WordlePage() {
 
             <div className="w-full max-w-lg space-y-3">
               <div className="flex flex-wrap justify-center gap-2">
-                <Button
-                  variant={hardMode ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={toggleHardMode}
-                  disabled={!canToggleHardMode}
-                >
-                  <ShieldCheck className="w-4 h-4 mr-2" />
-                  Hard {hardMode ? 'On' : 'Off'}
-                </Button>
+                {oneLieMode ? (
+                  <Button variant="default" size="sm" disabled>
+                    <BadgeQuestionMark className="w-4 h-4 mr-2" />
+                    One Lie
+                  </Button>
+                ) : (
+                  <Button
+                    variant={hardMode ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={toggleHardMode}
+                    disabled={!canToggleHardMode}
+                  >
+                    <ShieldCheck className="w-4 h-4 mr-2" />
+                    Hard {hardMode ? 'On' : 'Off'}
+                  </Button>
+                )}
                 <Button variant={colorblind ? 'default' : 'outline'} size="sm" onClick={() => setColorblind(value => !value)}>
                   <Palette className="w-4 h-4 mr-2" />
                   Colorblind

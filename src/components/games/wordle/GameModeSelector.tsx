@@ -5,9 +5,10 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import type { GameMode, RevealMode, SeriesLength } from "../../../../party/wordle"
+import type { SinglePlayerMode } from "./useWordle"
 
 interface GameModeSelectorProps {
-  onSinglePlayer: () => void
+  onSinglePlayer: (mode: SinglePlayerMode) => void
   onCreateMultiplayer: (
     mode: GameMode,
     revealMode: RevealMode,
@@ -21,7 +22,28 @@ interface GameModeSelectorProps {
   initialRoomCode?: string
 }
 
-type Step = "mode" | "multiplayer-type" | "multiplayer-mode" | "join"
+type Step = "mode" | "single-mode" | "multiplayer-type" | "multiplayer-mode" | "join"
+
+const SINGLE_PLAYER_MODES: { mode: SinglePlayerMode; label: string; description: string; icon: React.ReactNode }[] = [
+  {
+    mode: "classic",
+    label: "Classic",
+    description: "Standard Wordle with six guesses.",
+    icon: <User className="w-5 h-5" />,
+  },
+  {
+    mode: "hard",
+    label: "Hard Mode",
+    description: "Every revealed hint must be reused in later guesses.",
+    icon: <ShieldCheck className="w-5 h-5" />,
+  },
+  {
+    mode: "one-lie",
+    label: "One Lie",
+    description: "One yellow or gray clue lies in every incorrect row.",
+    icon: <BadgeQuestionMark className="w-5 h-5" />,
+  },
+]
 
 const MULTIPLAYER_MODES: { mode: GameMode; label: string; description: string; icon: React.ReactNode }[] = [
   {
@@ -74,7 +96,7 @@ export function GameModeSelector({
   const [seriesLength, setSeriesLength] = useState<SeriesLength>(1)
 
   const handleBack = () => {
-    if (step === "multiplayer-type") setStep("mode")
+    if (step === "single-mode" || step === "multiplayer-type") setStep("mode")
     else if (step === "multiplayer-mode") setStep("multiplayer-type")
     else if (step === "join") setStep("multiplayer-type")
   }
@@ -101,7 +123,7 @@ export function GameModeSelector({
         <div className="grid gap-3 w-full">
           <Card
             className="cursor-pointer hover:border-primary transition-colors"
-            onClick={onSinglePlayer}
+            onClick={() => setStep("single-mode")}
           >
             <CardHeader className="flex flex-row items-center gap-3 p-4">
               <div className="p-2.5 rounded-lg bg-primary/10">
@@ -109,7 +131,7 @@ export function GameModeSelector({
               </div>
               <div className="space-y-0.5">
                 <CardTitle className="text-base">Single Player</CardTitle>
-                <CardDescription className="text-sm">Classic Wordle - guess the word in 6 tries</CardDescription>
+                <CardDescription className="text-sm">Classic, Hard, and twisted solo modes</CardDescription>
               </div>
             </CardHeader>
           </Card>
@@ -128,6 +150,42 @@ export function GameModeSelector({
               </div>
             </CardHeader>
           </Card>
+        </div>
+      </div>
+    )
+  }
+
+  if (step === "single-mode") {
+    return (
+      <div className="flex flex-col gap-4 p-4 max-w-md mx-auto">
+        <Button variant="ghost" size="sm" className="self-start -ml-2" onClick={handleBack}>
+          <ArrowLeft className="w-4 h-4 mr-1" />
+          Back
+        </Button>
+
+        <div className="text-center space-y-1">
+          <h1 className="text-xl font-bold">Single Player</h1>
+          <p className="text-sm text-muted-foreground">Choose how the clues should behave</p>
+        </div>
+
+        <div className="grid gap-3 w-full">
+          {SINGLE_PLAYER_MODES.map(modeOption => (
+            <Card
+              key={modeOption.mode}
+              className="cursor-pointer hover:border-primary transition-colors"
+              onClick={() => onSinglePlayer(modeOption.mode)}
+            >
+              <CardHeader className="flex flex-row items-center gap-3 p-4">
+                <div className="p-2.5 rounded-lg bg-primary/10 text-primary">
+                  {modeOption.icon}
+                </div>
+                <div className="space-y-0.5">
+                  <CardTitle className="text-base">{modeOption.label}</CardTitle>
+                  <CardDescription className="text-sm">{modeOption.description}</CardDescription>
+                </div>
+              </CardHeader>
+            </Card>
+          ))}
         </div>
       </div>
     )

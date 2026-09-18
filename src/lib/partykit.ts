@@ -14,6 +14,36 @@ const getPartyKitHost = () => {
 
 export const PARTYKIT_HOST = getPartyKitHost()
 
+/** Deliver an explicit leave after a transient outage, then stop reconnecting. */
+export function leavePartySocket(socket: PartySocket, message: object): void {
+  const sendAndClose = () => {
+    try {
+      socket.send(JSON.stringify(message))
+    } finally {
+      socket.close()
+    }
+  }
+
+  if (socket.readyState === WebSocket.OPEN) {
+    sendAndClose()
+    return
+  }
+
+  let finished = false
+  const timeout = setTimeout(() => {
+    if (finished) return
+    finished = true
+    socket.close()
+  }, 15_000)
+
+  socket.addEventListener("open", () => {
+    if (finished) return
+    finished = true
+    clearTimeout(timeout)
+    sendAndClose()
+  })
+}
+
 export function createPartySocket(roomId: string, isHost: boolean, mode: string) {
   return new PartySocket({
     host: PARTYKIT_HOST,

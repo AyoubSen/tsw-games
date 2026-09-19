@@ -18,6 +18,7 @@ import { Route as GamesSyncUpRouteImport } from './routes/games/sync-up'
 import { Route as GamesSudokuRouteImport } from './routes/games/sudoku'
 import { Route as GamesPressureButtonRouteImport } from './routes/games/pressure-button'
 import { Route as GamesPokerRouteImport } from './routes/games/poker'
+import { Route as GamesMemoryMatchRouteImport } from './routes/games/memory-match'
 import { Route as GamesMafiaRouteImport } from './routes/games/mafia'
 import { Route as GamesHotTakeArenaRouteImport } from './routes/games/hot-take-arena'
 import { Route as GamesGuessTheCountryRouteImport } from './routes/games/guess-the-country'
@@ -70,6 +71,11 @@ const GamesPokerRoute = GamesPokerRouteImport.update({
   path: '/games/poker',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GamesMemoryMatchRoute = GamesMemoryMatchRouteImport.update({
+  id: '/games/memory-match',
+  path: '/games/memory-match',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GamesMafiaRoute = GamesMafiaRouteImport.update({
   id: '/games/mafia',
   path: '/games/mafia',
@@ -109,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/games/guess-the-country': typeof GamesGuessTheCountryRoute
   '/games/hot-take-arena': typeof GamesHotTakeArenaRoute
   '/games/mafia': typeof GamesMafiaRoute
+  '/games/memory-match': typeof GamesMemoryMatchRoute
   '/games/poker': typeof GamesPokerRoute
   '/games/pressure-button': typeof GamesPressureButtonRoute
   '/games/sudoku': typeof GamesSudokuRoute
@@ -126,6 +133,7 @@ export interface FileRoutesByTo {
   '/games/guess-the-country': typeof GamesGuessTheCountryRoute
   '/games/hot-take-arena': typeof GamesHotTakeArenaRoute
   '/games/mafia': typeof GamesMafiaRoute
+  '/games/memory-match': typeof GamesMemoryMatchRoute
   '/games/poker': typeof GamesPokerRoute
   '/games/pressure-button': typeof GamesPressureButtonRoute
   '/games/sudoku': typeof GamesSudokuRoute
@@ -144,6 +152,7 @@ export interface FileRoutesById {
   '/games/guess-the-country': typeof GamesGuessTheCountryRoute
   '/games/hot-take-arena': typeof GamesHotTakeArenaRoute
   '/games/mafia': typeof GamesMafiaRoute
+  '/games/memory-match': typeof GamesMemoryMatchRoute
   '/games/poker': typeof GamesPokerRoute
   '/games/pressure-button': typeof GamesPressureButtonRoute
   '/games/sudoku': typeof GamesSudokuRoute
@@ -163,6 +172,7 @@ export interface FileRouteTypes {
     | '/games/guess-the-country'
     | '/games/hot-take-arena'
     | '/games/mafia'
+    | '/games/memory-match'
     | '/games/poker'
     | '/games/pressure-button'
     | '/games/sudoku'
@@ -180,6 +190,7 @@ export interface FileRouteTypes {
     | '/games/guess-the-country'
     | '/games/hot-take-arena'
     | '/games/mafia'
+    | '/games/memory-match'
     | '/games/poker'
     | '/games/pressure-button'
     | '/games/sudoku'
@@ -197,6 +208,7 @@ export interface FileRouteTypes {
     | '/games/guess-the-country'
     | '/games/hot-take-arena'
     | '/games/mafia'
+    | '/games/memory-match'
     | '/games/poker'
     | '/games/pressure-button'
     | '/games/sudoku'
@@ -215,6 +227,7 @@ export interface RootRouteChildren {
   GamesGuessTheCountryRoute: typeof GamesGuessTheCountryRoute
   GamesHotTakeArenaRoute: typeof GamesHotTakeArenaRoute
   GamesMafiaRoute: typeof GamesMafiaRoute
+  GamesMemoryMatchRoute: typeof GamesMemoryMatchRoute
   GamesPokerRoute: typeof GamesPokerRoute
   GamesPressureButtonRoute: typeof GamesPressureButtonRoute
   GamesSudokuRoute: typeof GamesSudokuRoute
@@ -290,6 +303,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GamesPokerRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/games/memory-match': {
+      id: '/games/memory-match'
+      path: '/games/memory-match'
+      fullPath: '/games/memory-match'
+      preLoaderRoute: typeof GamesMemoryMatchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/games/mafia': {
       id: '/games/mafia'
       path: '/games/mafia'
@@ -343,6 +363,7 @@ const rootRouteChildren: RootRouteChildren = {
   GamesGuessTheCountryRoute: GamesGuessTheCountryRoute,
   GamesHotTakeArenaRoute: GamesHotTakeArenaRoute,
   GamesMafiaRoute: GamesMafiaRoute,
+  GamesMemoryMatchRoute: GamesMemoryMatchRoute,
   GamesPokerRoute: GamesPokerRoute,
   GamesPressureButtonRoute: GamesPressureButtonRoute,
   GamesSudokuRoute: GamesSudokuRoute,

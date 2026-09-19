@@ -15,7 +15,8 @@
     "poker": "party/poker.ts",
     "mafia": "party/mafia.ts",
     "guessthecountry": "party/guess-the-country.ts",
-    "codebreaker": "party/code-breaker.ts"
+    "codebreaker": "party/code-breaker.ts",
+    "memorymatch": "party/memory-match.ts"
   },
   "compatibilityDate": "2024-01-01"
 }

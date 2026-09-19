@@ -66,6 +66,22 @@ export type GameCatalogEntry = LiveGameCatalogEntry | PlannedGameCatalogEntry;
 
 export const liveGames: LiveGameCatalogEntry[] = [
 	{
+		id: "memory-match",
+		title: "Memory Match",
+		description:
+			"Find eight hidden pairs solo or race friends on private copies of the same board.",
+		icon: <Grid2X2 className="w-10 h-10" />,
+		path: "/games/memory-match",
+		players: "1-8 players",
+		minPlayers: 1,
+		maxPlayers: 8,
+		tags: ["solo", "multiplayer", "casual", "brainy", "competitive"],
+		color: "from-cyan-500 to-violet-600",
+		status: "live",
+		category: "strategy",
+		isNew: true,
+	},
+	{
 		id: "code-breaker",
 		title: "Code Breaker",
 		description:

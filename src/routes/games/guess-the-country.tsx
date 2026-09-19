@@ -101,23 +101,46 @@ function flagUrl(code: string) {
   return `https://flagcdn.com/w640/${code}.png`
 }
 
+function flagEmoji(code: string) {
+  return code
+    .toUpperCase()
+    .replace(/[A-Z]/g, (letter) =>
+      String.fromCodePoint(127397 + letter.charCodeAt(0)),
+    )
+}
+
 function formatTime(seconds: number) {
   const minutes = Math.floor(seconds / 60)
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`
 }
 
 function FlagCard({ code, round }: { code: string; round: number }) {
+  const [loadedCode, setLoadedCode] = useState<string | null>(null)
+  const imageLoaded = loadedCode === code
+
   return (
     <div className="relative overflow-hidden rounded-[2rem] border bg-gradient-to-br from-sky-100 via-background to-amber-100 p-5 shadow-xl dark:from-sky-950/40 dark:to-amber-950/30 sm:p-8">
       <div className="absolute left-5 top-4 text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">
         Flag {round}
       </div>
-      <div className="flex min-h-56 items-center justify-center pt-5 sm:min-h-72">
+      <div className="relative flex min-h-56 items-center justify-center pt-5 sm:min-h-72">
+        <span
+          aria-hidden="true"
+          className={`absolute text-8xl transition-opacity sm:text-9xl ${
+            imageLoaded ? "opacity-0" : "opacity-100"
+          }`}
+        >
+          {flagEmoji(code)}
+        </span>
         <img
           key={code}
           src={flagUrl(code)}
           alt="Country flag to identify"
-          className="max-h-60 w-auto max-w-full rounded-md border border-black/10 object-contain shadow-lg sm:max-h-72"
+          onLoad={() => setLoadedCode(code)}
+          onError={() => setLoadedCode(null)}
+          className={`relative max-h-60 w-auto max-w-full rounded-md border border-black/10 object-contain shadow-lg transition-opacity sm:max-h-72 ${
+            imageLoaded ? "opacity-100" : "opacity-0"
+          }`}
         />
       </div>
     </div>
@@ -286,6 +309,16 @@ function GuessTheCountryPage() {
       }),
     [multiplayer.gameState],
   )
+  const connectedPlayers = useMemo(
+    () => sortedPlayers.filter((player) => player.connected !== false),
+    [sortedPlayers],
+  )
+  const connectedSubmittedCount = useMemo(() => {
+    const connectedIds = new Set(connectedPlayers.map((player) => player.id))
+    return (multiplayer.gameState?.submittedPlayerIds ?? []).filter((id) =>
+      connectedIds.has(id),
+    ).length
+  }, [connectedPlayers, multiplayer.gameState?.submittedPlayerIds])
 
   const winnerNames = useMemo(
     () =>
@@ -849,7 +882,7 @@ function GuessTheCountryPage() {
         onCopyRoomCode={handleCopyRoomCode}
         onStart={multiplayer.startGame}
         onLeave={leaveMultiplayer}
-        canStart={sortedPlayers.filter((player) => player.connected !== false).length >= 2}
+        canStart={connectedPlayers.length >= 2}
         isHost={multiplayer.isHost}
         message={multiplayerMessage}
       />
@@ -900,7 +933,11 @@ function GuessTheCountryPage() {
                 <CardHeader>
                   <Trophy className="mx-auto h-14 w-14 text-amber-500" />
                   <CardTitle className="text-3xl">
-                    {winnerNames.length === 1 ? `${winnerNames[0]} wins!` : "It's a tie!"}
+                    {winnerNames.length === 1
+                      ? `${winnerNames[0]} wins!`
+                      : winnerNames.length > 1
+                        ? "It's a tie!"
+                        : "Match complete"}
                   </CardTitle>
                   <CardDescription>
                     {winnerNames.length > 1 && winnerNames.join(" and ")}
@@ -986,7 +1023,7 @@ function GuessTheCountryPage() {
                             : "Choose one answer before time runs out."}
                       </p>
                       <span className="shrink-0">
-                        {game.submittedPlayerIds.length}/{sortedPlayers.length}{" "}
+                        {connectedSubmittedCount}/{connectedPlayers.length}{" "}
                         answered
                       </span>
                     </div>
@@ -1048,9 +1085,11 @@ function GuessTheCountryPage() {
                           >
                             {isChoiceReveal
                               ? roundAnswer ?? "No answer"
-                              : answered
-                                ? "Answered"
-                                : "Choosing..."}
+                              : player.connected === false
+                                ? "Disconnected"
+                                : answered
+                                  ? "Answered"
+                                  : "Choosing..."}
                           </p>
                         )}
                       </div>

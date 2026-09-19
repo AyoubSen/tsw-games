@@ -7,6 +7,7 @@ import {
 } from "../src/lib/guessTheCountry"
 import {
   canControlGame,
+  isPresent,
   markConnected,
   markDisconnected,
   nextHost,
@@ -339,7 +340,7 @@ export default class GuessTheCountryParty implements Party.Server {
 
   allPlayersSubmitted() {
     if (!this.state) return false
-    const players = Object.values(this.state.players)
+    const players = Object.values(this.state.players).filter(isPresent)
     return (
       players.length > 0 &&
       players.every((player) =>
@@ -419,7 +420,10 @@ export default class GuessTheCountryParty implements Party.Server {
             markConnected(this.state.players, sender.id)
             returning.name = data.name.trim().slice(0, 20) || returning.name
             returning.disconnectedAt = null
-            if (!this.state.hostId || !this.state.players[this.state.hostId]) {
+            if (
+              !this.state.hostId ||
+              !isPresent(this.state.players[this.state.hostId])
+            ) {
               this.state.hostId = sender.id
             }
             await this.saveState()
@@ -454,7 +458,10 @@ export default class GuessTheCountryParty implements Party.Server {
             disconnectedAt: null,
           }
           this.state.playerTokens[sender.id] = playerToken
-          if (!this.state.hostId || !this.state.players[this.state.hostId]) {
+          if (
+            !this.state.hostId ||
+            !isPresent(this.state.players[this.state.hostId])
+          ) {
             this.state.hostId = sender.id
           }
           await this.saveState()
@@ -655,6 +662,9 @@ export default class GuessTheCountryParty implements Party.Server {
             const replacement = nextHost(this.state.players, sender.id)
             this.state.hostId = replacement ?? ""
           }
+          if (this.state.status === "finished") {
+            this.state.winnerIds = winnerIds(this.state.players)
+          }
           if (
             this.state.settings.mode === "multiple-choice" &&
             this.state.choicePhase === "guessing" &&
@@ -716,6 +726,17 @@ export default class GuessTheCountryParty implements Party.Server {
 
     markDisconnected(this.state.players, connection.id)
     this.state.players[connection.id].disconnectedAt = Date.now()
+    if (connection.id === this.state.hostId) {
+      const replacement = nextHost(this.state.players, connection.id)
+      if (replacement) this.state.hostId = replacement
+    }
+    if (
+      this.state.settings.mode === "multiple-choice" &&
+      this.state.choicePhase === "guessing" &&
+      this.allPlayersSubmitted()
+    ) {
+      await this.revealChoiceRound()
+    }
     await this.saveState()
     this.broadcastState()
   }

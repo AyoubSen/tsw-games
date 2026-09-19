@@ -62,11 +62,15 @@ function WordChainPage() {
 	const session = useMultiplayerSession({
 		game: "wordchain",
 		joinGame: multiplayer.joinGame,
-		hasGameState: !!multiplayer.gameState,
+		hasGameState: Boolean(
+			multiplayer.gameState &&
+				multiplayer.playerId &&
+				multiplayer.gameState.players[multiplayer.playerId],
+		),
 		error: multiplayer.error,
 		connectionStatus: multiplayer.connectionStatus,
 		inviteRoomCode: invitedRoomCode,
-		onAbandon: multiplayer.disconnect,
+		onAbandon: multiplayer.abandonReconnect,
 	});
 	const multiplayerGameState = multiplayer.gameState;
 
@@ -135,10 +139,8 @@ function WordChainPage() {
 	};
 
 	const handleBackToSelect = () => {
-		if (multiplayer.connectionStatus !== "disconnected") {
-			session.forget();
-			multiplayer.disconnect();
-		}
+		session.forget();
+		multiplayer.disconnect();
 		setView("select");
 		setMessage(null);
 	};
@@ -362,7 +364,7 @@ function WordChainPage() {
 				onCopyRoomCode={handleCopyRoomCode}
 				onStart={multiplayer.startGame}
 				onLeave={handleLeaveMultiplayer}
-				canStart={playerList.length >= 2}
+				canStart={playerList.filter((player) => player.connected !== false).length >= 2}
 				isHost={multiplayer.isHost}
 				message={message}
 			/>

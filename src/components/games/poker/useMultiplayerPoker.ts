@@ -1,6 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import PartySocket from "partysocket"
-import { PARTYKIT_HOST, generateRoomCode, getPersistentPlayerId } from "@/lib/partykit"
+import {
+  PARTYKIT_HOST,
+  clearPersistentPlayerId,
+  clearPersistentPlayerToken,
+  generateRoomCode,
+  getPersistentPlayerId,
+  getPersistentPlayerToken,
+  leavePartySocket,
+} from "@/lib/partykit"
 import type {
   ServerMessage,
   PublicGameState,
@@ -29,30 +37,36 @@ export function useMultiplayerPoker() {
   })
 
   const socketRef = useRef<PartySocket | null>(null)
+  const roomCodeRef = useRef("")
   const playerNameRef = useRef<string>("")
 
   const connect = useCallback(
     (roomCode: string, isHost: boolean, playerName: string, settings?: PokerSettings) => {
-      if (socketRef.current) {
-        socketRef.current.close()
-      }
+      const normalizedRoomCode = roomCode.toUpperCase()
+      const previousSocket = socketRef.current
+      socketRef.current = null
+      previousSocket?.close()
 
       playerNameRef.current = playerName
+      roomCodeRef.current = normalizedRoomCode
+      const playerId = getPersistentPlayerId("poker", normalizedRoomCode)
 
       setState((prev) => ({
         ...prev,
         connectionStatus: "connecting",
         error: null,
-        isHost,
+        playerId,
       }))
 
       const socket = new PartySocket({
         host: PARTYKIT_HOST,
-        room: roomCode,
-        id: getPersistentPlayerId("poker", roomCode),
+        room: normalizedRoomCode,
+        id: playerId,
         party: "poker",
+        maxEnqueuedMessages: 0,
         query: {
           host: isHost.toString(),
+          playerToken: getPersistentPlayerToken("poker", normalizedRoomCode),
           ...(settings && {
             startingChips: settings.startingChips.toString(),
             smallBlind: settings.smallBlind.toString(),
@@ -61,17 +75,21 @@ export function useMultiplayerPoker() {
           }),
         },
       })
+      socketRef.current = socket
 
       socket.addEventListener("open", () => {
+        if (socketRef.current !== socket) return
         setState((prev) => ({
           ...prev,
           connectionStatus: "connected",
           playerId: socket.id,
+          error: null,
         }))
         socket.send(JSON.stringify({ type: "join", name: playerName }))
       })
 
       socket.addEventListener("message", (event) => {
+        if (socketRef.current !== socket) return
         try {
           const message: ServerMessage = JSON.parse(event.data)
           handleMessage(message)
@@ -81,21 +99,22 @@ export function useMultiplayerPoker() {
       })
 
       socket.addEventListener("close", () => {
+        if (socketRef.current !== socket) return
         setState((prev) => ({
           ...prev,
-          connectionStatus: "disconnected",
+          connectionStatus: "connecting",
+          error: "Connection lost. Reconnecting...",
         }))
       })
 
       socket.addEventListener("error", () => {
+        if (socketRef.current !== socket) return
         setState((prev) => ({
           ...prev,
-          connectionStatus: "error",
-          error: "Connection failed",
+          connectionStatus: "connecting",
+          error: "Connection lost. Reconnecting...",
         }))
       })
-
-      socketRef.current = socket
     },
     []
   )
@@ -105,7 +124,10 @@ export function useMultiplayerPoker() {
       case "state":
         setState((prev) => ({
           ...prev,
+          connectionStatus: "connected",
           gameState: message.state,
+          isHost: Boolean(prev.playerId && message.state.hostId === prev.playerId),
+          error: null,
         }))
         break
 
@@ -145,6 +167,11 @@ export function useMultiplayerPoker() {
         break
 
       case "error":
+		if (message.message === "Invalid player session" && roomCodeRef.current) {
+		  clearPersistentPlayerId("poker", roomCodeRef.current)
+		  clearPersistentPlayerToken("poker", roomCodeRef.current)
+		  roomCodeRef.current = ""
+		}
         setState((prev) => ({
           ...prev,
           error: message.message,
@@ -157,10 +184,13 @@ export function useMultiplayerPoker() {
   }, [])
 
   const disconnect = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "leave" }))
-      socketRef.current.close()
-      socketRef.current = null
+    const socket = socketRef.current
+    socketRef.current = null
+    if (socket) leavePartySocket(socket, { type: "leave" })
+    if (roomCodeRef.current) {
+      clearPersistentPlayerId("poker", roomCodeRef.current)
+      clearPersistentPlayerToken("poker", roomCodeRef.current)
+      roomCodeRef.current = ""
     }
     setState({
       connectionStatus: "disconnected",
@@ -169,6 +199,27 @@ export function useMultiplayerPoker() {
       error: null,
       isHost: false,
     })
+  }, [])
+
+  const abandonReconnect = useCallback(() => {
+    const socket = socketRef.current
+    socketRef.current = null
+    socket?.close()
+    roomCodeRef.current = ""
+    setState({
+      connectionStatus: "disconnected",
+      gameState: null,
+      playerId: null,
+      error: null,
+      isHost: false,
+    })
+  }, [])
+
+  const sendNow = useCallback((message: object) => {
+    const socket = socketRef.current
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false
+    socket.send(JSON.stringify(message))
+    return true
   }, [])
 
   const createGame = useCallback(
@@ -188,36 +239,32 @@ export function useMultiplayerPoker() {
   )
 
   const startGame = useCallback(() => {
-    if (socketRef.current && state.isHost) {
-      socketRef.current.send(JSON.stringify({ type: "start-game" }))
-    }
-  }, [state.isHost])
+    if (state.isHost) sendNow({ type: "start-game" })
+  }, [sendNow, state.isHost])
 
   const fold = useCallback(() => {
-    socketRef.current?.send(JSON.stringify({ type: "fold" }))
-  }, [])
+    sendNow({ type: "fold" })
+  }, [sendNow])
 
   const check = useCallback(() => {
-    socketRef.current?.send(JSON.stringify({ type: "check" }))
-  }, [])
+    sendNow({ type: "check" })
+  }, [sendNow])
 
   const call = useCallback(() => {
-    socketRef.current?.send(JSON.stringify({ type: "call" }))
-  }, [])
+    sendNow({ type: "call" })
+  }, [sendNow])
 
   const raise = useCallback((amount: number) => {
-    socketRef.current?.send(JSON.stringify({ type: "raise", amount }))
-  }, [])
+    sendNow({ type: "raise", amount })
+  }, [sendNow])
 
   const allIn = useCallback(() => {
-    socketRef.current?.send(JSON.stringify({ type: "all-in" }))
-  }, [])
+    sendNow({ type: "all-in" })
+  }, [sendNow])
 
   const nextHand = useCallback(() => {
-    if (socketRef.current && state.isHost) {
-      socketRef.current.send(JSON.stringify({ type: "next-hand" }))
-    }
-  }, [state.isHost])
+    if (state.isHost) sendNow({ type: "next-hand" })
+  }, [sendNow, state.isHost])
 
   useEffect(() => {
     return () => {
@@ -239,5 +286,6 @@ export function useMultiplayerPoker() {
     allIn,
     nextHand,
     disconnect,
+    abandonReconnect,
   }
 }

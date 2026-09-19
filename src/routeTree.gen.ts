@@ -23,6 +23,7 @@ import { Route as GamesHotTakeArenaRouteImport } from './routes/games/hot-take-a
 import { Route as GamesGuessTheCountryRouteImport } from './routes/games/guess-the-country'
 import { Route as GamesDrawingRouteImport } from './routes/games/drawing'
 import { Route as GamesCodenamesRouteImport } from './routes/games/codenames'
+import { Route as GamesCodeBreakerRouteImport } from './routes/games/code-breaker'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -94,9 +95,15 @@ const GamesCodenamesRoute = GamesCodenamesRouteImport.update({
   path: '/games/codenames',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GamesCodeBreakerRoute = GamesCodeBreakerRouteImport.update({
+  id: '/games/code-breaker',
+  path: '/games/code-breaker',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/games/code-breaker': typeof GamesCodeBreakerRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
   '/games/guess-the-country': typeof GamesGuessTheCountryRoute
@@ -113,6 +120,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/games/code-breaker': typeof GamesCodeBreakerRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
   '/games/guess-the-country': typeof GamesGuessTheCountryRoute
@@ -130,6 +138,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/games/code-breaker': typeof GamesCodeBreakerRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
   '/games/guess-the-country': typeof GamesGuessTheCountryRoute
@@ -148,6 +157,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/games/code-breaker'
     | '/games/codenames'
     | '/games/drawing'
     | '/games/guess-the-country'
@@ -164,6 +174,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/games/code-breaker'
     | '/games/codenames'
     | '/games/drawing'
     | '/games/guess-the-country'
@@ -180,6 +191,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/games/code-breaker'
     | '/games/codenames'
     | '/games/drawing'
     | '/games/guess-the-country'
@@ -197,6 +209,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  GamesCodeBreakerRoute: typeof GamesCodeBreakerRoute
   GamesCodenamesRoute: typeof GamesCodenamesRoute
   GamesDrawingRoute: typeof GamesDrawingRoute
   GamesGuessTheCountryRoute: typeof GamesGuessTheCountryRoute
@@ -312,11 +325,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GamesCodenamesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/games/code-breaker': {
+      id: '/games/code-breaker'
+      path: '/games/code-breaker'
+      fullPath: '/games/code-breaker'
+      preLoaderRoute: typeof GamesCodeBreakerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  GamesCodeBreakerRoute: GamesCodeBreakerRoute,
   GamesCodenamesRoute: GamesCodenamesRoute,
   GamesDrawingRoute: GamesDrawingRoute,
   GamesGuessTheCountryRoute: GamesGuessTheCountryRoute,

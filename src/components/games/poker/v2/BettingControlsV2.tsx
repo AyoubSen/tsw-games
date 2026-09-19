@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
 
 interface BettingControlsProps {
@@ -15,6 +15,9 @@ interface BettingControlsProps {
   onAllIn: () => void
 }
 
+const ACTION_BASE =
+  "flex-1 rounded-xl py-3 text-sm font-semibold tracking-wide transition-all active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100"
+
 export function BettingControls({
   canAct,
   currentBet,
@@ -28,89 +31,107 @@ export function BettingControls({
   onRaise,
   onAllIn,
 }: BettingControlsProps) {
-  const callAmount = currentBetToMatch - currentBet
+  const callAmount = Math.min(currentBetToMatch - currentBet, myChips)
   const canCheck = currentBet >= currentBetToMatch
-  const canCall = callAmount > 0 && callAmount <= myChips
+  const isCallAllIn = currentBetToMatch - currentBet >= myChips
   const minRaiseTotal = currentBetToMatch + minRaise
-  const canRaise = myChips > callAmount && minRaiseTotal <= currentBet + myChips
-
-  const [raiseAmount, setRaiseAmount] = useState(minRaiseTotal)
   const maxRaise = currentBet + myChips
+  const canRaise = maxRaise > currentBetToMatch && myChips > 0
 
-  const clampedRaise = useMemo(() => {
-    return Math.max(minRaiseTotal, Math.min(maxRaise, raiseAmount))
-  }, [raiseAmount, minRaiseTotal, maxRaise])
+  const [raiseOpen, setRaiseOpen] = useState(false)
+  const [raiseAmount, setRaiseAmount] = useState(minRaiseTotal)
+
+  // A new street (or a new bet to match) invalidates whatever was staged.
+  useEffect(() => {
+    setRaiseOpen(false)
+    setRaiseAmount(Math.min(minRaiseTotal, maxRaise))
+  }, [minRaiseTotal, maxRaise])
+
+  const clamped = Math.max(
+    Math.min(minRaiseTotal, maxRaise),
+    Math.min(maxRaise, raiseAmount),
+  )
 
   const presets = useMemo(() => {
-    const items: { label: string; value: number }[] = []
-    items.push({ label: "Min", value: minRaiseTotal })
-    const halfPot = currentBetToMatch + Math.floor(pot / 2)
-    if (halfPot > minRaiseTotal && halfPot < maxRaise) {
-      items.push({ label: "1/2 Pot", value: halfPot })
+    const out: { label: string; value: number }[] = []
+    const add = (label: string, value: number) => {
+      if (value > minRaiseTotal && value < maxRaise) out.push({ label, value })
     }
-    const fullPot = currentBetToMatch + pot
-    if (fullPot > minRaiseTotal && fullPot < maxRaise) {
-      items.push({ label: "Pot", value: fullPot })
-    }
-    items.push({ label: "Max", value: maxRaise })
-    return items
+    out.push({ label: "Min", value: Math.min(minRaiseTotal, maxRaise) })
+    add("½ Pot", currentBetToMatch + Math.floor(pot / 2))
+    add("Pot", currentBetToMatch + pot)
+    out.push({ label: "All in", value: maxRaise })
+    return out
   }, [minRaiseTotal, maxRaise, pot, currentBetToMatch])
 
-  const [showRaiseSlider, setShowRaiseSlider] = useState(false)
+  const sliderPct =
+    maxRaise > minRaiseTotal
+      ? ((clamped - minRaiseTotal) / (maxRaise - minRaiseTotal)) * 100
+      : 100
 
-  if (!canAct) return null
+  const commitRaise = () => {
+    if (clamped >= maxRaise) onAllIn()
+    else onRaise(clamped)
+    setRaiseOpen(false)
+  }
 
-  const sliderPercent = maxRaise > minRaiseTotal
-    ? ((clampedRaise - minRaiseTotal) / (maxRaise - minRaiseTotal)) * 100
-    : 0
+  // The dock keeps its footprint even when it is not our turn, so the table
+  // above never shifts as the action moves around the felt.
+  if (!canAct) {
+    return (
+      <div className="flex h-[60px] items-center justify-center rounded-xl bg-white/[0.03] text-xs text-white/30">
+        Waiting for your turn
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-2.5">
-      {/* Raise panel */}
-      {showRaiseSlider && canRaise && (
-        <div
-          className="rounded-xl p-3.5 space-y-3"
-          style={{
-            background: "rgba(20,20,30,0.95)",
-            border: "1px solid rgba(255,255,255,0.08)",
-          }}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-zinc-500">Raise to</span>
-            <span className="font-mono font-bold text-base text-white">{clampedRaise}</span>
+      {raiseOpen && canRaise && (
+        <div className="space-y-3 rounded-xl bg-white/[0.04] p-3 ring-1 ring-white/10">
+          <div className="flex items-baseline justify-between">
+            <span className="text-[11px] uppercase tracking-wider text-white/40">
+              Raise to
+            </span>
+            <span className="font-mono text-lg font-bold tabular-nums text-white">
+              {clamped.toLocaleString()}
+            </span>
           </div>
 
-          {/* Slider */}
-          <div className="relative">
-            <div className="h-1.5 rounded-full bg-zinc-700/80 overflow-hidden">
+          <div className="relative flex h-5 items-center">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
               <div
-                className="h-full rounded-full bg-zinc-400 transition-all duration-100"
-                style={{ width: `${sliderPercent}%` }}
+                className="h-full rounded-full bg-amber-400"
+                style={{ width: `${sliderPct}%` }}
               />
             </div>
+            <div
+              className="pointer-events-none absolute h-4 w-4 -translate-x-1/2 rounded-full bg-white shadow"
+              style={{ left: `${sliderPct}%` }}
+            />
             <input
               type="range"
-              min={minRaiseTotal}
+              min={Math.min(minRaiseTotal, maxRaise)}
               max={maxRaise}
               step={Math.max(1, minRaise)}
-              value={clampedRaise}
-              onChange={(e) => setRaiseAmount(parseInt(e.target.value))}
-              className="absolute inset-0 w-full opacity-0 cursor-pointer"
-              style={{ height: "100%" }}
+              value={clamped}
+              onChange={(e) => setRaiseAmount(Number.parseInt(e.target.value, 10))}
+              aria-label="Raise amount"
+              className="absolute inset-0 w-full cursor-pointer opacity-0"
             />
           </div>
 
-          {/* Preset buttons */}
           <div className="flex gap-1.5">
             {presets.map((p) => (
               <button
                 key={p.label}
+                type="button"
                 onClick={() => setRaiseAmount(p.value)}
                 className={cn(
-                  "flex-1 py-1.5 rounded-md text-[11px] font-medium transition-colors",
-                  clampedRaise === p.value
-                    ? "bg-white/10 text-white"
-                    : "bg-white/[0.03] text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.06]"
+                  "flex-1 rounded-lg py-1.5 text-[11px] font-medium transition-colors",
+                  clamped === p.value
+                    ? "bg-amber-400 text-black"
+                    : "bg-white/[0.06] text-white/50 hover:bg-white/10 hover:text-white",
                 )}
               >
                 {p.label}
@@ -120,79 +141,67 @@ export function BettingControls({
 
           <div className="flex gap-2">
             <button
-              onClick={() => {
-                if (clampedRaise >= maxRaise) {
-                  onAllIn()
-                } else {
-                  onRaise(clampedRaise)
-                }
-                setShowRaiseSlider(false)
-              }}
-              className="flex-1 py-2 rounded-lg font-semibold text-sm text-white bg-blue-600 hover:bg-blue-500 transition-colors"
-            >
-              Raise to {clampedRaise}
-            </button>
-            <button
-              onClick={() => setShowRaiseSlider(false)}
-              className="px-4 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+              type="button"
+              onClick={() => setRaiseOpen(false)}
+              className="rounded-xl px-4 py-2.5 text-sm text-white/40 transition-colors hover:text-white"
             >
               Cancel
+            </button>
+            <button
+              type="button"
+              onClick={commitRaise}
+              className="flex-1 rounded-xl bg-amber-400 py-2.5 text-sm font-bold text-black transition-colors hover:bg-amber-300"
+            >
+              Confirm
             </button>
           </div>
         </div>
       )}
 
-      {/* Main action buttons */}
-      <div className="flex gap-2 justify-center">
+      <div className="flex gap-2">
         <button
+          type="button"
           onClick={onFold}
-          className="flex-1 max-w-[120px] py-2.5 rounded-lg font-semibold text-sm text-white bg-red-600/80 hover:bg-red-600 transition-colors"
+          className={cn(ACTION_BASE, "bg-white/[0.06] text-white/70 hover:bg-red-500/20 hover:text-red-300")}
         >
           Fold
         </button>
 
         {canCheck ? (
           <button
+            type="button"
             onClick={onCheck}
-            className="flex-1 max-w-[120px] py-2.5 rounded-lg font-semibold text-sm text-white bg-emerald-600/80 hover:bg-emerald-600 transition-colors"
+            className={cn(ACTION_BASE, "bg-white/10 text-white hover:bg-white/15")}
           >
             Check
           </button>
-        ) : canCall ? (
+        ) : (
           <button
-            onClick={() => {
-              if (callAmount >= myChips) {
-                onAllIn()
-              } else {
-                onCall()
-              }
-            }}
-            className="flex-1 max-w-[120px] py-2.5 rounded-lg font-semibold text-sm text-white bg-emerald-600/80 hover:bg-emerald-600 transition-colors"
+            type="button"
+            onClick={isCallAllIn ? onAllIn : onCall}
+            className={cn(ACTION_BASE, "bg-white/10 text-white hover:bg-white/15")}
           >
-            Call {callAmount >= myChips ? "(All-In)" : callAmount}
-          </button>
-        ) : null}
-
-        {canRaise && !showRaiseSlider && (
-          <button
-            onClick={() => {
-              setRaiseAmount(minRaiseTotal)
-              setShowRaiseSlider(true)
-            }}
-            className="flex-1 max-w-[120px] py-2.5 rounded-lg font-semibold text-sm text-white bg-blue-600/80 hover:bg-blue-600 transition-colors"
-          >
-            Raise
+            <span className="flex flex-col items-center leading-tight">
+              <span>{isCallAllIn ? "Call all in" : "Call"}</span>
+              <span className="font-mono text-[11px] font-normal tabular-nums text-white/50">
+                {callAmount.toLocaleString()}
+              </span>
+            </span>
           </button>
         )}
 
-        {!canRaise && myChips > 0 && (
-          <button
-            onClick={onAllIn}
-            className="flex-1 max-w-[140px] py-2.5 rounded-lg font-semibold text-sm text-white bg-red-600/80 hover:bg-red-600 transition-colors"
-          >
-            All-In ({myChips})
-          </button>
-        )}
+        <button
+          type="button"
+          disabled={!canRaise}
+          onClick={() => (raiseOpen ? commitRaise() : setRaiseOpen(true))}
+          className={cn(ACTION_BASE, "bg-amber-400 text-black hover:bg-amber-300")}
+        >
+          {maxRaise <= minRaiseTotal
+            ? "All in"
+            : currentBetToMatch > 0
+              ? "Raise"
+              : "Bet"}
+        </button>
       </div>
     </div>
   )

@@ -187,12 +187,25 @@ export function MultiplayerGame({
       )}
 
       {/* Word Chain Display */}
-      <Card className="flex-1 min-h-0 overflow-hidden">
-        <CardHeader className="py-2 px-3">
-          <CardTitle className="text-sm">Word Chain</CardTitle>
+      <Card className="flex flex-1 min-h-0 flex-col overflow-hidden">
+        <CardHeader className="py-2 px-3 shrink-0">
+          <CardTitle className="text-sm flex items-center justify-between">
+            <span>Word Chain</span>
+            {mustStartWith && (
+              <span className="text-xs font-normal text-muted-foreground">
+                next word starts with{" "}
+                <span className="font-mono font-bold text-primary">{mustStartWith}</span>
+              </span>
+            )}
+          </CardTitle>
         </CardHeader>
-        <CardContent className="px-3 pb-3 overflow-auto h-full">
-          <WordChain words={gameState.wordChain} />
+        <CardContent className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+          <WordChain
+            words={gameState.wordChain}
+            authors={gameState.wordAuthors}
+            players={gameState.players}
+            localPlayerId={playerId}
+          />
         </CardContent>
       </Card>
 

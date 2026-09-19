@@ -1,6 +1,12 @@
 import PartySocket from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { generateRoomCode, PARTYKIT_HOST, getPersistentPlayerId } from "@/lib/partykit";
+import {
+	clearPersistentPlayerId,
+	generateRoomCode,
+	leavePartySocket,
+	PARTYKIT_HOST,
+	getPersistentPlayerId,
+} from "@/lib/partykit";
 import type {
 	PressureButtonSettings,
 	PublicPressureButtonGameState,
@@ -18,7 +24,6 @@ export interface MultiplayerPressureButtonState {
 	gameState: PublicPressureButtonGameState | null;
 	playerId: string | null;
 	error: string | null;
-	isHost: boolean;
 }
 
 export function useMultiplayerPressureButton() {
@@ -27,17 +32,19 @@ export function useMultiplayerPressureButton() {
 		gameState: null,
 		playerId: null,
 		error: null,
-		isHost: false,
 	});
 
 	const socketRef = useRef<PartySocket | null>(null);
+	const roomCodeRef = useRef<string | null>(null);
 
 	const handleMessage = useCallback((message: ServerMessage) => {
 		switch (message.type) {
 			case "state":
 				setState((previous) => ({
 					...previous,
+					connectionStatus: "connected",
 					gameState: message.state,
+					error: null,
 				}));
 				break;
 
@@ -183,12 +190,12 @@ export function useMultiplayerPressureButton() {
 			if (socketRef.current) {
 				socketRef.current.close();
 			}
+			roomCodeRef.current = roomCode;
 
 			setState((previous) => ({
 				...previous,
 				connectionStatus: "connecting",
 				error: null,
-				isHost,
 			}));
 
 			const socket = new PartySocket({
@@ -196,6 +203,7 @@ export function useMultiplayerPressureButton() {
 				room: roomCode,
 				id: getPersistentPlayerId("pressure-button", roomCode),
 				party: "pressurebutton",
+				maxEnqueuedMessages: 0,
 				query: {
 					host: isHost.toString(),
 					...(settings && {
@@ -207,16 +215,21 @@ export function useMultiplayerPressureButton() {
 			});
 
 			socket.addEventListener("open", () => {
+				if (socketRef.current !== socket) return;
 				setState((previous) => ({
 					...previous,
 					connectionStatus: "connected",
 					playerId: socket.id,
+					error: null,
 				}));
 
-				socket.send(JSON.stringify({ type: "join", name: playerName }));
+				if (socket.readyState === WebSocket.OPEN) {
+					socket.send(JSON.stringify({ type: "join", name: playerName }));
+				}
 			});
 
 			socket.addEventListener("message", (event) => {
+				if (socketRef.current !== socket) return;
 				try {
 					handleMessage(JSON.parse(event.data) as ServerMessage);
 				} catch (error) {
@@ -225,17 +238,20 @@ export function useMultiplayerPressureButton() {
 			});
 
 			socket.addEventListener("close", () => {
+				if (socketRef.current !== socket) return;
 				setState((previous) => ({
 					...previous,
-					connectionStatus: "disconnected",
+					connectionStatus: "connecting",
+					error: "Connection lost. Reconnecting...",
 				}));
 			});
 
 			socket.addEventListener("error", () => {
+				if (socketRef.current !== socket) return;
 				setState((previous) => ({
 					...previous,
-					connectionStatus: "error",
-					error: "Connection failed",
+					connectionStatus: "connecting",
+					error: "Connection lost. Reconnecting...",
 				}));
 			});
 
@@ -245,18 +261,31 @@ export function useMultiplayerPressureButton() {
 	);
 
 	const disconnect = useCallback(() => {
-		if (socketRef.current) {
-			socketRef.current.send(JSON.stringify({ type: "leave" }));
-			socketRef.current.close();
-			socketRef.current = null;
-		}
+		const socket = socketRef.current;
+		const roomCode = roomCodeRef.current;
+		socketRef.current = null;
+		roomCodeRef.current = null;
+		if (socket) leavePartySocket(socket, { type: "leave" });
+		if (roomCode) clearPersistentPlayerId("pressure-button", roomCode);
 
 		setState({
 			connectionStatus: "disconnected",
 			gameState: null,
 			playerId: null,
 			error: null,
-			isHost: false,
+		});
+	}, []);
+
+	const abandonReconnect = useCallback(() => {
+		const socket = socketRef.current;
+		socketRef.current = null;
+		roomCodeRef.current = null;
+		socket?.close();
+		setState({
+			connectionStatus: "disconnected",
+			gameState: null,
+			playerId: null,
+			error: null,
 		});
 	}, []);
 
@@ -277,16 +306,17 @@ export function useMultiplayerPressureButton() {
 	);
 
 	const send = useCallback((payload: object) => {
-		if (socketRef.current) {
-			socketRef.current.send(JSON.stringify(payload));
+		const socket = socketRef.current;
+		if (socket?.readyState === WebSocket.OPEN) {
+			socket.send(JSON.stringify(payload));
 		}
 	}, []);
 
 	const startGame = useCallback(() => {
-		if (state.isHost) {
+		if (state.playerId === state.gameState?.hostId) {
 			send({ type: "start" });
 		}
-	}, [send, state.isHost]);
+	}, [send, state.gameState?.hostId, state.playerId]);
 
 	const chooseAnswer = useCallback(() => {
 		send({ type: "choose-answer" });
@@ -311,16 +341,16 @@ export function useMultiplayerPressureButton() {
 	);
 
 	const nextTurn = useCallback(() => {
-		if (state.isHost) {
+		if (state.playerId === state.gameState?.hostId) {
 			send({ type: "next-turn" });
 		}
-	}, [send, state.isHost]);
+	}, [send, state.gameState?.hostId, state.playerId]);
 
 	const restartGame = useCallback(() => {
-		if (state.isHost) {
+		if (state.playerId === state.gameState?.hostId) {
 			send({ type: "restart" });
 		}
-	}, [send, state.isHost]);
+	}, [send, state.gameState?.hostId, state.playerId]);
 
 	useEffect(() => {
 		return () => {
@@ -332,6 +362,7 @@ export function useMultiplayerPressureButton() {
 
 	return {
 		...state,
+		isHost: !!state.playerId && state.gameState?.hostId === state.playerId,
 		createGame,
 		joinGame,
 		startGame,
@@ -342,5 +373,6 @@ export function useMultiplayerPressureButton() {
 		nextTurn,
 		restartGame,
 		disconnect,
+		abandonReconnect,
 	};
 }

@@ -109,6 +109,7 @@ export interface GameState {
 
   // Timer
   phaseEndTime: number | null                 // timestamp when current phase ends
+  playerTokens: Record<string, string>
 }
 
 export interface PublicPlayer {
@@ -249,12 +250,19 @@ export default class MafiaParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
+  connectionTokens = new WeakMap<Party.Connection, string>()
 
   async onStart() {
     const stored = await this.room.storage.get<string>("state")
     if (stored) {
       try {
-        this.state = JSON.parse(stored)
+        const parsed = JSON.parse(stored) as GameState
+        parsed.playerTokens ??= {}
+        this.state = parsed
+        for (const player of Object.values(this.state.players)) {
+          player.connected = false
+        }
+        await this.saveState()
       } catch {
         this.state = null
       }
@@ -265,6 +273,12 @@ export default class MafiaParty implements Party.Server {
     if (this.state) {
       await this.room.storage.put("state", JSON.stringify(this.state))
     }
+  }
+
+  isAuthenticated(conn: Party.Connection): boolean {
+    if (!this.state) return false
+    const token = this.connectionTokens.get(conn)
+    return Boolean(token && this.state.playerTokens[conn.id] === token)
   }
 
   getPublicState(playerId: string): PublicGameState {
@@ -352,6 +366,7 @@ export default class MafiaParty implements Party.Server {
   broadcastState() {
     if (!this.state) return
     for (const conn of this.room.getConnections()) {
+      if (!this.isAuthenticated(conn)) continue
       const pubState = this.getPublicState(conn.id)
       conn.send(JSON.stringify({ type: "state", state: pubState } as ServerMessage))
     }
@@ -1085,6 +1100,8 @@ export default class MafiaParty implements Party.Server {
   async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     const url = new URL(ctx.request.url)
     const isHost = url.searchParams.get("host") === "true"
+    const playerToken = url.searchParams.get("playerToken") || ""
+    if (playerToken) this.connectionTokens.set(conn, playerToken)
 
     if (isHost && !this.state) {
       const roomCode = this.room.id
@@ -1125,19 +1142,12 @@ export default class MafiaParty implements Party.Server {
         events: [],
         nightKills: [],
         phaseEndTime: null,
+        playerTokens: {},
       }
       await this.saveState()
     }
 
-    if (this.state) {
-      // Reconnect existing player
-      const existing = this.state.players[conn.id]
-      if (existing) {
-        existing.connected = true
-        this.broadcastState()
-        await this.saveState()
-      }
-    }
+	if (!this.state) this.sendError(conn, "Game not found")
   }
 
   async onMessage(message: string, sender: Party.Connection) {
@@ -1146,13 +1156,30 @@ export default class MafiaParty implements Party.Server {
     try {
       const msg: ClientMessage = JSON.parse(message)
 
+	  if (msg.type !== "join" && !this.isAuthenticated(sender)) {
+		this.sendError(sender, "Invalid player session")
+		return
+	  }
+
       switch (msg.type) {
         case "join": {
+		  const playerToken = this.connectionTokens.get(sender)
+		  if (!playerToken) {
+			this.sendError(sender, "Invalid player session")
+			return
+		  }
+		  const returningPlayer = this.state.players[sender.id]
+		  const expectedToken = this.state.playerTokens[sender.id]
+		  if (returningPlayer && expectedToken !== playerToken) {
+			this.sendError(sender, "Invalid player session")
+			return
+		  }
           // Check for a returning player FIRST. This used to sit below the
           // status guard, so anyone who dropped mid-game was told "Game
           // already in progress" and could never get back to their role.
           const returning = this.state.players[sender.id]
           if (returning) {
+			this.state.playerTokens[sender.id] = playerToken
             returning.connected = true
             returning.name = msg.name.trim().slice(0, 20) || returning.name
             await this.saveState()
@@ -1179,6 +1206,7 @@ export default class MafiaParty implements Party.Server {
           }
           this.state.players[sender.id] = player
           this.state.playerOrder.push(sender.id)
+		  this.state.playerTokens[sender.id] = playerToken
 
           // Broadcast join to others
           for (const conn of this.room.getConnections()) {
@@ -1213,10 +1241,19 @@ export default class MafiaParty implements Party.Server {
             this.sendError(sender, "Only the host can start the game")
             return
           }
-          if (Object.keys(this.state.players).length < 5) {
+          if (Object.values(this.state.players).filter((player) => player.connected).length < 5) {
             this.sendError(sender, "Need at least 5 players to start")
             return
           }
+          for (const player of Object.values(this.state.players)) {
+            if (!player.connected) {
+              delete this.state.players[player.id]
+              delete this.state.playerTokens[player.id]
+            }
+          }
+          this.state.playerOrder = this.state.playerOrder.filter(
+            (playerId) => this.state!.players[playerId],
+          )
           await this.startGame()
           break
         }
@@ -1271,6 +1308,7 @@ export default class MafiaParty implements Party.Server {
 
   async handlePlayerLeave(playerId: string) {
     if (!this.state) return
+	delete this.state.playerTokens[playerId]
 
     if (this.state.status === "waiting") {
       delete this.state.players[playerId]
@@ -1280,6 +1318,13 @@ export default class MafiaParty implements Party.Server {
       if (playerId === this.state.hostId && this.state.playerOrder.length > 0) {
         this.state.hostId = this.state.playerOrder[0]
       }
+
+	  if (this.state.playerOrder.length === 0) {
+		this.state = null
+		await this.room.storage.delete("state")
+		await this.room.storage.deleteAlarm()
+		return
+	  }
 
       for (const conn of this.room.getConnections()) {
         conn.send(JSON.stringify({ type: "player-left", playerId } as ServerMessage))
@@ -1308,24 +1353,22 @@ export default class MafiaParty implements Party.Server {
 
   async onClose(conn: Party.Connection) {
     if (!this.state) return
+	const replacementIsOpen = Array.from(this.room.getConnections()).some(
+	  connection => connection.id === conn.id && connection !== conn,
+	)
+	if (replacementIsOpen) {
+	  this.connectionTokens.delete(conn)
+	  return
+	}
 
     const player = this.state.players[conn.id]
-    if (player) {
+    if (player && this.isAuthenticated(conn)) {
       player.connected = false
-
-      // Transfer host
-      if (conn.id === this.state.hostId) {
-        const connected = this.state.playerOrder.find(
-          (id) => id !== conn.id && this.state!.players[id]?.connected
-        )
-        if (connected) {
-          this.state.hostId = connected
-        }
-      }
 
       this.broadcastState()
       await this.saveState()
     }
+	this.connectionTokens.delete(conn)
   }
 }
 

@@ -11,7 +11,7 @@ interface MultiplayerGameProps {
   gameState: PublicGameState
   playerId: string
   isHost: boolean
-  onProgress: (progress: number, wpm: number, accuracy: number) => void
+  onProgress: (progress: number, wpm: number, accuracy: number, typedText: string) => void
   onComplete: (wpm: number, accuracy: number) => void
   onRestart: () => void
   onLeave: () => void
@@ -26,16 +26,19 @@ export function MultiplayerGame({
   onRestart,
   onLeave,
 }: MultiplayerGameProps) {
-  const [typedText, setTypedText] = useState("")
-  const [startTime, setStartTime] = useState<number | null>(null)
-  const [wpm, setWpm] = useState(0)
-  const [accuracy, setAccuracy] = useState(100)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const hasCompleted = useRef(false)
-
   const text = gameState.text
   const players = Object.values(gameState.players)
   const currentPlayer = gameState.players[playerId]
+  const restoredTypedText = typeof currentPlayer?.typedText === "string"
+    ? currentPlayer.typedText.slice(0, text.length)
+    : ""
+  const [typedText, setTypedText] = useState(restoredTypedText)
+  const [startTime, setStartTime] = useState<number | null>(null)
+  const [wpm, setWpm] = useState(currentPlayer?.wpm ?? 0)
+  const [accuracy, setAccuracy] = useState(currentPlayer?.accuracy ?? 100)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const hasCompleted = useRef(Boolean(currentPlayer?.completed))
+
   const isFinished = gameState.status === "finished"
   const winner = gameState.winnerId ? gameState.players[gameState.winnerId] : null
 
@@ -88,7 +91,7 @@ export function MultiplayerGame({
     setAccuracy(newAccuracy)
 
     // Send progress update
-    onProgress(progress, newWpm, newAccuracy)
+    onProgress(progress, newWpm, newAccuracy, newTypedText)
 
     // Check completion
     if (newTypedText === text) {

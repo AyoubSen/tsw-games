@@ -1,6 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import PartySocket from "partysocket"
-import { PARTYKIT_HOST, generateRoomCode, getPersistentPlayerId } from "@/lib/partykit"
+import {
+  PARTYKIT_HOST,
+  clearPersistentPlayerId,
+  generateRoomCode,
+  getPersistentPlayerId,
+  leavePartySocket,
+} from "@/lib/partykit"
 import type { ServerMessage, PublicGameState } from "../../../../party/wordchain"
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
@@ -16,7 +22,6 @@ export interface MultiplayerState {
   gameState: PublicGameState | null
   playerId: string | null
   error: string | null
-  isHost: boolean
 }
 
 export function useMultiplayerWordchain() {
@@ -25,24 +30,22 @@ export function useMultiplayerWordchain() {
     gameState: null,
     playerId: null,
     error: null,
-    isHost: false,
   })
 
   const socketRef = useRef<PartySocket | null>(null)
-  const playerNameRef = useRef<string>("")
+  const roomCodeRef = useRef<string | null>(null)
 
   const connect = useCallback((roomCode: string, isHost: boolean, playerName: string, settings?: GameSettings) => {
     if (socketRef.current) {
       socketRef.current.close()
     }
 
-    playerNameRef.current = playerName
+    roomCodeRef.current = roomCode
 
     setState((prev) => ({
       ...prev,
       connectionStatus: "connecting",
       error: null,
-      isHost,
     }))
 
     const socket = new PartySocket({
@@ -50,6 +53,7 @@ export function useMultiplayerWordchain() {
       room: roomCode,
       id: getPersistentPlayerId("wordchain", roomCode),
       party: "wordchain",
+      maxEnqueuedMessages: 0,
       query: {
         host: isHost.toString(),
         ...(settings && {
@@ -61,16 +65,21 @@ export function useMultiplayerWordchain() {
     })
 
     socket.addEventListener("open", () => {
+      if (socketRef.current !== socket) return
       setState((prev) => ({
         ...prev,
         connectionStatus: "connected",
         playerId: socket.id,
+        error: null,
       }))
 
-      socket.send(JSON.stringify({ type: "join", name: playerName }))
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "join", name: playerName }))
+      }
     })
 
     socket.addEventListener("message", (event) => {
+      if (socketRef.current !== socket) return
       try {
         const message: ServerMessage = JSON.parse(event.data)
         handleMessage(message)
@@ -80,17 +89,20 @@ export function useMultiplayerWordchain() {
     })
 
     socket.addEventListener("close", () => {
+      if (socketRef.current !== socket) return
       setState((prev) => ({
         ...prev,
-        connectionStatus: "disconnected",
+        connectionStatus: "connecting",
+        error: "Connection lost. Reconnecting...",
       }))
     })
 
     socket.addEventListener("error", () => {
+      if (socketRef.current !== socket) return
       setState((prev) => ({
         ...prev,
-        connectionStatus: "error",
-        error: "Connection failed",
+        connectionStatus: "connecting",
+        error: "Connection lost. Reconnecting...",
       }))
     })
 
@@ -102,7 +114,9 @@ export function useMultiplayerWordchain() {
       case "state":
         setState((prev) => ({
           ...prev,
+          connectionStatus: "connected",
           gameState: message.state,
+          error: null,
         }))
         break
 
@@ -117,7 +131,9 @@ export function useMultiplayerWordchain() {
                 ...prev.gameState.players,
                 [message.player.id]: message.player,
               },
-              playerOrder: [...prev.gameState.playerOrder, message.player.id],
+              playerOrder: prev.gameState.playerOrder.includes(message.player.id)
+                ? prev.gameState.playerOrder
+                : [...prev.gameState.playerOrder, message.player.id],
             },
           }
         })
@@ -148,6 +164,7 @@ export function useMultiplayerWordchain() {
               ...prev.gameState,
               status: "playing",
               wordChain: [message.startingWord],
+              wordAuthors: [""],
               currentPlayerId: message.firstPlayerId,
             },
           }
@@ -176,6 +193,7 @@ export function useMultiplayerWordchain() {
             gameState: {
               ...prev.gameState,
               wordChain: [...prev.gameState.wordChain, message.word],
+              wordAuthors: [...(prev.gameState.wordAuthors ?? []), message.playerId],
               currentPlayerId: message.nextPlayerId || null,
               turnStartedAt: Date.now(),
             },
@@ -258,17 +276,30 @@ export function useMultiplayerWordchain() {
   }, [])
 
   const disconnect = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "leave" }))
-      socketRef.current.close()
-      socketRef.current = null
-    }
+    const socket = socketRef.current
+    const roomCode = roomCodeRef.current
+    socketRef.current = null
+    roomCodeRef.current = null
+    if (socket) leavePartySocket(socket, { type: "leave" })
+    if (roomCode) clearPersistentPlayerId("wordchain", roomCode)
     setState({
       connectionStatus: "disconnected",
       gameState: null,
       playerId: null,
       error: null,
-      isHost: false,
+    })
+  }, [])
+
+  const abandonReconnect = useCallback(() => {
+    const socket = socketRef.current
+    socketRef.current = null
+    roomCodeRef.current = null
+    socket?.close()
+    setState({
+      connectionStatus: "disconnected",
+      gameState: null,
+      playerId: null,
+      error: null,
     })
   }, [])
 
@@ -283,22 +314,31 @@ export function useMultiplayerWordchain() {
   }, [connect])
 
   const startGame = useCallback(() => {
-    if (socketRef.current && state.isHost) {
-      socketRef.current.send(JSON.stringify({ type: "start" }))
+    const socket = socketRef.current
+    if (
+      socket?.readyState === WebSocket.OPEN &&
+      state.playerId === state.gameState?.hostId
+    ) {
+      socket.send(JSON.stringify({ type: "start" }))
     }
-  }, [state.isHost])
+  }, [state.gameState?.hostId, state.playerId])
 
   const submitWord = useCallback((word: string) => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "submit-word", word: word.toLowerCase().trim() }))
+    const socket = socketRef.current
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "submit-word", word: word.toLowerCase().trim() }))
     }
   }, [])
 
   const restartGame = useCallback(() => {
-    if (socketRef.current && state.isHost) {
-      socketRef.current.send(JSON.stringify({ type: "restart" }))
+    const socket = socketRef.current
+    if (
+      socket?.readyState === WebSocket.OPEN &&
+      state.playerId === state.gameState?.hostId
+    ) {
+      socket.send(JSON.stringify({ type: "restart" }))
     }
-  }, [state.isHost])
+  }, [state.gameState?.hostId, state.playerId])
 
   useEffect(() => {
     return () => {
@@ -310,11 +350,13 @@ export function useMultiplayerWordchain() {
 
   return {
     ...state,
+    isHost: !!state.playerId && state.gameState?.hostId === state.playerId,
     createGame,
     joinGame,
     startGame,
     submitWord,
     restartGame,
     disconnect,
+    abandonReconnect,
   }
 }

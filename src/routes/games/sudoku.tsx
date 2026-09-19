@@ -72,7 +72,7 @@ function SudokuPage() {
   // Give up the "resuming" placeholder once we land somewhere real.
   useEffect(() => {
     if (!isResuming) return
-    if (multiplayer.gameState || multiplayer.connectionStatus === 'disconnected' || multiplayer.connectionStatus === 'error') {
+    if (multiplayer.gameState || multiplayer.connectionStatus === 'error') {
       setIsResuming(false)
     }
   }, [isResuming, multiplayer.gameState, multiplayer.connectionStatus])
@@ -88,10 +88,10 @@ function SudokuPage() {
       ) {
         setView('multiplayer-game')
       }
-    } else if (multiplayer.connectionStatus === 'error') {
+    } else if (multiplayer.connectionStatus === 'error' && !isResuming) {
       setView('select')
     }
-  }, [multiplayer.connectionStatus, multiplayer.gameState?.status])
+  }, [isResuming, multiplayer.connectionStatus, multiplayer.gameState?.status])
 
   // Handle leaving multiplayer
   const handleLeaveMultiplayer = () => {
@@ -101,9 +101,7 @@ function SudokuPage() {
 
   // Handle back to mode selection
   const handleBackToSelect = () => {
-    if (multiplayer.connectionStatus !== 'disconnected') {
-      multiplayer.disconnect()
-    }
+    multiplayer.disconnect()
     setView('select')
   }
 

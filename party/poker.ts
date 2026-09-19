@@ -65,6 +65,7 @@ export interface GameState {
   winners: WinnerInfo[]
   showdownPlayers: string[]
   handInProgress: boolean
+  playerTokens: Record<string, string>
 }
 
 export interface PublicPlayer {
@@ -185,6 +186,7 @@ export default class PokerParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
+  connectionTokens = new WeakMap<Party.Connection, string>()
 
   async onStart() {
     const stored = await this.room.storage.get<string>("state")
@@ -192,7 +194,12 @@ export default class PokerParty implements Party.Server {
       try {
         const parsed = JSON.parse(stored)
         parsed.actedThisRound = new Set(parsed.actedThisRound || [])
+        parsed.playerTokens ??= {}
         this.state = parsed
+        for (const player of Object.values(this.state!.players) as Player[]) {
+          player.connected = false
+        }
+        await this.saveState()
       } catch {
         // Corrupted state, reset
         this.state = null
@@ -208,6 +215,12 @@ export default class PokerParty implements Party.Server {
       }
       await this.room.storage.put("state", JSON.stringify(toStore))
     }
+  }
+
+  isAuthenticated(conn: Party.Connection): boolean {
+    if (!this.state) return false
+    const token = this.connectionTokens.get(conn)
+    return Boolean(token && this.state.playerTokens[conn.id] === token)
   }
 
   getPublicState(playerId: string): PublicGameState {
@@ -270,6 +283,7 @@ export default class PokerParty implements Party.Server {
   broadcastState() {
     if (!this.state) return
     for (const conn of this.room.getConnections()) {
+      if (!this.isAuthenticated(conn)) continue
       try {
         this.send(conn, { type: "state", state: this.getPublicState(conn.id) })
       } catch (e) {
@@ -840,6 +854,8 @@ export default class PokerParty implements Party.Server {
   async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     const url = new URL(ctx.request.url)
     const isHost = url.searchParams.get("host") === "true"
+    const playerToken = url.searchParams.get("playerToken") || ""
+    if (playerToken) this.connectionTokens.set(conn, playerToken)
 
     const startingChips = parseInt(url.searchParams.get("startingChips") || "1000", 10)
     const smallBlind = parseInt(url.searchParams.get("smallBlind") || "10", 10)
@@ -875,19 +891,12 @@ export default class PokerParty implements Party.Server {
         winners: [],
         showdownPlayers: [],
         handInProgress: false,
+        playerTokens: {},
       }
       await this.saveState()
     }
 
-    // Handle reconnection
-    if (this.state && this.state.players[conn.id]) {
-      this.state.players[conn.id].connected = true
-      await this.saveState()
-    }
-
-    if (this.state) {
-      this.send(conn, { type: "state", state: this.getPublicState(conn.id) })
-    } else {
+    if (!this.state) {
       this.send(conn, { type: "error", message: "Game not found" })
     }
   }
@@ -901,8 +910,24 @@ export default class PokerParty implements Party.Server {
     try {
       const data: ClientMessage = JSON.parse(message)
 
+      if (data.type !== "join" && !this.isAuthenticated(sender)) {
+        this.send(sender, { type: "error", message: "Invalid player session" })
+        return
+      }
+
       switch (data.type) {
         case "join": {
+		  const playerToken = this.connectionTokens.get(sender)
+		  if (!playerToken) {
+			this.send(sender, { type: "error", message: "Invalid player session" })
+			return
+		  }
+		  const returningPlayer = this.state.players[sender.id]
+		  const expectedToken = this.state.playerTokens[sender.id]
+		  if (returningPlayer && expectedToken !== playerToken) {
+			this.send(sender, { type: "error", message: "Invalid player session" })
+			return
+		  }
           if (this.state.status === "playing" && !this.state.players[sender.id]) {
             this.send(sender, { type: "error", message: "Game already in progress" })
             return
@@ -915,6 +940,7 @@ export default class PokerParty implements Party.Server {
 
           // Reconnection
           if (this.state.players[sender.id]) {
+			this.state.playerTokens[sender.id] = playerToken
             this.state.players[sender.id].connected = true
             this.state.players[sender.id].name = data.name
             await this.saveState()
@@ -939,6 +965,7 @@ export default class PokerParty implements Party.Server {
 
           this.state.players[sender.id] = player
           this.state.seatOrder.push(sender.id)
+		  this.state.playerTokens[sender.id] = playerToken
 
           await this.saveState()
 
@@ -957,6 +984,17 @@ export default class PokerParty implements Party.Server {
             this.send(sender, { type: "error", message: "Only host can start the game" })
             return
           }
+
+          for (const player of Object.values(this.state.players)) {
+            if (!player.connected) {
+              delete this.state.players[player.id]
+              delete this.state.playerTokens[player.id]
+            }
+          }
+          this.state.seatOrder = this.state.seatOrder.filter((id) => this.state!.players[id])
+          this.state.seatOrder.forEach((id, index) => {
+            this.state!.players[id].seatIndex = index
+          })
 
           if (this.state.seatOrder.length < 2) {
             this.send(sender, { type: "error", message: "Need at least 2 players" })
@@ -1081,7 +1119,15 @@ export default class PokerParty implements Party.Server {
           }
 
           delete this.state.players[sender.id]
+          delete this.state.playerTokens[sender.id]
           this.state.seatOrder = this.state.seatOrder.filter((id) => id !== sender.id)
+
+		  if (this.state.seatOrder.length === 0) {
+			this.state = null
+			await this.room.storage.delete("state")
+			await this.room.storage.deleteAlarm()
+			return
+		  }
 
           // Reassign seat indices
           this.state.seatOrder.forEach((id, i) => {
@@ -1119,9 +1165,16 @@ export default class PokerParty implements Party.Server {
 
   async onClose(conn: Party.Connection) {
     if (!this.state) return
+	const replacementIsOpen = Array.from(this.room.getConnections()).some(
+	  connection => connection.id === conn.id && connection !== conn,
+	)
+	if (replacementIsOpen) {
+	  this.connectionTokens.delete(conn)
+	  return
+	}
 
     const player = this.state.players[conn.id]
-    if (!player) return
+    if (!player || !this.isAuthenticated(conn)) return
 
     player.connected = false
 
@@ -1133,18 +1186,9 @@ export default class PokerParty implements Party.Server {
       this.room.storage.setAlarm(Date.now() + 10000)
     }
 
-    // Transfer host
-    if (conn.id === this.state.hostId) {
-      const connected = this.state.seatOrder.filter(
-        (id) => this.state!.players[id]?.connected
-      )
-      if (connected.length > 0) {
-        this.state.hostId = connected[0]
-      }
-    }
-
     await this.saveState()
     this.broadcastState()
+	this.connectionTokens.delete(conn)
   }
 
   async onAlarm() {

@@ -69,11 +69,15 @@ function TypeRacePage() {
 	const session = useMultiplayerSession({
 		game: "typerace",
 		joinGame: multiplayer.joinGame,
-		hasGameState: !!multiplayer.gameState,
+		hasGameState: Boolean(
+			multiplayer.gameState &&
+				multiplayer.playerId &&
+				multiplayer.gameState.players[multiplayer.playerId],
+		),
 		error: multiplayer.error,
 		connectionStatus: multiplayer.connectionStatus,
 		inviteRoomCode: invitedRoomCode,
-		onAbandon: multiplayer.disconnect,
+		onAbandon: multiplayer.abandonReconnect,
 	});
 	const multiplayerGameState = multiplayer.gameState;
 
@@ -82,8 +86,10 @@ function TypeRacePage() {
 		if (session.isSuppressingErrors()) return;
 		if (multiplayer.error) {
 			setMessage(multiplayer.error);
+		} else if (multiplayer.connectionStatus === "connected") {
+			setMessage(null);
 		}
-	}, [multiplayer.error]);
+	}, [multiplayer.connectionStatus, multiplayer.error]);
 
 	useEffect(() => {
 		if (multiplayer.connectionStatus === "connected" && multiplayerGameState) {
@@ -140,10 +146,8 @@ function TypeRacePage() {
 	};
 
 	const handleBackToSelect = () => {
-		if (multiplayer.connectionStatus !== "disconnected") {
-			session.forget();
-			multiplayer.disconnect();
-		}
+		session.forget();
+		multiplayer.disconnect();
 		singlePlayer.resetGame();
 		setView("select");
 		setMessage(null);
@@ -316,7 +320,7 @@ function TypeRacePage() {
 				onCopyRoomCode={handleCopyRoomCode}
 				onStart={multiplayer.startGame}
 				onLeave={handleLeaveMultiplayer}
-				canStart={playerList.length >= 2}
+				canStart={playerList.filter((player) => player.connected !== false).length >= 2}
 				isHost={multiplayer.isHost}
 				message={message}
 			/>

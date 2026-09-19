@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Eye, Users, Play, LogOut, Check } from "lucide-react"
-import type { PublicGameState, Team, PlayerRole, Player } from "../../../../party/codenames"
+import type { PublicGameState, Team, PlayerRole } from "../../../../party/codenames"
 
 interface TeamSelectorProps {
   gameState: PublicGameState
@@ -23,18 +23,17 @@ export function TeamSelector({
   onLeave,
   error,
 }: TeamSelectorProps) {
-  const players = Object.values(gameState.players)
+  const players = Object.values(gameState.players).filter(
+    (player) => player.connected !== false,
+  )
   const currentPlayer = gameState.players[playerId]
 
-  const getTeamPlayers = (team: Team) => players.filter((p) => p.team === team)
   const getSpymaster = (team: Team) =>
     players.find((p) => p.team === team && p.role === "spymaster")
   const getGuessers = (team: Team) =>
     players.filter((p) => p.team === team && p.role === "guesser")
   const getUnassigned = () => players.filter((p) => !p.team)
 
-  const redTeam = getTeamPlayers("red")
-  const blueTeam = getTeamPlayers("blue")
   const unassigned = getUnassigned()
 
   const redSpymaster = getSpymaster("red")
@@ -49,8 +48,6 @@ export function TeamSelector({
     const isRed = team === "red"
     const spymaster = isRed ? redSpymaster : blueSpymaster
     const guessers = isRed ? redGuessers : blueGuessers
-    const teamColor = isRed ? "red" : "blue"
-
     const bgColor = isRed ? "bg-red-500/10" : "bg-blue-500/10"
     const borderColor = isRed ? "border-red-500" : "border-blue-500"
     const textColor = isRed

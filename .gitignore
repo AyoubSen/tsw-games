@@ -12,6 +12,8 @@ count.txt
 .vinxi
 .partykit
 todos.json
+playwright-report
+test-results
 
 # Local Netlify folder
 .netlify

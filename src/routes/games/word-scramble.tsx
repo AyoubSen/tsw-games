@@ -147,11 +147,15 @@ function WordScramblePage() {
 	const session = useMultiplayerSession({
 		game: "word-scramble",
 		joinGame: multiplayer.joinGame,
-		hasGameState: !!multiplayer.gameState,
+		hasGameState: Boolean(
+			multiplayer.gameState &&
+				multiplayer.playerId &&
+				multiplayer.gameState.players[multiplayer.playerId],
+		),
 		error: multiplayer.error,
 		connectionStatus: multiplayer.connectionStatus,
 		inviteRoomCode: invitedRoomCode,
-		onAbandon: multiplayer.disconnect,
+		onAbandon: multiplayer.abandonReconnect,
 	});
 
 	useEffect(() => {
@@ -299,10 +303,8 @@ function WordScramblePage() {
 	}, [multiplayer.gameState]);
 
 	const handleBackToSelect = () => {
-		if (multiplayer.connectionStatus !== "disconnected") {
-			session.forget();
-			multiplayer.disconnect();
-		}
+		session.forget();
+		multiplayer.disconnect();
 
 		setView("select");
 		setSingleGuess("");
@@ -838,7 +840,7 @@ function WordScramblePage() {
 				onCopyRoomCode={handleCopyRoomCode}
 				onStart={multiplayer.startGame}
 				onLeave={handleBackToSelect}
-				canStart={playerList.length >= 2}
+				canStart={playerList.filter((player) => player.connected !== false).length >= 2}
 				isHost={multiplayer.isHost}
 				message={multiplayerMessage}
 			/>

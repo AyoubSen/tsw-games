@@ -3,12 +3,11 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { parseInviteSearch } from '@/lib/inviteLinks'
+import { useMultiplayerSession } from '@/lib/multiplayerSession'
 import { GameModeSelector } from '@/components/games/poker/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/poker/MultiplayerLobby'
-import { MultiplayerGame } from '@/components/games/poker/MultiplayerGame'
-import { MultiplayerGame as MultiplayerGameV2 } from '@/components/games/poker/v2/MultiplayerGameV2'
+import { MultiplayerGame } from '@/components/games/poker/v2/MultiplayerGameV2'
 import { useMultiplayerPoker, type PokerSettings } from '@/components/games/poker/useMultiplayerPoker'
-import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/games/poker')({
   validateSearch: parseInviteSearch,
@@ -16,49 +15,33 @@ export const Route = createFileRoute('/games/poker')({
 })
 
 type GameView = 'select' | 'lobby' | 'game'
-type UIVersion = 'v1' | 'v2'
-
-function VersionToggle({ version, onChange }: { version: UIVersion; onChange: (v: UIVersion) => void }) {
-  return (
-    <div className="flex rounded-lg overflow-hidden border border-border text-xs">
-      <button
-        onClick={() => onChange('v1')}
-        className={cn(
-          "px-2.5 py-1 font-medium transition-colors",
-          version === 'v1'
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted/50 text-muted-foreground hover:bg-muted"
-        )}
-      >
-        v1
-      </button>
-      <button
-        onClick={() => onChange('v2')}
-        className={cn(
-          "px-2.5 py-1 font-medium transition-colors",
-          version === 'v2'
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted/50 text-muted-foreground hover:bg-muted"
-        )}
-      >
-        v2
-      </button>
-    </div>
-  )
-}
 
 function PokerPage() {
   const { room: invitedRoomCode } = Route.useSearch()
   const [view, setView] = useState<GameView>('select')
-  const [uiVersion, setUiVersion] = useState<UIVersion>('v2')
   const multiplayer = useMultiplayerPoker()
+  const session = useMultiplayerSession({
+    game: 'poker',
+    joinGame: multiplayer.joinGame,
+    hasGameState: Boolean(
+      multiplayer.gameState &&
+      multiplayer.playerId &&
+      multiplayer.gameState.players[multiplayer.playerId]
+    ),
+    error: multiplayer.error,
+    connectionStatus: multiplayer.connectionStatus,
+    inviteRoomCode: invitedRoomCode,
+    onAbandon: multiplayer.abandonReconnect,
+  })
 
   const handleCreateMultiplayer = (playerName: string, settings: PokerSettings) => {
-    multiplayer.createGame(playerName, settings)
+    const roomCode = multiplayer.createGame(playerName, settings)
+    session.remember(roomCode, playerName)
   }
 
   const handleJoinMultiplayer = (roomCode: string, playerName: string) => {
     multiplayer.joinGame(roomCode, playerName)
+    session.remember(roomCode.toUpperCase(), playerName)
   }
 
   // Derive the effective view from both local state and server state
@@ -86,20 +69,26 @@ function PokerPage() {
   }, [multiplayer.connectionStatus, multiplayer.gameState?.status, view])
 
   const handleLeaveMultiplayer = () => {
+    session.forget()
     multiplayer.disconnect()
     setView('select')
   }
 
   const handleBackToSelect = () => {
-    if (multiplayer.connectionStatus !== 'disconnected') {
-      multiplayer.disconnect()
-    }
+    session.forget()
+    multiplayer.disconnect()
     setView('select')
   }
 
-  const isV2 = uiVersion === 'v2'
-
   // View 1: Mode Selection (always v1)
+  if (session.isResuming && effectiveView === 'select') {
+    return (
+      <div className="min-h-[calc(100vh-73px)] bg-background flex items-center justify-center">
+        <p className="text-muted-foreground">Rejoining your game…</p>
+      </div>
+    )
+  }
+
   if (effectiveView === 'select') {
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background">
@@ -148,26 +137,26 @@ function PokerPage() {
     )
   }
 
-  // View 3: Game (toggle between v1 and v2)
+  // View 3: Game
   if (effectiveView === 'game' && multiplayer.gameState && multiplayer.playerId) {
-    const GameComponent = isV2 ? MultiplayerGameV2 : MultiplayerGame
     return (
-      <div className={isV2 ? "min-h-[calc(100vh-73px)] bg-[#0f1520]" : "min-h-[calc(100vh-73px)] bg-background"}>
-        <div className={cn(
-          "px-4 py-3 flex items-center justify-between border-b",
-          isV2 ? "border-zinc-800 bg-[#0f1520]" : "border-border"
-        )}>
-          <Button variant="ghost" size="sm" onClick={handleLeaveMultiplayer} className={isV2 ? "text-zinc-400 hover:text-white" : ""}>
+      <div className="flex h-[calc(100vh-73px)] flex-col overflow-hidden bg-[#0d1117]">
+        <div className="flex shrink-0 items-center justify-between border-b border-white/[0.07] px-4 py-2.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleLeaveMultiplayer}
+            className="text-white/50 hover:bg-white/5 hover:text-white"
+          >
             <ArrowLeft className="w-4 h-4 mr-1" />
             Leave
           </Button>
-          <div className="flex items-center gap-2">
-            <VersionToggle version={uiVersion} onChange={setUiVersion} />
-          </div>
-          <h1 className={cn("text-lg font-bold", isV2 && "text-white")}>Texas Hold'em</h1>
-          <div className="w-[60px]" />
+          <h1 className="text-sm font-semibold text-white/80">Texas Hold'em</h1>
+          <span className="font-mono text-xs text-white/30">
+            {multiplayer.gameState.roomCode}
+          </span>
         </div>
-        <GameComponent
+        <MultiplayerGame
           gameState={multiplayer.gameState}
           playerId={multiplayer.playerId}
           isHost={multiplayer.isHost}

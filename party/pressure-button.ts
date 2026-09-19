@@ -61,6 +61,7 @@ export interface PressureButtonGameState {
 	startedAt: number | null;
 	turnStartedAt: number | null;
 	finishedAt: number | null;
+	playerOrder: string[];
 }
 
 export interface PublicPressureButtonGameState {
@@ -136,7 +137,14 @@ export default class PressureButtonParty implements Party.Server {
 	async onStart() {
 		const stored = await this.room.storage.get<PressureButtonGameState>("state");
 		if (stored) {
+			stored.playerOrder ??= Object.values(stored.players)
+				.sort((left, right) => left.joinedAt - right.joinedAt)
+				.map((player) => player.id);
 			this.state = stored;
+			for (const player of Object.values(this.state.players)) {
+				player.connected = false;
+			}
+			await this.saveState();
 		}
 	}
 
@@ -151,9 +159,7 @@ export default class PressureButtonParty implements Party.Server {
 			return [];
 		}
 
-		return Object.values(this.state.players)
-			.sort((left, right) => left.joinedAt - right.joinedAt)
-			.map((player) => player.id);
+		return this.state.playerOrder.filter((playerId) => this.state?.players[playerId]);
 	}
 
 	getPublicState(): PublicPressureButtonGameState {
@@ -208,8 +214,15 @@ export default class PressureButtonParty implements Party.Server {
 			return;
 		}
 
-		const activePlayerId =
-			orderedPlayers[(this.state.turnNumber - 1) % orderedPlayers.length] ?? null;
+		const startingIndex = (this.state.turnNumber - 1) % orderedPlayers.length;
+		let activePlayerId: string | null = null;
+		for (let offset = 0; offset < orderedPlayers.length; offset++) {
+			const candidateId = orderedPlayers[(startingIndex + offset) % orderedPlayers.length];
+			if (this.state.players[candidateId]?.connected !== false) {
+				activePlayerId = candidateId;
+				break;
+			}
+		}
 		if (!activePlayerId) {
 			return;
 		}
@@ -370,13 +383,12 @@ export default class PressureButtonParty implements Party.Server {
 				startedAt: null,
 				turnStartedAt: null,
 				finishedAt: null,
+				playerOrder: [],
 			};
 			await this.saveState();
 		}
 
-		if (this.state) {
-			this.send(connection, { type: "state", state: this.getPublicState() });
-		} else {
+		if (!this.state) {
 			this.send(connection, { type: "error", message: "Game not found" });
 		}
 	}
@@ -420,6 +432,7 @@ export default class PressureButtonParty implements Party.Server {
 					};
 
 					this.state.players[sender.id] = player;
+					this.state.playerOrder.push(sender.id);
 					await this.saveState();
 					this.broadcast({ type: "player-joined", player });
 					this.broadcast({ type: "state", state: this.getPublicState() });
@@ -437,9 +450,16 @@ export default class PressureButtonParty implements Party.Server {
 						return;
 					}
 
+					for (const player of Object.values(this.state.players)) {
+						if (player.connected === false) delete this.state.players[player.id];
+					}
+
 					this.state.startedAt = Date.now();
 					this.state.finishedAt = null;
 					this.state.turnNumber = 1;
+					this.state.playerOrder = this.state.playerOrder.filter(
+						(playerId) => this.state?.players[playerId]?.connected !== false,
+					);
 					for (const player of Object.values(this.state.players)) {
 						player.score = 0;
 					}
@@ -489,6 +509,7 @@ export default class PressureButtonParty implements Party.Server {
 
 					if (
 						!this.state.players[data.targetPlayerId] ||
+						this.state.players[data.targetPlayerId].connected === false ||
 						data.targetPlayerId === this.state.activePlayerId
 					) {
 						this.send(sender, {
@@ -595,7 +616,27 @@ export default class PressureButtonParty implements Party.Server {
 				}
 
 				case "leave": {
+					if (
+						this.state.status === "answering" &&
+						this.state.responderId === sender.id
+					) {
+						await this.revealTimedOut();
+					} else if (
+						this.state.status === "decision" &&
+						this.state.activePlayerId === sender.id
+					) {
+						await this.revealPass();
+					}
 					delete this.state.players[sender.id];
+					this.state.playerOrder = this.state.playerOrder.filter(
+						(playerId) => playerId !== sender.id,
+					);
+					if (Object.keys(this.state.players).length === 0) {
+						this.state = null;
+						await this.room.storage.delete("state");
+						await this.room.storage.deleteAlarm();
+						return;
+					}
 					if (sender.id === this.state.hostId) {
 						const next = nextHost(this.state.players, sender.id);
 						if (next) this.state.hostId = next;
@@ -620,10 +661,12 @@ export default class PressureButtonParty implements Party.Server {
 		if (!this.state || !this.state.players[connection.id]) {
 			return;
 		}
+		const replacementIsOpen = Array.from(this.room.getConnections()).some(
+			(candidate) => candidate.id === connection.id && candidate !== connection,
+		);
+		if (replacementIsOpen) return;
 
 		markDisconnected(this.state.players, connection.id);
-		// The host keeps the role across a blip; canControlGame lets someone else
-		// act only once the host is genuinely absent.
 
 		await this.saveState();
 		// No "player-left" here: they may be back in a moment, and the client

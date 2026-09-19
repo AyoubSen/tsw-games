@@ -178,6 +178,10 @@ export default class WordScrambleParty implements Party.Server {
 			stored.settings.difficulty ??= "normal";
 			stored.settings.claimVisibility ??= "hidden";
 			this.state = stored;
+			for (const player of Object.values(this.state.players)) {
+				player.connected = false;
+			}
+			await this.saveState();
 		}
 	}
 
@@ -263,9 +267,7 @@ export default class WordScrambleParty implements Party.Server {
 			await this.saveState();
 		}
 
-		if (this.state) {
-			this.send(connection, { type: "state", state: this.getPublicState() });
-		} else {
+		if (!this.state) {
 			this.send(connection, { type: "error", message: "Game not found" });
 		}
 	}
@@ -326,6 +328,10 @@ export default class WordScrambleParty implements Party.Server {
 					if (presentCount(this.state.players) < 2) {
 						this.send(sender, { type: "error", message: "Need at least 2 players" });
 						return;
+					}
+
+					for (const player of Object.values(this.state.players)) {
+						if (player.connected === false) delete this.state.players[player.id];
 					}
 
 					const puzzlePool = await getPuzzlePool();
@@ -449,6 +455,12 @@ export default class WordScrambleParty implements Party.Server {
 
 				case "leave": {
 					delete this.state.players[sender.id];
+					if (Object.keys(this.state.players).length === 0) {
+						this.state = null;
+						await this.room.storage.delete("state");
+						await this.room.storage.deleteAlarm();
+						return;
+					}
 
 					if (sender.id === this.state.hostId) {
 						const next = nextHost(this.state.players, sender.id);
@@ -516,11 +528,12 @@ export default class WordScrambleParty implements Party.Server {
 		if (!this.state || !this.state.players[connection.id]) {
 			return;
 		}
+		const replacementIsOpen = Array.from(this.room.getConnections()).some(
+			(candidate) => candidate.id === connection.id && candidate !== connection,
+		);
+		if (replacementIsOpen) return;
 
 		markDisconnected(this.state.players, connection.id);
-
-		// The host keeps the role across a blip; canControlGame lets someone else
-		// act only once the host is genuinely absent.
 
 		await this.saveState();
 		// No "player-left" here: they may be back in a moment, and the client

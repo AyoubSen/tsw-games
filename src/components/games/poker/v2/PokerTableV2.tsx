@@ -1,6 +1,7 @@
 import { useMemo } from "react"
 import { PlayingCard } from "./PlayingCardV2"
 import { PlayerSeat } from "./PlayerSeatV2"
+import { ChipStack } from "./ChipStackV2"
 import type { PublicGameState } from "../../../../../party/poker"
 
 interface PokerTableProps {
@@ -8,133 +9,176 @@ interface PokerTableProps {
   playerId: string
 }
 
-export function PokerTable({ gameState, playerId }: PokerTableProps) {
-  const { seatOrder, players, communityCards, pot, currentPlayerId } = gameState
+const ROUND_LABELS: Record<string, string> = {
+  "pre-flop": "Pre-flop",
+  flop: "Flop",
+  turn: "Turn",
+  river: "River",
+  showdown: "Showdown",
+}
 
-  const rotatedSeats = useMemo(() => {
-    const myIndex = seatOrder.indexOf(playerId)
-    if (myIndex === -1) return seatOrder
-    return [...seatOrder.slice(myIndex), ...seatOrder.slice(0, myIndex)]
-  }, [seatOrder, playerId])
-
-  const getPosition = (index: number, total: number) => {
-    const angle = (Math.PI * 2 * index) / total - Math.PI / 2
-    const a = -angle + Math.PI
-    const rx = 45
-    const ry = 40
-    const x = 50 + rx * Math.cos(a)
-    const y = 50 + ry * Math.sin(a)
-    return { left: `${x}%`, top: `${y}%` }
+/**
+ * Opponents are spread along an arc across the top of the table, sweeping from
+ * the lower-left around through the top to the lower-right. The bottom of the
+ * table is deliberately left empty: that is where the local player's dock sits,
+ * so their cards and chips are never drawn twice.
+ */
+function seatPosition(index: number, total: number) {
+  const START = 205
+  const END = -25
+  const t = total === 1 ? 0.5 : index / (total - 1)
+  const rad = ((START + (END - START) * t) * Math.PI) / 180
+  return {
+    x: 50 + 41 * Math.cos(rad),
+    y: 46 - 36 * Math.sin(rad),
   }
+}
 
+export function PokerTable({ gameState, playerId }: PokerTableProps) {
+  const {
+    seatOrder,
+    players,
+    communityCards,
+    pot,
+    currentPlayerId,
+    dealerPlayerId,
+    smallBlindPlayerId,
+    bigBlindPlayerId,
+    bettingRound,
+    handInProgress,
+  } = gameState
+
+  const opponents = useMemo(() => {
+    const myIndex = seatOrder.indexOf(playerId)
+    const rotated =
+      myIndex === -1
+        ? seatOrder
+        : [...seatOrder.slice(myIndex + 1), ...seatOrder.slice(0, myIndex)]
+    return rotated.filter((id) => players[id])
+  }, [seatOrder, playerId, players])
 
   return (
-    <div className="relative w-full aspect-[16/10] max-w-[700px] mx-auto">
-      {/* Table edge */}
-      <div
-        className="absolute inset-0 rounded-[32px]"
-        style={{
-          background: "linear-gradient(135deg, #44403c, #292524, #44403c)",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-        }}
-      />
+    <div className="relative mx-auto aspect-[16/11] h-full max-h-full w-auto max-w-full">
+      {/* Rail */}
+      <div className="absolute inset-0 rounded-[44%/50%] bg-gradient-to-b from-[#32323a] via-[#23232a] to-[#141418] shadow-[0_24px_60px_rgba(0,0,0,0.65)]" />
+      <div className="absolute inset-0 rounded-[44%/50%] ring-1 ring-white/[0.09]" />
 
-      {/* Felt surface */}
+      {/* Felt */}
       <div
-        className="absolute inset-[3%] rounded-[50%]"
+        className="absolute inset-[4%] overflow-hidden rounded-[44%/50%] ring-1 ring-black/50"
         style={{
-          background: "radial-gradient(ellipse at 50% 40%, #15803d, #166534, #14532d)",
-          boxShadow: "inset 0 4px 20px rgba(0,0,0,0.3)",
+          background:
+            "radial-gradient(ellipse at 50% 30%, #23795a 0%, #166046 48%, #0b3b2b 100%)",
+          boxShadow: "inset 0 10px 45px rgba(0,0,0,0.5)",
         }}
-      />
-
-      {/* Pot */}
-      {pot > 0 && (
-        <div className="absolute left-1/2 top-[32%] -translate-x-1/2 -translate-y-1/2 z-10">
-          <span
-            className="font-mono font-bold text-sm px-3 py-1 rounded-full"
-            style={{
-              color: "#fbbf24",
-              background: "rgba(0,0,0,0.4)",
-              textShadow: "0 1px 2px rgba(0,0,0,0.5)",
-            }}
-          >
-            Pot: {pot.toLocaleString()}
+      >
+        {/* Felt weave */}
+        <div
+          className="absolute inset-0 opacity-[0.35] mix-blend-overlay"
+          style={{
+            backgroundImage:
+              "repeating-linear-gradient(45deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 3px), repeating-linear-gradient(-45deg, rgba(0,0,0,0.06) 0 1px, transparent 1px 3px)",
+          }}
+        />
+        {/* Watermark */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="select-none text-[clamp(1.5rem,7vw,4rem)] tracking-[0.3em] text-white/[0.04]">
+            ♠ ♥ ♦ ♣
           </span>
         </div>
-      )}
-
-      {/* Community cards */}
-      <div className="absolute left-1/2 top-[50%] -translate-x-1/2 -translate-y-1/2 z-10 flex gap-1">
-        {communityCards.map((card, i) => (
-          <div
-            key={i}
-            style={{
-              animation: "cardEntrance 0.3s ease-out both",
-              animationDelay: `${i * 0.06}s`,
-            }}
-          >
-            <PlayingCard card={card} size="sm" />
-          </div>
-        ))}
-        {Array.from({ length: Math.max(0, 5 - communityCards.length) }).map((_, i) => (
-          <div
-            key={`empty-${i}`}
-            className="w-9 h-[50px] rounded-lg border border-white/[0.07]"
-          />
-        ))}
+        {/* Inner betting line */}
+        <div className="absolute inset-[9%] rounded-[44%/50%] border border-white/[0.06]" />
+        {/* Overhead light */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0.14), transparent 55%)",
+          }}
+        />
       </div>
 
-      {/* Dealer button */}
-      {gameState.dealerPlayerId && (() => {
-        const dealerIdx = rotatedSeats.indexOf(gameState.dealerPlayerId)
-        if (dealerIdx === -1) return null
-        const pos = getPosition(dealerIdx, rotatedSeats.length)
-        const xNum = parseFloat(pos.left)
-        const yNum = parseFloat(pos.top)
-        const dx = 50 - xNum
-        const dy = 50 - yNum
-        const dist = Math.sqrt(dx * dx + dy * dy)
-        const offsetX = dist > 0 ? (dx / dist) * 8 : 0
-        const offsetY = dist > 0 ? (dy / dist) * 8 : 0
-        return (
-          <div
-            className="absolute z-30 w-5 h-5 rounded-full bg-white text-zinc-900 text-[9px] font-bold flex items-center justify-center -translate-x-1/2 -translate-y-1/2"
-            style={{
-              left: `${xNum + offsetX}%`,
-              top: `${yNum + offsetY}%`,
-              boxShadow: "0 2px 4px rgba(0,0,0,0.4)",
-            }}
-          >
-            D
-          </div>
-        )
-      })()}
+      {/* Center: round, community cards, pot */}
+      <div className="absolute left-1/2 top-[44%] z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.25em] text-white/30">
+          {handInProgress ? (ROUND_LABELS[bettingRound] ?? bettingRound) : "Waiting"}
+        </span>
 
-      {/* Player seats */}
-      {rotatedSeats.map((id, index) => {
+        <div className="flex gap-1.5">
+          {Array.from({ length: 5 }).map((_, i) => {
+            const card = communityCards[i]
+            if (card === undefined) {
+              return (
+                <div
+                  key={`slot-${i}`}
+                  className="h-[68px] w-12 rounded-lg bg-black/15 ring-1 ring-inset ring-white/[0.05]"
+                />
+              )
+            }
+            return (
+              <div
+                key={`card-${i}`}
+                style={{
+                  animation: "pokerCardIn 300ms cubic-bezier(0.2,0.8,0.3,1) both",
+                  animationDelay: `${i * 80}ms`,
+                }}
+              >
+                <PlayingCard card={card} size="md" />
+              </div>
+            )
+          })}
+        </div>
+
+        {pot > 0 && <ChipStack amount={pot} size="md" />}
+      </div>
+
+      {/* Opponent seats, each with their chips pushed toward the pot */}
+      {opponents.map((id, index) => {
         const player = players[id]
-        if (!player) return null
-        const pos = getPosition(index, rotatedSeats.length)
+        const { x, y } = seatPosition(index, opponents.length)
+        // Nudge the bet toward the table centre so it reads as chips on the felt.
+        const dx = 50 - x
+        const dy = 44 - y
+        const dist = Math.hypot(dx, dy) || 1
+        const betX = x + (dx / dist) * 13
+        const betY = y + (dy / dist) * 13
+
         return (
-          <div
-            key={id}
-            className="absolute -translate-x-1/2 -translate-y-1/2 z-20"
-            style={{ left: pos.left, top: pos.top }}
-          >
-            <PlayerSeat
-              player={player}
-              isCurrentTurn={currentPlayerId === id}
-              isMe={id === playerId}
-            />
+          <div key={id}>
+            <div
+              className="absolute z-20 -translate-x-1/2 -translate-y-1/2"
+              style={{ left: `${x}%`, top: `${y}%` }}
+            >
+              <PlayerSeat
+                player={player}
+                isCurrentTurn={currentPlayerId === id}
+                isDealer={dealerPlayerId === id}
+                blind={
+                  smallBlindPlayerId === id
+                    ? "SB"
+                    : bigBlindPlayerId === id
+                      ? "BB"
+                      : null
+                }
+              />
+            </div>
+
+            {player.currentBet > 0 && !player.folded && (
+              <div
+                className="absolute z-10 -translate-x-1/2 -translate-y-1/2"
+                style={{ left: `${betX}%`, top: `${betY}%` }}
+              >
+                <ChipStack amount={player.currentBet} size="sm" />
+              </div>
+            )}
           </div>
         )
       })}
 
       <style>{`
-        @keyframes cardEntrance {
-          from { opacity: 0; transform: scale(0.8); }
-          to { opacity: 1; transform: scale(1); }
+        @keyframes pokerCardIn {
+          from { opacity: 0; transform: translateY(-10px) scale(0.88); }
+          to { opacity: 1; transform: none; }
         }
       `}</style>
     </div>

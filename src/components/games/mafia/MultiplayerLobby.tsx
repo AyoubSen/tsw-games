@@ -23,7 +23,8 @@ export function MultiplayerLobby({
   const [copied, setCopied] = useState(false)
 
   const players = Object.values(gameState.players)
-  const canStart = isHost && players.length >= 5
+  const connectedPlayers = players.filter((player) => player.connected)
+  const canStart = isHost && connectedPlayers.length >= 5
 
   const copyCode = async () => {
     try {
@@ -113,6 +114,9 @@ export function MultiplayerLobby({
                       {player.name.charAt(0).toUpperCase()}
                     </div>
                     <span className="font-medium">{player.name}</span>
+                    {!player.connected && (
+                      <span className="text-xs text-muted-foreground">reconnecting...</span>
+                    )}
                     {player.id === playerId && (
                       <span className="text-xs text-muted-foreground">(You)</span>
                     )}
@@ -123,7 +127,7 @@ export function MultiplayerLobby({
                 </div>
               ))}
 
-              {Array.from({ length: Math.max(0, 5 - players.length) }).map((_, i) => (
+              {Array.from({ length: Math.max(0, 5 - connectedPlayers.length) }).map((_, i) => (
                 <div
                   key={`empty-${i}`}
                   className="flex items-center p-3 rounded-lg border-2 border-dashed border-muted"
@@ -146,7 +150,7 @@ export function MultiplayerLobby({
               size="lg"
             >
               <Play className="w-4 h-4 mr-2" />
-              {canStart ? "Start Game" : `Need ${5 - players.length} more player(s)`}
+              {canStart ? "Start Game" : `Need ${5 - connectedPlayers.length} more player(s)`}
             </Button>
           ) : (
             <div className="text-center p-4 bg-muted/50 rounded-lg">

@@ -15,6 +15,7 @@ import {
 } from "@/components/multiplayer/shared";
 import { Button } from "@/components/ui/button";
 import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
+import { useMultiplayerSession } from "@/lib/multiplayerSession";
 import {
 	Card,
 	CardContent,
@@ -60,8 +61,22 @@ function DrawingPage() {
 
 	const multiplayer = useMultiplayerDrawing();
 	const multiplayerGameState = multiplayer.gameState;
+	const session = useMultiplayerSession({
+		game: "drawing",
+		joinGame: multiplayer.joinGame,
+		hasGameState: Boolean(
+			multiplayer.gameState &&
+				multiplayer.playerId &&
+				multiplayer.gameState.players[multiplayer.playerId],
+		),
+		error: multiplayer.error,
+		connectionStatus: multiplayer.connectionStatus,
+		inviteRoomCode: invitedRoomCode,
+		onAbandon: multiplayer.abandonReconnect,
+	});
 
 	useEffect(() => {
+		if (session.isSuppressingErrors()) return;
 		if (multiplayer.error) {
 			setMessage(multiplayer.error);
 		}
@@ -104,7 +119,8 @@ function DrawingPage() {
 			roundsPerPlayer,
 		};
 
-		multiplayer.createGame(playerName.trim(), settings);
+		const roomCode = multiplayer.createGame(playerName.trim(), settings);
+		session.remember(roomCode, playerName.trim());
 		setMessage(null);
 	};
 
@@ -115,19 +131,20 @@ function DrawingPage() {
 		}
 
 		multiplayer.joinGame(joinRoomCode.trim(), playerName.trim());
+		session.remember(joinRoomCode.trim().toUpperCase(), playerName.trim());
 		setMessage(null);
 	};
 
 	const handleLeaveMultiplayer = () => {
+		session.forget();
 		multiplayer.disconnect();
 		setView("select");
 		setMessage(null);
 	};
 
 	const handleBackToSelect = () => {
-		if (multiplayer.connectionStatus !== "disconnected") {
-			multiplayer.disconnect();
-		}
+		session.forget();
+		multiplayer.disconnect();
 		setView("select");
 		setMessage(null);
 	};
@@ -147,6 +164,14 @@ function DrawingPage() {
 			setMessage("Could not copy the invite link.");
 		}
 	};
+
+	if (session.isResuming && view === "select") {
+		return (
+			<div className="flex min-h-[calc(100vh-73px)] items-center justify-center bg-background">
+				<p className="text-muted-foreground">Rejoining your game…</p>
+			</div>
+		);
+	}
 
 	if (view === "select") {
 		return (

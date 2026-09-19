@@ -69,6 +69,7 @@ export interface GameState {
   blueCardsRemaining: number
   winner: Team | null
   winReason: WinReason | null
+  playerTokens: Record<string, string>
 }
 
 // Public state sent to clients (hides card types for non-spymasters)
@@ -215,11 +216,17 @@ export default class CodenamesParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
+  connectionTokens = new WeakMap<Party.Connection, string>()
 
   async onStart() {
     const stored = await this.room.storage.get<GameState>("state")
     if (stored) {
+      stored.playerTokens ??= {}
       this.state = stored
+      for (const player of Object.values(this.state.players)) {
+        player.connected = false
+      }
+      await this.saveState()
     }
   }
 
@@ -227,6 +234,12 @@ export default class CodenamesParty implements Party.Server {
     if (this.state) {
       await this.room.storage.put("state", this.state)
     }
+  }
+
+  isAuthenticated(conn: Party.Connection): boolean {
+    if (!this.state) return false
+    const token = this.connectionTokens.get(conn)
+    return Boolean(token && this.state.playerTokens[conn.id] === token)
   }
 
   getPublicState(playerId: string): PublicGameState {
@@ -269,6 +282,7 @@ export default class CodenamesParty implements Party.Server {
   broadcastState() {
     if (!this.state) return
     for (const conn of this.room.getConnections()) {
+      if (!this.isAuthenticated(conn)) continue
       this.send(conn, {
         type: "state",
         state: this.getPublicState(conn.id),
@@ -293,7 +307,9 @@ export default class CodenamesParty implements Party.Server {
   validateTeamSelection(): { valid: boolean; message: string } {
     if (!this.state) return { valid: false, message: "No game state" }
 
-    const players = Object.values(this.state.players)
+    const players = Object.values(this.state.players).filter(
+      (player) => player.connected !== false,
+    )
 
     const redTeam = players.filter((p) => p.team === "red")
     const blueTeam = players.filter((p) => p.team === "blue")
@@ -494,6 +510,8 @@ export default class CodenamesParty implements Party.Server {
   async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     const url = new URL(ctx.request.url)
     const isHost = url.searchParams.get("host") === "true"
+    const playerToken = url.searchParams.get("playerToken") || ""
+    if (playerToken) this.connectionTokens.set(conn, playerToken)
 
     // Parse game settings from query params
     const gameMode = (url.searchParams.get("gameMode") || "classic") as GameMode
@@ -522,17 +540,12 @@ export default class CodenamesParty implements Party.Server {
         blueCardsRemaining: startingTeam === "blue" ? 9 : 8,
         winner: null,
         winReason: null,
+        playerTokens: {},
       }
       await this.saveState()
     }
 
-    if (this.state) {
-      this.send(conn, {
-        type: "state",
-        state: this.getPublicState(conn.id),
-        isSpymaster: this.isSpymaster(conn.id),
-      })
-    } else {
+    if (!this.state) {
       this.send(conn, { type: "error", message: "Game not found" })
     }
   }
@@ -546,13 +559,30 @@ export default class CodenamesParty implements Party.Server {
     try {
       const data: ClientMessage = JSON.parse(message)
 
+      if (data.type !== "join" && !this.isAuthenticated(sender)) {
+        this.send(sender, { type: "error", message: "Invalid player session" })
+        return
+      }
+
       switch (data.type) {
         case "join": {
+		  const playerToken = this.connectionTokens.get(sender)
+		  if (!playerToken) {
+			this.send(sender, { type: "error", message: "Invalid player session" })
+			return
+		  }
+		  const returningPlayer = this.state.players[sender.id]
+		  const expectedToken = this.state.playerTokens[sender.id]
+		  if (returningPlayer && expectedToken !== playerToken) {
+			this.send(sender, { type: "error", message: "Invalid player session" })
+			return
+		  }
           // A known player is reconnecting, not joining. Their team and role
           // are still on record, so broadcastState hands the spymaster their
           // spymaster view again - and only them.
           const returning = markConnected(this.state.players, sender.id)
           if (returning) {
+			this.state.playerTokens[sender.id] = playerToken
             returning.name = data.name || returning.name
             await this.saveState()
             this.broadcast({ type: "player-joined", player: returning })
@@ -565,6 +595,11 @@ export default class CodenamesParty implements Party.Server {
             return
           }
 
+		  if (Object.keys(this.state.players).length >= 8) {
+			this.send(sender, { type: "error", message: "Game is full" })
+			return
+		  }
+
           const player: Player = {
             id: sender.id,
             name: data.name,
@@ -575,6 +610,7 @@ export default class CodenamesParty implements Party.Server {
           }
 
           this.state.players[sender.id] = player
+		  this.state.playerTokens[sender.id] = playerToken
           await this.saveState()
 
           this.broadcast({ type: "player-joined", player })
@@ -644,6 +680,13 @@ export default class CodenamesParty implements Party.Server {
           if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
             this.send(sender, { type: "error", message: "Only host can start the game" })
             return
+          }
+
+          for (const player of Object.values(this.state.players)) {
+            if (player.connected === false) {
+              delete this.state.players[player.id]
+              delete this.state.playerTokens[player.id]
+            }
           }
 
           const validation = this.validateTeamSelection()
@@ -850,6 +893,14 @@ export default class CodenamesParty implements Party.Server {
 
         case "leave": {
           delete this.state.players[sender.id]
+          delete this.state.playerTokens[sender.id]
+
+		  if (Object.keys(this.state.players).length === 0) {
+			this.state = null
+			await this.room.storage.delete("state")
+			await this.room.storage.deleteAlarm()
+			return
+		  }
 
           // Transfer host if needed
           if (sender.id === this.state.hostId) {
@@ -870,16 +921,21 @@ export default class CodenamesParty implements Party.Server {
 
   async onClose(conn: Party.Connection) {
     if (!this.state) return
+	const replacementIsOpen = Array.from(this.room.getConnections()).some(
+	  connection => connection.id === conn.id && connection !== conn,
+	)
+	if (replacementIsOpen) {
+	  this.connectionTokens.delete(conn)
+	  return
+	}
 
-    if (this.state.players[conn.id]) {
+    if (this.state.players[conn.id] && this.isAuthenticated(conn)) {
       markDisconnected(this.state.players, conn.id)
-
-      // Transfer host if needed
-      // Host keeps the role across a blip; canControlGame covers a real absence.
 
       await this.saveState()
       // No "player-left": they may be back shortly and clients remove on that.
       this.broadcastState()
     }
+	this.connectionTokens.delete(conn)
   }
 }

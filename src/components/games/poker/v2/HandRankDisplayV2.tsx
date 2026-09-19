@@ -7,7 +7,11 @@ interface HandRankDisplayProps {
   className?: string
 }
 
-export function HandRankDisplay({ holeCards, communityCards, className }: HandRankDisplayProps) {
+export function HandRankDisplay({
+  holeCards,
+  communityCards,
+  className,
+}: HandRankDisplayProps) {
   if (holeCards.length !== 2 || communityCards.length < 3) {
     return null
   }
@@ -15,17 +19,13 @@ export function HandRankDisplay({ holeCards, communityCards, className }: HandRa
   const result: HandResult = evaluateBestHand(holeCards, communityCards)
 
   return (
-    <div className={cn("text-center", className)}>
-      <span
-        className="inline-block px-3 py-1 rounded-full text-xs font-semibold"
-        style={{
-          color: "#e4e4e7",
-          background: "rgba(255,255,255,0.08)",
-          border: "1px solid rgba(255,255,255,0.1)",
-        }}
-      >
-        {result.description}
-      </span>
-    </div>
+    <span
+      className={cn(
+        "rounded-full bg-emerald-400/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-300 ring-1 ring-emerald-400/20",
+        className,
+      )}
+    >
+      {result.description}
+    </span>
   )
 }

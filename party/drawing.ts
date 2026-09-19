@@ -260,6 +260,10 @@ export default class DrawingParty implements Party.Server {
         telephoneReactions: stored.telephoneReactions ?? {},
         playerTokens: stored.playerTokens ?? {},
       }
+		for (const player of Object.values(this.state.players)) {
+			player.connected = false
+		}
+		await this.saveState()
       // Resume round timer if game was in progress
       if (this.state.status === "playing" && this.state.roundStartedAt) {
         const elapsed = (Date.now() - this.state.roundStartedAt) / 1000
@@ -459,7 +463,7 @@ export default class DrawingParty implements Party.Server {
 
     // Notify all players
     for (const conn of this.room.getConnections()) {
-      const isDrawer = conn.id === drawer.id
+      const isDrawer = this.isAuthenticated(conn) && conn.id === drawer.id
       this.send(conn, {
         type: "round-started",
         drawerId: drawer.id,
@@ -736,12 +740,7 @@ export default class DrawingParty implements Party.Server {
       await this.saveState()
     }
 
-    if (this.state) {
-      this.send(conn, {
-        type: "state",
-        state: this.getPublicState(this.isAuthenticated(conn) ? conn.id : undefined),
-      })
-    } else {
+    if (!this.state) {
       this.send(conn, { type: "error", message: "Game not found" })
     }
   }
@@ -769,7 +768,7 @@ export default class DrawingParty implements Party.Server {
 
           const returningPlayer = this.state.players[sender.id]
           const expectedToken = this.state.playerTokens[sender.id]
-          if (returningPlayer && expectedToken && expectedToken !== playerToken) {
+          if (returningPlayer && expectedToken !== playerToken) {
             this.send(sender, { type: "error", message: "Invalid player session" })
             return
           }
@@ -843,13 +842,14 @@ export default class DrawingParty implements Party.Server {
             return
           }
 
-          if (this.state.mode === "telephone") {
-            for (const player of Object.values(this.state.players)) {
-              if (player.connected === false) {
-                delete this.state.players[player.id]
-                delete this.state.playerTokens[player.id]
-              }
+          for (const player of Object.values(this.state.players)) {
+            if (player.connected === false) {
+              delete this.state.players[player.id]
+              delete this.state.playerTokens[player.id]
             }
+          }
+
+          if (this.state.mode === "telephone") {
             await this.startTelephoneGame()
           } else {
             // Total rounds = number of players * rounds per player
@@ -1153,6 +1153,12 @@ export default class DrawingParty implements Party.Server {
           delete this.state.players[sender.id]
           delete this.state.playerTokens[sender.id]
 
+			  if (Object.keys(this.state.players).length === 0) {
+				this.state = null
+				await this.room.storage.delete("state")
+				return
+			  }
+
           if (sender.id === this.state.hostId) {
             const next = nextHost(this.state.players, sender.id)
             if (next) this.state.hostId = next
@@ -1203,11 +1209,16 @@ export default class DrawingParty implements Party.Server {
 
   async onClose(conn: Party.Connection) {
     if (!this.state) return
+	const replacementIsOpen = Array.from(this.room.getConnections()).some(
+	  connection => connection.id === conn.id && connection !== conn,
+	)
+	if (replacementIsOpen) {
+	  this.connectionTokens.delete(conn)
+	  return
+	}
 
     if (this.state.players[conn.id] && this.isAuthenticated(conn)) {
       markDisconnected(this.state.players, conn.id)
-
-      // Host keeps the role across a blip; canControlGame covers a real absence.
 
       // The round is deliberately NOT ended when the drawer's socket drops.
       // A brief blip would otherwise cost everyone the round, and the drawer

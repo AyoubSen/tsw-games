@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { ArrowRight } from "lucide-react"
-import type { Clue, Team } from "../../../../party/codenames"
+import type { Clue } from "../../../../party/codenames"
 
 interface ClueDisplayProps {
   clue: Clue

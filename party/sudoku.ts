@@ -3,7 +3,6 @@ import sudoku from "sudoku"
 import {
   canControlGame as canControlPresence,
   isPresent,
-  markConnected,
   markDisconnected,
   nextHost,
 } from "./shared/presence"
@@ -48,6 +47,7 @@ export interface GameState {
   solution: number[]
   startTime: number | null
   winnerId: string | null
+  playerTokens: Record<string, string>
 }
 
 export interface PublicGameState {
@@ -154,7 +154,7 @@ function generatePuzzleWithDifficulty(difficulty: Difficulty): { puzzle: (number
 }
 
 function countFillable(puzzle: (number | null)[]): number {
-  return puzzle.reduce((count, cell) => cell === null ? count + 1 : count, 0)
+  return puzzle.reduce<number>((count, cell) => cell === null ? count + 1 : count, 0)
 }
 
 function sanitizePlayerCells(value: unknown, puzzle: (number | null)[]): (number | null)[] | null {
@@ -257,6 +257,10 @@ function normalizeStoredState(value: unknown, roomCode: string): GameState | nul
     solution,
     startTime: stored.status === "waiting" ? null : startTime,
     winnerId: stored.status === "finished" && typeof stored.winnerId === "string" ? stored.winnerId : null,
+    playerTokens:
+      stored.playerTokens && typeof stored.playerTokens === "object"
+        ? stored.playerTokens
+        : {},
   }
 }
 
@@ -264,6 +268,7 @@ export default class SudokuParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
+  connectionTokens = new WeakMap<Party.Connection, string>()
 
   async onStart() {
     const stored = await this.room.storage.get<unknown>("state")
@@ -281,6 +286,12 @@ export default class SudokuParty implements Party.Server {
 
   async saveState() {
     if (this.state) await this.room.storage.put("state", this.state)
+  }
+
+  isAuthenticated(conn: Party.Connection): boolean {
+    if (!this.state) return false
+    const token = this.connectionTokens.get(conn)
+    return Boolean(token && this.state.playerTokens[conn.id] === token)
   }
 
   bumpRevision() {
@@ -370,6 +381,8 @@ export default class SudokuParty implements Party.Server {
     }
 
     const isHost = url.searchParams.get("host") === "true"
+	const playerToken = url.searchParams.get("playerToken") || ""
+	if (playerToken) this.connectionTokens.set(conn, playerToken)
     const requestedDifficulty = url.searchParams.get("difficulty")
     const difficulty = isDifficulty(requestedDifficulty) ? requestedDifficulty : "medium"
 
@@ -389,6 +402,7 @@ export default class SudokuParty implements Party.Server {
         solution,
         startTime: null,
         winnerId: null,
+        playerTokens: {},
       }
       await this.saveState()
     }
@@ -398,14 +412,6 @@ export default class SudokuParty implements Party.Server {
       return
     }
 
-    const existing = markConnected(this.state.players, conn.id)
-    if (existing) {
-      existing.disconnectedAt = null
-      this.bumpRevision()
-      await this.saveState()
-      this.sendResync(conn)
-      this.broadcastState()
-    }
   }
 
   pruneDisconnectedPlayers() {
@@ -439,8 +445,18 @@ export default class SudokuParty implements Party.Server {
         return
       }
 
+	  if (data.type !== "join" && !this.isAuthenticated(sender)) {
+		this.send(sender, { type: "error", message: "Invalid player session" })
+		return
+	  }
+
       switch (data.type) {
         case "join": {
+		  const playerToken = this.connectionTokens.get(sender)
+		  if (!playerToken) {
+			this.send(sender, { type: "error", message: "Invalid player session" })
+			return
+		  }
           const name = typeof data.name === "string" ? data.name.trim().slice(0, 32) : ""
           if (!name) {
             this.send(sender, { type: "error", message: "Enter a player name" })
@@ -449,8 +465,15 @@ export default class SudokuParty implements Party.Server {
 
           const existing = this.state.players[sender.id]
           if (existing) {
+			const expectedToken = this.state.playerTokens[sender.id]
+			if (expectedToken !== playerToken) {
+			  this.send(sender, { type: "error", message: "Invalid player session" })
+			  return
+			}
+			this.state.playerTokens[sender.id] = playerToken
             existing.connected = true
             existing.name = name
+			existing.disconnectedAt = null
           } else {
             if (this.state.status !== "waiting") {
               this.send(sender, { type: "error", message: "Game already started" })
@@ -473,6 +496,7 @@ export default class SudokuParty implements Party.Server {
               disconnectedAt: null,
               cells: null,
             }
+			this.state.playerTokens[sender.id] = playerToken
           }
           if (!this.state.hostId || !this.state.players[this.state.hostId]) {
             this.state.hostId = sender.id
@@ -481,6 +505,7 @@ export default class SudokuParty implements Party.Server {
           this.bumpRevision()
           await this.saveState()
           this.broadcastState()
+		  this.sendResync(sender)
           break
         }
 
@@ -562,6 +587,13 @@ export default class SudokuParty implements Party.Server {
           } else {
             delete this.state.players[sender.id]
           }
+		  delete this.state.playerTokens[sender.id]
+          if (Object.keys(this.state.players).length === 0) {
+            this.state = null
+            await this.room.storage.delete("state")
+            await this.room.storage.deleteAlarm()
+            return
+          }
           if (sender.id === this.state.hostId) {
             this.state.hostId = nextHost(this.state.players, sender.id) ?? ""
           }
@@ -618,7 +650,7 @@ export default class SudokuParty implements Party.Server {
       connection => connection.id === conn.id && connection !== conn,
     )
     const player = this.state.players[conn.id]
-    if (replacementIsOpen || !player || player.connected === false) return
+	if (replacementIsOpen || !player || !this.isAuthenticated(conn) || player.connected === false) return
     markDisconnected(this.state.players, conn.id)
     player.disconnectedAt = Date.now()
     this.bumpRevision()

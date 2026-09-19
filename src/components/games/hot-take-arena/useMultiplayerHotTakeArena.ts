@@ -1,6 +1,12 @@
 import PartySocket from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { generateRoomCode, PARTYKIT_HOST, getPersistentPlayerId } from "@/lib/partykit";
+import {
+	clearPersistentPlayerId,
+	generateRoomCode,
+	leavePartySocket,
+	PARTYKIT_HOST,
+	getPersistentPlayerId,
+} from "@/lib/partykit";
 import type {
 	HotTakePosition,
 	HotTakeSettings,
@@ -32,13 +38,21 @@ export function useMultiplayerHotTakeArena() {
 	});
 
 	const socketRef = useRef<PartySocket | null>(null);
+	const roomCodeRef = useRef("");
+	const isHost = Boolean(
+		state.gameState &&
+			state.playerId &&
+			state.gameState.hostId === state.playerId,
+	);
 
 	const handleMessage = useCallback((message: ServerMessage) => {
 		switch (message.type) {
 			case "state":
 				setState((previous) => ({
 					...previous,
+					connectionStatus: "connected",
 					gameState: message.state,
+					error: null,
 				}));
 				break;
 
@@ -162,21 +176,24 @@ export function useMultiplayerHotTakeArena() {
 			playerName: string,
 			settings?: HotTakeSettings,
 		) => {
-			if (socketRef.current) {
-				socketRef.current.close();
-			}
+			const normalizedRoomCode = roomCode.toUpperCase();
+			const previousSocket = socketRef.current;
+			socketRef.current = null;
+			previousSocket?.close();
+			roomCodeRef.current = normalizedRoomCode;
+			const playerId = getPersistentPlayerId("hot-take-arena", normalizedRoomCode);
 
 			setState((previous) => ({
 				...previous,
 				connectionStatus: "connecting",
 				error: null,
-				isHost,
+				playerId,
 			}));
 
 			const socket = new PartySocket({
 				host: PARTYKIT_HOST,
-				room: roomCode,
-				id: getPersistentPlayerId("hot-take-arena", roomCode),
+				room: normalizedRoomCode,
+				id: playerId,
 				party: "hottakearena",
 				query: {
 					host: isHost.toString(),
@@ -186,9 +203,12 @@ export function useMultiplayerHotTakeArena() {
 						promptPack: settings.promptPack,
 					}),
 				},
+				maxEnqueuedMessages: 0,
 			});
+			socketRef.current = socket;
 
 			socket.addEventListener("open", () => {
+				if (socketRef.current !== socket) return;
 				setState((previous) => ({
 					...previous,
 					connectionStatus: "connected",
@@ -199,6 +219,7 @@ export function useMultiplayerHotTakeArena() {
 			});
 
 			socket.addEventListener("message", (event) => {
+				if (socketRef.current !== socket) return;
 				try {
 					handleMessage(JSON.parse(event.data) as ServerMessage);
 				} catch (error) {
@@ -207,32 +228,56 @@ export function useMultiplayerHotTakeArena() {
 			});
 
 			socket.addEventListener("close", () => {
+				if (socketRef.current !== socket) return;
 				setState((previous) => ({
 					...previous,
-					connectionStatus: "disconnected",
+					connectionStatus: "connecting",
+					error: "Connection lost. Reconnecting...",
 				}));
 			});
 
 			socket.addEventListener("error", () => {
+				if (socketRef.current !== socket) return;
 				setState((previous) => ({
 					...previous,
-					connectionStatus: "error",
-					error: "Connection failed",
+					connectionStatus: "connecting",
+					error: "Connection lost. Reconnecting...",
 				}));
 			});
-
-			socketRef.current = socket;
 		},
 		[handleMessage],
 	);
 
+	const sendNow = useCallback((message: object) => {
+		const socket = socketRef.current;
+		if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+		socket.send(JSON.stringify(message));
+		return true;
+	}, []);
+
 	const disconnect = useCallback(() => {
-		if (socketRef.current) {
-			socketRef.current.send(JSON.stringify({ type: "leave" }));
-			socketRef.current.close();
-			socketRef.current = null;
+		const socket = socketRef.current;
+		socketRef.current = null;
+		if (socket) leavePartySocket(socket, { type: "leave" });
+		if (roomCodeRef.current) {
+			clearPersistentPlayerId("hot-take-arena", roomCodeRef.current);
+			roomCodeRef.current = "";
 		}
 
+		setState({
+			connectionStatus: "disconnected",
+			gameState: null,
+			playerId: null,
+			error: null,
+			isHost: false,
+		});
+	}, []);
+
+	const abandonReconnect = useCallback(() => {
+		const socket = socketRef.current;
+		socketRef.current = null;
+		socket?.close();
+		roomCodeRef.current = "";
 		setState({
 			connectionStatus: "disconnected",
 			gameState: null,
@@ -259,33 +304,20 @@ export function useMultiplayerHotTakeArena() {
 	);
 
 	const startGame = useCallback(() => {
-		if (socketRef.current && state.isHost) {
-			socketRef.current.send(JSON.stringify({ type: "start" }));
-		}
-	}, [state.isHost]);
+		if (isHost) sendNow({ type: "start" });
+	}, [isHost, sendNow]);
 
 	const submitVote = useCallback((position: HotTakePosition) => {
-		if (socketRef.current) {
-			socketRef.current.send(
-				JSON.stringify({
-					type: "submit-vote",
-					position,
-				}),
-			);
-		}
-	}, []);
+		sendNow({ type: "submit-vote", position });
+	}, [sendNow]);
 
 	const nextRound = useCallback(() => {
-		if (socketRef.current && state.isHost) {
-			socketRef.current.send(JSON.stringify({ type: "next-round" }));
-		}
-	}, [state.isHost]);
+		if (isHost) sendNow({ type: "next-round" });
+	}, [isHost, sendNow]);
 
 	const restartGame = useCallback(() => {
-		if (socketRef.current && state.isHost) {
-			socketRef.current.send(JSON.stringify({ type: "restart" }));
-		}
-	}, [state.isHost]);
+		if (isHost) sendNow({ type: "restart" });
+	}, [isHost, sendNow]);
 
 	useEffect(() => {
 		return () => {
@@ -297,6 +329,7 @@ export function useMultiplayerHotTakeArena() {
 
 	return {
 		...state,
+		isHost,
 		createGame,
 		joinGame,
 		startGame,
@@ -304,5 +337,6 @@ export function useMultiplayerHotTakeArena() {
 		nextRound,
 		restartGame,
 		disconnect,
+		abandonReconnect,
 	};
 }

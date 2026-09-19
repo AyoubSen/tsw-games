@@ -15,6 +15,7 @@
 
 - Inspect only what is necessary to implement the task.
 - Read relevant files and confirm local interfaces when required.
+- When discussing or planning future features, check `ROADMAP.md` for prior suggestions. Treat it as a non-binding idea bank, not required work.
 - Do not perform broad repository exploration without a concrete need.
 - Do not repeatedly verify facts already established during the session.
 

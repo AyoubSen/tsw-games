@@ -1,4 +1,5 @@
 import {
+	Binary,
 	Brain,
 	Flag,
 	Grid2X2,
@@ -64,6 +65,22 @@ export interface PlannedGameCatalogEntry extends GameCatalogBaseEntry {
 export type GameCatalogEntry = LiveGameCatalogEntry | PlannedGameCatalogEntry;
 
 export const liveGames: LiveGameCatalogEntry[] = [
+	{
+		id: "code-breaker",
+		title: "Code Breaker",
+		description:
+			"Crack a hidden color sequence through pure deduction, solo or in a private-board race.",
+		icon: <Binary className="w-10 h-10" />,
+		path: "/games/code-breaker",
+		players: "1-8 players",
+		minPlayers: 1,
+		maxPlayers: 8,
+		tags: ["solo", "multiplayer", "brainy", "competitive", "deduction"],
+		color: "from-violet-500 to-fuchsia-600",
+		status: "live",
+		category: "strategy",
+		isNew: true,
+	},
 	{
 		id: "guess-the-country",
 		title: "Guess the Country",

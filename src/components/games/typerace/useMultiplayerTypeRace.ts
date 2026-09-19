@@ -1,6 +1,12 @@
 import PartySocket from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { generateRoomCode, PARTYKIT_HOST, getPersistentPlayerId } from "@/lib/partykit";
+import {
+	clearPersistentPlayerId,
+	generateRoomCode,
+	leavePartySocket,
+	PARTYKIT_HOST,
+	getPersistentPlayerId,
+} from "@/lib/partykit";
 import type {
 	GameMode,
 	PublicGameState,
@@ -18,29 +24,39 @@ export interface MultiplayerState {
 	gameState: PublicGameState | null;
 	playerId: string | null;
 	error: string | null;
-	isHost: boolean;
 }
 
-export function useMultiplayerTypeRace() {
-	const [state, setState] = useState<MultiplayerState>({
+function initialState(
+	overrides: Partial<MultiplayerState> = {},
+): MultiplayerState {
+	return {
 		connectionStatus: "disconnected",
 		gameState: null,
 		playerId: null,
 		error: null,
-		isHost: false,
-	});
+		...overrides,
+	};
+}
+
+export function useMultiplayerTypeRace() {
+	const [state, setState] = useState<MultiplayerState>(() => initialState());
 
 	const socketRef = useRef<PartySocket | null>(null);
-	const playerNameRef = useRef<string>("");
-	const lastProgressRef = useRef<number>(0);
-	const throttleRef = useRef<number | null>(null);
+	const roomCodeRef = useRef("");
+	const isHost = Boolean(
+		state.gameState &&
+			state.playerId &&
+			state.gameState.hostId === state.playerId,
+	);
 
 	const handleMessage = useCallback((message: ServerMessage) => {
 		switch (message.type) {
 			case "state":
 				setState((prev) => ({
 					...prev,
+					connectionStatus: "connected",
 					gameState: message.state,
+					error: null,
 				}));
 				break;
 
@@ -103,7 +119,7 @@ export function useMultiplayerTypeRace() {
 								...prev.gameState.players,
 								[message.playerId]: {
 									...player,
-									progress: message.progress,
+									progress: Math.max(player.progress, message.progress),
 									wpm: message.wpm,
 								},
 							},
@@ -154,6 +170,22 @@ export function useMultiplayerTypeRace() {
 				break;
 
 			case "error":
+				if (
+					message.message === "Game not found" ||
+					message.message === "Game already started" ||
+					message.message === "Game is full"
+				) {
+					const socket = socketRef.current;
+					socketRef.current = null;
+					socket?.close();
+					setState(
+						initialState({
+							connectionStatus: "error",
+							error: message.message,
+						}),
+					);
+					break;
+				}
 				setState((prev) => ({
 					...prev,
 					error: message.message,
@@ -164,41 +196,41 @@ export function useMultiplayerTypeRace() {
 
 	const connect = useCallback(
 		(roomCode: string, isHost: boolean, mode: GameMode, playerName: string) => {
-			if (socketRef.current) {
-				socketRef.current.close();
-			}
+			const previousSocket = socketRef.current;
+			socketRef.current = null;
+			previousSocket?.close();
 
-			playerNameRef.current = playerName;
-
-			setState((prev) => ({
-				...prev,
-				connectionStatus: "connecting",
-				error: null,
-				isHost,
-			}));
+			roomCodeRef.current = roomCode;
+			const playerId = getPersistentPlayerId("typerace", roomCode);
+			setState(initialState({ connectionStatus: "connecting", playerId }));
 
 			const socket = new PartySocket({
 				host: PARTYKIT_HOST,
 				room: roomCode,
-				id: getPersistentPlayerId("typerace", roomCode),
+				id: playerId,
 				party: "typerace",
 				query: {
 					host: isHost.toString(),
 					mode,
 				},
+				maxEnqueuedMessages: 0,
 			});
+			socketRef.current = socket;
 
 			socket.addEventListener("open", () => {
+				if (socketRef.current !== socket) return;
 				setState((prev) => ({
 					...prev,
 					connectionStatus: "connected",
 					playerId: socket.id,
+					error: null,
 				}));
 
 				socket.send(JSON.stringify({ type: "join", name: playerName }));
 			});
 
 			socket.addEventListener("message", (event) => {
+				if (socketRef.current !== socket) return;
 				try {
 					const message: ServerMessage = JSON.parse(event.data);
 					handleMessage(message);
@@ -208,41 +240,57 @@ export function useMultiplayerTypeRace() {
 			});
 
 			socket.addEventListener("close", () => {
+				if (socketRef.current !== socket) return;
 				setState((prev) => ({
 					...prev,
-					connectionStatus: "disconnected",
+					connectionStatus: "connecting",
+					error: "Connection lost. Reconnecting...",
 				}));
 			});
 
 			socket.addEventListener("error", () => {
+				if (socketRef.current !== socket) return;
 				setState((prev) => ({
 					...prev,
-					connectionStatus: "error",
-					error: "Connection failed",
+					connectionStatus: "connecting",
+					error: "Connection lost. Reconnecting...",
 				}));
 			});
-
-			socketRef.current = socket;
 		},
 		[handleMessage],
 	);
 
+	const sendNow = useCallback((message: object) => {
+		const socket = socketRef.current;
+		if (!socket || socket.readyState !== 1) {
+			setState((prev) => ({
+				...prev,
+				connectionStatus: "connecting",
+				error: "Connection lost. Reconnecting...",
+			}));
+			return false;
+		}
+		socket.send(JSON.stringify(message));
+		return true;
+	}, []);
+
 	const disconnect = useCallback(() => {
-		if (socketRef.current) {
-			socketRef.current.send(JSON.stringify({ type: "leave" }));
-			socketRef.current.close();
-			socketRef.current = null;
+		const socket = socketRef.current;
+		socketRef.current = null;
+		if (socket) leavePartySocket(socket, { type: "leave" });
+		if (roomCodeRef.current) {
+			clearPersistentPlayerId("typerace", roomCodeRef.current);
+			roomCodeRef.current = "";
 		}
-		if (throttleRef.current) {
-			clearTimeout(throttleRef.current);
-		}
-		setState({
-			connectionStatus: "disconnected",
-			gameState: null,
-			playerId: null,
-			error: null,
-			isHost: false,
-		});
+		setState(initialState());
+	}, []);
+
+	const abandonReconnect = useCallback(() => {
+		const socket = socketRef.current;
+		socketRef.current = null;
+		socket?.close();
+		roomCodeRef.current = "";
+		setState(initialState());
 	}, []);
 
 	const createGame = useCallback(
@@ -262,58 +310,58 @@ export function useMultiplayerTypeRace() {
 	);
 
 	const startGame = useCallback(() => {
-		if (socketRef.current && state.isHost) {
-			socketRef.current.send(JSON.stringify({ type: "start" }));
-		}
-	}, [state.isHost]);
+		if (isHost) sendNow({ type: "start" });
+	}, [isHost, sendNow]);
 
 	const sendProgress = useCallback(
-		(progress: number, wpm: number, accuracy: number) => {
-			if (!socketRef.current) return;
-			if (Math.abs(progress - lastProgressRef.current) < 2) {
+		(progress: number, wpm: number, accuracy: number, typedText: string) => {
+			if (!sendNow({ type: "progress", progress, wpm, accuracy, typedText })) {
 				return;
 			}
-
-			lastProgressRef.current = progress;
-			socketRef.current.send(
-				JSON.stringify({
-					type: "progress",
-					progress,
-					wpm,
-					accuracy,
-				}),
-			);
+			setState((prev) => {
+				if (!prev.gameState || !prev.playerId) return prev;
+				const player = prev.gameState.players[prev.playerId];
+				if (!player) return prev;
+				return {
+					...prev,
+					gameState: {
+						...prev.gameState,
+						players: {
+							...prev.gameState.players,
+							[prev.playerId]: {
+								...player,
+								progress: Math.max(player.progress, progress),
+								wpm,
+								accuracy,
+								typedText,
+							},
+						},
+					},
+				};
+			});
 		},
-		[],
+		[sendNow],
 	);
 
 	const sendComplete = useCallback((wpm: number, accuracy: number) => {
-		if (socketRef.current) {
-			socketRef.current.send(
-				JSON.stringify({ type: "complete", wpm, accuracy }),
-			);
-		}
-	}, []);
+		sendNow({ type: "complete", wpm, accuracy });
+	}, [sendNow]);
 
 	const restartGame = useCallback(() => {
-		if (socketRef.current && state.isHost) {
-			socketRef.current.send(JSON.stringify({ type: "restart" }));
-		}
-	}, [state.isHost]);
+		if (isHost) sendNow({ type: "restart" });
+	}, [isHost, sendNow]);
 
 	useEffect(() => {
 		return () => {
-			if (socketRef.current) {
-				socketRef.current.close();
-			}
-			if (throttleRef.current) {
-				clearTimeout(throttleRef.current);
-			}
+			const socket = socketRef.current;
+			socketRef.current = null;
+			socket?.close();
 		};
 	}, []);
 
 	return {
 		...state,
+		isHost,
 		createGame,
 		joinGame,
 		startGame,
@@ -321,5 +369,6 @@ export function useMultiplayerTypeRace() {
 		sendComplete,
 		restartGame,
 		disconnect,
+		abandonReconnect,
 	};
 }

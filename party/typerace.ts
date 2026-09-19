@@ -22,6 +22,7 @@ export interface Player {
   joinedAt: number
   /** False while their socket is away; they are not removed from the game. */
   connected?: boolean
+  typedText?: string
 }
 
 // Game state
@@ -42,7 +43,7 @@ export interface GameState {
 export type ClientMessage =
   | { type: "join"; name: string }
   | { type: "start" }
-  | { type: "progress"; progress: number; wpm: number; accuracy: number }
+  | { type: "progress"; progress: number; wpm: number; accuracy: number; typedText: string }
   | { type: "complete"; wpm: number; accuracy: number }
   | { type: "leave" }
   | { type: "restart" }
@@ -114,6 +115,11 @@ export default class TypeRaceParty implements Party.Server {
     const stored = await this.room.storage.get<GameState>("state")
     if (stored) {
       this.state = stored
+      for (const player of Object.values(this.state.players)) {
+        player.connected = false
+        player.typedText ??= ""
+      }
+      await this.saveState()
     }
   }
 
@@ -175,9 +181,7 @@ export default class TypeRaceParty implements Party.Server {
       await this.saveState()
     }
 
-    if (this.state) {
-      this.send(conn, { type: "state", state: this.getPublicState() })
-    } else {
+    if (!this.state) {
       this.send(conn, { type: "error", message: "Game not found" })
     }
   }
@@ -220,6 +224,7 @@ export default class TypeRaceParty implements Party.Server {
             completedAt: null,
             joinedAt: Date.now(),
             connected: true,
+            typedText: "",
           }
 
           this.state.players[sender.id] = player
@@ -239,6 +244,10 @@ export default class TypeRaceParty implements Party.Server {
           if (presentCount(this.state.players) < 2) {
             this.send(sender, { type: "error", message: "Need at least 2 players" })
             return
+          }
+
+          for (const player of Object.values(this.state.players)) {
+            if (player.connected === false) delete this.state.players[player.id]
           }
 
           this.state.status = "playing"
@@ -261,9 +270,10 @@ export default class TypeRaceParty implements Party.Server {
           const player = this.state.players[sender.id]
           if (!player || player.completed) return
 
-          player.progress = data.progress
-          player.wpm = data.wpm
-          player.accuracy = data.accuracy
+          player.progress = Math.max(player.progress, Math.max(0, Math.min(100, data.progress)))
+          player.wpm = Math.max(0, data.wpm)
+          player.accuracy = Math.max(0, Math.min(100, data.accuracy))
+          player.typedText = data.typedText.slice(0, this.state.text.length)
           await this.saveState()
 
           // Broadcast progress to others
@@ -271,8 +281,8 @@ export default class TypeRaceParty implements Party.Server {
             {
               type: "player-progress",
               playerId: sender.id,
-              progress: data.progress,
-              wpm: data.wpm,
+              progress: player.progress,
+              wpm: player.wpm,
             },
             sender.id
           )
@@ -356,6 +366,12 @@ export default class TypeRaceParty implements Party.Server {
         case "leave": {
           delete this.state.players[sender.id]
 
+          if (Object.keys(this.state.players).length === 0) {
+            this.state = null
+            await this.room.storage.delete("state")
+            return
+          }
+
           if (sender.id === this.state.hostId) {
             const next = nextHost(this.state.players, sender.id);
             if (next) this.state.hostId = next;
@@ -387,6 +403,7 @@ export default class TypeRaceParty implements Party.Server {
             player.accuracy = 100
             player.completed = false
             player.completedAt = null
+            player.typedText = ""
           }
 
           await this.saveState()
@@ -403,11 +420,13 @@ export default class TypeRaceParty implements Party.Server {
   async onClose(conn: Party.Connection) {
     if (!this.state) return
 
+    const replacementIsOpen = Array.from(this.room.getConnections()).some(
+      connection => connection.id === conn.id && connection !== conn,
+    )
+    if (replacementIsOpen) return
+
     if (this.state.players[conn.id]) {
       markDisconnected(this.state.players, conn.id);
-
-      // The host keeps the role across a blip; canControlGame lets someone else
-      // act only once the host is genuinely absent.
 
       await this.saveState()
       // No "player-left" here: they may be back in a moment, and the client

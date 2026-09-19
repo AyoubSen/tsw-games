@@ -1,6 +1,14 @@
 import PartySocket from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { generateRoomCode, PARTYKIT_HOST, getPersistentPlayerId } from "@/lib/partykit";
+import {
+	clearPersistentPlayerId,
+	clearPersistentPlayerToken,
+	generateRoomCode,
+	getPersistentPlayerId,
+	getPersistentPlayerToken,
+	leavePartySocket,
+	PARTYKIT_HOST,
+} from "@/lib/partykit";
 import type {
 	Guess,
 	PublicGameState,
@@ -25,15 +33,6 @@ export interface MultiplayerState {
 	guesses: Guess[];
 	undoPending: boolean;
 	canvasRevision: number;
-}
-
-function getPlayerToken(roomCode: string): string {
-	const key = `drawing:playerToken:${roomCode}`;
-	const existing = sessionStorage.getItem(key);
-	if (existing) return existing;
-	const token = crypto.randomUUID();
-	sessionStorage.setItem(key, token);
-	return token;
 }
 
 function strokesMatch(left: Stroke[], right: Stroke[]): boolean {
@@ -67,6 +66,7 @@ export function useMultiplayerDrawing() {
 	});
 
 	const socketRef = useRef<PartySocket | null>(null);
+	const roomCodeRef = useRef("");
 	const playerNameRef = useRef<string>("");
 	const undoRequestIdRef = useRef<string | null>(null);
 
@@ -80,10 +80,10 @@ export function useMultiplayerDrawing() {
 					);
 					return {
 						...prev,
+						connectionStatus: "connected",
 						gameState: message.state,
-						isHost: prev.playerId
-							? message.state.canControl
-							: prev.isHost,
+						isHost: message.state.canControl,
+						error: null,
 						strokes: message.state.strokes,
 						guesses: message.state.guesses,
 						canvasRevision:
@@ -275,6 +275,11 @@ export function useMultiplayerDrawing() {
 
 			case "error":
 				undoRequestIdRef.current = null;
+				if (message.message === "Invalid player session" && roomCodeRef.current) {
+					clearPersistentPlayerId("drawing", roomCodeRef.current);
+					clearPersistentPlayerToken("drawing", roomCodeRef.current);
+					roomCodeRef.current = "";
+				}
 				setState((prev) => ({
 					...prev,
 					error: message.message,
@@ -291,9 +296,12 @@ export function useMultiplayerDrawing() {
 			playerName: string,
 			settings?: GameSettings,
 		) => {
-			if (socketRef.current) {
-				socketRef.current.close();
-			}
+			const normalizedRoomCode = roomCode.toUpperCase();
+			const previousSocket = socketRef.current;
+			socketRef.current = null;
+			previousSocket?.close();
+			roomCodeRef.current = normalizedRoomCode;
+			const playerId = getPersistentPlayerId("drawing", normalizedRoomCode);
 
 			playerNameRef.current = playerName;
 			undoRequestIdRef.current = null;
@@ -302,7 +310,7 @@ export function useMultiplayerDrawing() {
 				...prev,
 				connectionStatus: "connecting",
 				error: null,
-				isHost,
+				playerId,
 				strokes: [],
 				guesses: [],
 				undoPending: false,
@@ -311,21 +319,24 @@ export function useMultiplayerDrawing() {
 
 			const socket = new PartySocket({
 				host: PARTYKIT_HOST,
-				room: roomCode,
-				id: getPersistentPlayerId("drawing", roomCode),
+				room: normalizedRoomCode,
+				id: playerId,
 				party: "drawing",
 				query: {
 					host: isHost.toString(),
-					playerToken: getPlayerToken(roomCode),
+					playerToken: getPersistentPlayerToken("drawing", normalizedRoomCode),
 					...(settings && {
 						mode: settings.mode,
 						roundTimeLimit: settings.roundTimeLimit.toString(),
 						roundsPerPlayer: settings.roundsPerPlayer.toString(),
 					}),
 				},
+				maxEnqueuedMessages: 0,
 			});
+			socketRef.current = socket;
 
 			socket.addEventListener("open", () => {
+				if (socketRef.current !== socket) return;
 				setState((prev) => ({
 					...prev,
 					connectionStatus: "connected",
@@ -336,6 +347,7 @@ export function useMultiplayerDrawing() {
 			});
 
 			socket.addEventListener("message", (event) => {
+				if (socketRef.current !== socket) return;
 				try {
 					const message: ServerMessage = JSON.parse(event.data);
 					handleMessage(message);
@@ -345,37 +357,60 @@ export function useMultiplayerDrawing() {
 			});
 
 			socket.addEventListener("close", () => {
+				if (socketRef.current !== socket) return;
 				undoRequestIdRef.current = null;
 				setState((prev) => ({
 					...prev,
-					connectionStatus: "disconnected",
+					connectionStatus: "connecting",
+					error: "Connection lost. Reconnecting...",
 					undoPending: false,
 					canvasRevision: prev.canvasRevision + 1,
 				}));
 			});
 
 			socket.addEventListener("error", () => {
+				if (socketRef.current !== socket) return;
 				undoRequestIdRef.current = null;
 				setState((prev) => ({
 					...prev,
-					connectionStatus: "error",
-					error: "Connection failed",
+					connectionStatus: "connecting",
+					error: "Connection lost. Reconnecting...",
 					undoPending: false,
 					canvasRevision: prev.canvasRevision + 1,
 				}));
 			});
-
-			socketRef.current = socket;
 		},
 		[handleMessage],
 	);
 
 	const disconnect = useCallback(() => {
-		if (socketRef.current) {
-			socketRef.current.send(JSON.stringify({ type: "leave" }));
-			socketRef.current.close();
-			socketRef.current = null;
+		const socket = socketRef.current;
+		socketRef.current = null;
+		if (socket) leavePartySocket(socket, { type: "leave" });
+		if (roomCodeRef.current) {
+			clearPersistentPlayerId("drawing", roomCodeRef.current);
+			clearPersistentPlayerToken("drawing", roomCodeRef.current);
+			roomCodeRef.current = "";
 		}
+		setState({
+			connectionStatus: "disconnected",
+			gameState: null,
+			playerId: null,
+			error: null,
+			isHost: false,
+			strokes: [],
+			guesses: [],
+			undoPending: false,
+			canvasRevision: 0,
+		});
+		undoRequestIdRef.current = null;
+	}, []);
+
+	const abandonReconnect = useCallback(() => {
+		const socket = socketRef.current;
+		socketRef.current = null;
+		socket?.close();
+		roomCodeRef.current = "";
 		setState({
 			connectionStatus: "disconnected",
 			gameState: null,
@@ -407,7 +442,7 @@ export function useMultiplayerDrawing() {
 	);
 
 	const startGame = useCallback(() => {
-		if (socketRef.current && state.isHost) {
+		if (socketRef.current?.readyState === WebSocket.OPEN && state.isHost) {
 			socketRef.current.send(JSON.stringify({ type: "start" }));
 		}
 	}, [state.isHost]);
@@ -443,7 +478,7 @@ export function useMultiplayerDrawing() {
 	}, []);
 
 	const sendGuess = useCallback((text: string) => {
-		if (socketRef.current && text.trim()) {
+		if (socketRef.current?.readyState === WebSocket.OPEN && text.trim()) {
 			socketRef.current.send(
 				JSON.stringify({ type: "guess", text: text.trim() }),
 			);
@@ -452,7 +487,7 @@ export function useMultiplayerDrawing() {
 
 	const submitTelephoneEntry = useCallback(
 		(submission: { text?: string; strokes?: Stroke[] }) => {
-			if (socketRef.current && state.gameState) {
+			if (socketRef.current?.readyState === WebSocket.OPEN && state.gameState) {
 				socketRef.current.send(
 					JSON.stringify({
 						type: "telephone-submit",
@@ -466,7 +501,11 @@ export function useMultiplayerDrawing() {
 	);
 
 	const advanceTelephoneReveal = useCallback(() => {
-		if (socketRef.current && state.isHost && state.gameState) {
+		if (
+			socketRef.current?.readyState === WebSocket.OPEN &&
+			state.isHost &&
+			state.gameState
+		) {
 			socketRef.current.send(
 				JSON.stringify({
 					type: "telephone-reveal-next",
@@ -479,7 +518,7 @@ export function useMultiplayerDrawing() {
 
 	const sendTelephoneReaction = useCallback(
 		(emoji: string) => {
-			if (socketRef.current && state.gameState) {
+			if (socketRef.current?.readyState === WebSocket.OPEN && state.gameState) {
 				socketRef.current.send(
 					JSON.stringify({
 						type: "telephone-react",
@@ -494,7 +533,7 @@ export function useMultiplayerDrawing() {
 	);
 
 	const restartGame = useCallback(() => {
-		if (socketRef.current && state.isHost) {
+		if (socketRef.current?.readyState === WebSocket.OPEN && state.isHost) {
 			socketRef.current.send(JSON.stringify({ type: "restart" }));
 		}
 	}, [state.isHost]);
@@ -521,5 +560,6 @@ export function useMultiplayerDrawing() {
 		sendTelephoneReaction,
 		restartGame,
 		disconnect,
+		abandonReconnect,
 	};
 }

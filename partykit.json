@@ -14,7 +14,8 @@
     "sudoku": "party/sudoku.ts",
     "poker": "party/poker.ts",
     "mafia": "party/mafia.ts",
-    "guessthecountry": "party/guess-the-country.ts"
+    "guessthecountry": "party/guess-the-country.ts",
+    "codebreaker": "party/code-breaker.ts"
   },
   "compatibilityDate": "2024-01-01"
 }

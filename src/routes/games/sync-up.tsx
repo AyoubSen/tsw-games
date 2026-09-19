@@ -78,11 +78,15 @@ function SyncUpPage() {
 	const session = useMultiplayerSession({
 		game: "sync-up",
 		joinGame: multiplayer.joinGame,
-		hasGameState: !!multiplayer.gameState,
+		hasGameState: Boolean(
+			multiplayer.gameState &&
+				multiplayer.playerId &&
+				multiplayer.gameState.players[multiplayer.playerId],
+		),
 		error: multiplayer.error,
 		connectionStatus: multiplayer.connectionStatus,
 		inviteRoomCode: invitedRoomCode,
-		onAbandon: multiplayer.disconnect,
+		onAbandon: multiplayer.abandonReconnect,
 	});
 	const activeRoundNumber = multiplayer.gameState?.roundNumber;
 
@@ -129,6 +133,9 @@ function SyncUpPage() {
 			),
 		[multiplayer.gameState],
 	);
+	const presentPlayerCount = playerList.filter(
+		(player) => player.connected !== false,
+	).length;
 
 	const leaderboard = useMemo(
 		() =>
@@ -166,10 +173,8 @@ function SyncUpPage() {
 			: [];
 
 	const handleBack = () => {
-		if (multiplayer.connectionStatus !== "disconnected") {
-			session.forget();
-			multiplayer.disconnect();
-		}
+		session.forget();
+		multiplayer.disconnect();
 
 		setView("setup");
 		setAnswer("");
@@ -401,7 +406,7 @@ function SyncUpPage() {
 				onCopyRoomCode={handleCopyRoomCode}
 				onStart={multiplayer.startGame}
 				onLeave={handleBack}
-				canStart={playerList.length >= 2}
+				canStart={presentPlayerCount >= 2}
 				isHost={multiplayer.isHost}
 				message={message}
 			/>

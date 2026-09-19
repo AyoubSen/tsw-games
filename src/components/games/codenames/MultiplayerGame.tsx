@@ -47,17 +47,20 @@ export function MultiplayerGame({
   const isGuessing = currentTurn?.phase === "guessing"
 
   // Can I give a clue?
-  const canGiveClue = isMyTeamsTurn && isGivingClue && isSpymaster
+  const canGiveClue = Boolean(isMyTeamsTurn && isGivingClue && isSpymaster)
 
   // Can I guess?
-  const canGuess =
+  const canGuess = Boolean(
     isMyTeamsTurn &&
     isGuessing &&
     !isSpymaster &&
     currentPlayer?.role === "guesser"
+  )
 
   // Can I end guessing?
-  const canEndGuessing = isMyTeamsTurn && isGuessing && currentPlayer?.role === "guesser"
+  const canEndGuessing = Boolean(
+    isMyTeamsTurn && isGuessing && currentPlayer?.role === "guesser"
+  )
 
   // Timer logic
   const showClueTimer = isGivingClue && settings.clueTimeLimit > 0 && currentTurn?.phaseStartedAt

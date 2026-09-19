@@ -1,6 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import PartySocket from "partysocket"
-import { PARTYKIT_HOST, generateRoomCode, getPersistentPlayerId } from "@/lib/partykit"
+import {
+  PARTYKIT_HOST,
+  clearPersistentPlayerId,
+  clearPersistentPlayerToken,
+  generateRoomCode,
+  getPersistentPlayerId,
+  getPersistentPlayerToken,
+  leavePartySocket,
+} from "@/lib/partykit"
 import type {
   ServerMessage,
   PublicGameState,
@@ -34,29 +42,35 @@ export function useMultiplayerCodenames() {
   })
 
   const socketRef = useRef<PartySocket | null>(null)
+  const roomCodeRef = useRef("")
   const playerNameRef = useRef<string>("")
 
   const connect = useCallback((roomCode: string, isHost: boolean, playerName: string, settings?: GameSettings) => {
-    if (socketRef.current) {
-      socketRef.current.close()
-    }
+    const normalizedRoomCode = roomCode.toUpperCase()
+    const previousSocket = socketRef.current
+    socketRef.current = null
+    previousSocket?.close()
 
     playerNameRef.current = playerName
+    roomCodeRef.current = normalizedRoomCode
+    const playerId = getPersistentPlayerId("codenames", normalizedRoomCode)
 
     setState((prev) => ({
       ...prev,
       connectionStatus: "connecting",
       error: null,
-      isHost,
+      playerId,
     }))
 
     const socket = new PartySocket({
       host: PARTYKIT_HOST,
-      room: roomCode,
-      id: getPersistentPlayerId("codenames", roomCode),
+      room: normalizedRoomCode,
+      id: playerId,
       party: "codenames",
+      maxEnqueuedMessages: 0,
       query: {
         host: isHost.toString(),
+        playerToken: getPersistentPlayerToken("codenames", normalizedRoomCode),
         ...(settings && {
           gameMode: settings.gameMode,
           clueTimeLimit: settings.clueTimeLimit.toString(),
@@ -64,18 +78,22 @@ export function useMultiplayerCodenames() {
         }),
       },
     })
+    socketRef.current = socket
 
     socket.addEventListener("open", () => {
+      if (socketRef.current !== socket) return
       setState((prev) => ({
         ...prev,
         connectionStatus: "connected",
         playerId: socket.id,
+        error: null,
       }))
 
       socket.send(JSON.stringify({ type: "join", name: playerName }))
     })
 
     socket.addEventListener("message", (event) => {
+      if (socketRef.current !== socket) return
       try {
         const message: ServerMessage = JSON.parse(event.data)
         handleMessage(message)
@@ -85,21 +103,22 @@ export function useMultiplayerCodenames() {
     })
 
     socket.addEventListener("close", () => {
+      if (socketRef.current !== socket) return
       setState((prev) => ({
         ...prev,
-        connectionStatus: "disconnected",
+        connectionStatus: "connecting",
+        error: "Connection lost. Reconnecting...",
       }))
     })
 
     socket.addEventListener("error", () => {
+      if (socketRef.current !== socket) return
       setState((prev) => ({
         ...prev,
-        connectionStatus: "error",
-        error: "Connection failed",
+        connectionStatus: "connecting",
+        error: "Connection lost. Reconnecting...",
       }))
     })
-
-    socketRef.current = socket
   }, [])
 
   const handleMessage = useCallback((message: ServerMessage) => {
@@ -107,8 +126,11 @@ export function useMultiplayerCodenames() {
       case "state":
         setState((prev) => ({
           ...prev,
+          connectionStatus: "connected",
           gameState: message.state,
           isSpymaster: message.isSpymaster,
+          isHost: Boolean(prev.playerId && message.state.hostId === prev.playerId),
+          error: null,
         }))
         break
 
@@ -210,6 +232,11 @@ export function useMultiplayerCodenames() {
         break
 
       case "error":
+		if (message.message === "Invalid player session" && roomCodeRef.current) {
+		  clearPersistentPlayerId("codenames", roomCodeRef.current)
+		  clearPersistentPlayerToken("codenames", roomCodeRef.current)
+		  roomCodeRef.current = ""
+		}
         setState((prev) => ({
           ...prev,
           error: message.message,
@@ -223,10 +250,13 @@ export function useMultiplayerCodenames() {
   }, [])
 
   const disconnect = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "leave" }))
-      socketRef.current.close()
-      socketRef.current = null
+    const socket = socketRef.current
+    socketRef.current = null
+    if (socket) leavePartySocket(socket, { type: "leave" })
+    if (roomCodeRef.current) {
+      clearPersistentPlayerId("codenames", roomCodeRef.current)
+      clearPersistentPlayerToken("codenames", roomCodeRef.current)
+      roomCodeRef.current = ""
     }
     setState({
       connectionStatus: "disconnected",
@@ -236,6 +266,28 @@ export function useMultiplayerCodenames() {
       error: null,
       isHost: false,
     })
+  }, [])
+
+  const abandonReconnect = useCallback(() => {
+    const socket = socketRef.current
+    socketRef.current = null
+    socket?.close()
+    roomCodeRef.current = ""
+    setState({
+      connectionStatus: "disconnected",
+      gameState: null,
+      playerId: null,
+      isSpymaster: false,
+      error: null,
+      isHost: false,
+    })
+  }, [])
+
+  const sendNow = useCallback((message: object) => {
+    const socket = socketRef.current
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false
+    socket.send(JSON.stringify(message))
+    return true
   }, [])
 
   const createGame = useCallback((playerName: string, settings: GameSettings) => {
@@ -249,46 +301,32 @@ export function useMultiplayerCodenames() {
   }, [connect])
 
   const proceedToTeamSelection = useCallback(() => {
-    if (socketRef.current && state.isHost) {
-      socketRef.current.send(JSON.stringify({ type: "proceed-to-team-selection" }))
-    }
-  }, [state.isHost])
+    if (state.isHost) sendNow({ type: "proceed-to-team-selection" })
+  }, [sendNow, state.isHost])
 
   const selectTeam = useCallback((team: Team, role: PlayerRole) => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "select-team", team, role }))
-    }
-  }, [])
+    sendNow({ type: "select-team", team, role })
+  }, [sendNow])
 
   const startGame = useCallback(() => {
-    if (socketRef.current && state.isHost) {
-      socketRef.current.send(JSON.stringify({ type: "start-game" }))
-    }
-  }, [state.isHost])
+    if (state.isHost) sendNow({ type: "start-game" })
+  }, [sendNow, state.isHost])
 
   const giveClue = useCallback((word: string, count: number) => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "give-clue", word, count }))
-    }
-  }, [])
+    sendNow({ type: "give-clue", word, count })
+  }, [sendNow])
 
   const guess = useCallback((cardIndex: number) => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "guess", cardIndex }))
-    }
-  }, [])
+    sendNow({ type: "guess", cardIndex })
+  }, [sendNow])
 
   const endGuessing = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "end-guessing" }))
-    }
-  }, [])
+    sendNow({ type: "end-guessing" })
+  }, [sendNow])
 
   const restart = useCallback(() => {
-    if (socketRef.current && state.isHost) {
-      socketRef.current.send(JSON.stringify({ type: "restart" }))
-    }
-  }, [state.isHost])
+    if (state.isHost) sendNow({ type: "restart" })
+  }, [sendNow, state.isHost])
 
   useEffect(() => {
     return () => {
@@ -310,5 +348,6 @@ export function useMultiplayerCodenames() {
     endGuessing,
     restart,
     disconnect,
+    abandonReconnect,
   }
 }

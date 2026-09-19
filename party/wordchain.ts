@@ -35,6 +35,7 @@ export interface GameState {
 
   // Game-specific
   wordChain: string[]
+  wordAuthors: string[] // Parallel to wordChain; "" for the auto-generated starting word
   usedWords: string[] // Array for serialization (Set doesn't serialize)
   currentPlayerId: string | null
   turnStartedAt: number | null
@@ -53,6 +54,7 @@ export interface PublicGameState {
   maxHearts: number
   turnTimeLimit: number
   wordChain: string[]
+  wordAuthors: string[]
   currentPlayerId: string | null
   turnStartedAt: number | null
   winnerId: string | null
@@ -143,16 +145,27 @@ async function getFallbackWordList(): Promise<Set<string>> {
   return fallbackWordListPromise
 }
 
-// Validate word using Free Dictionary API
+const DICTIONARY_TIMEOUT_MS = 4000
+
+// Validate word using Free Dictionary API.
+// Only a 404 is a real verdict of "not a word"; any other failure means the
+// service is degraded, and we must not punish the player for that. The fallback
+// list only holds 5-letter Wordle words, so it can confirm a word but never deny one.
 async function isValidEnglishWord(word: string): Promise<boolean> {
   const normalizedWord = word.toLowerCase()
   const fallbackWords = await getFallbackWordList()
 
   try {
     const response = await fetch(
-      `https://api.dictionaryapi.dev/api/v2/entries/en/${normalizedWord}`
+      `https://api.dictionaryapi.dev/api/v2/entries/en/${normalizedWord}`,
+      { signal: AbortSignal.timeout(DICTIONARY_TIMEOUT_MS) }
     )
-    return response.ok || fallbackWords.has(normalizedWord)
+
+    if (response.ok) return true
+    if (response.status === 404) return fallbackWords.has(normalizedWord)
+
+    console.error(`Dictionary API unavailable (${response.status}) for "${normalizedWord}"`)
+    return true
   } catch (error) {
     console.error("Dictionary API error:", error)
     // Keep gameplay moving if the external dictionary is down.
@@ -168,7 +181,15 @@ export default class WordChainParty implements Party.Server {
   async onStart() {
     const stored = await this.room.storage.get<GameState>("state")
     if (stored) {
+      // Rooms persisted before word authorship existed have no wordAuthors array
+      if (!stored.wordAuthors) {
+        stored.wordAuthors = stored.wordChain.map(() => "")
+      }
       this.state = stored
+      for (const player of Object.values(this.state.players)) {
+        player.connected = false
+      }
+      await this.saveState()
     }
   }
 
@@ -193,6 +214,7 @@ export default class WordChainParty implements Party.Server {
       maxHearts: this.state.maxHearts,
       turnTimeLimit: this.state.turnTimeLimit,
       wordChain: this.state.wordChain,
+      wordAuthors: this.state.wordAuthors ?? [],
       currentPlayerId: this.state.currentPlayerId,
       turnStartedAt: this.state.turnStartedAt,
       winnerId: this.state.winnerId,
@@ -381,6 +403,7 @@ export default class WordChainParty implements Party.Server {
         maxHearts: gameMode === "hardcore" ? 1 : Math.max(1, Math.min(5, maxHearts)),
         turnTimeLimit: Math.max(5, Math.min(60, turnTimeLimit)),
         wordChain: [],
+        wordAuthors: [],
         usedWords: [],
         currentPlayerId: null,
         turnStartedAt: null,
@@ -390,9 +413,7 @@ export default class WordChainParty implements Party.Server {
       await this.saveState()
     }
 
-    if (this.state) {
-      this.send(conn, { type: "state", state: this.getPublicState() })
-    } else {
+    if (!this.state) {
       this.send(conn, { type: "error", message: "Game not found" })
     }
   }
@@ -454,10 +475,15 @@ export default class WordChainParty implements Party.Server {
             return
           }
 
+          for (const player of Object.values(this.state.players)) {
+            if (player.connected === false) delete this.state.players[player.id]
+          }
+
           // Start the game
           const startingWord = getRandomStartingWord()
           this.state.status = "playing"
           this.state.wordChain = [startingWord]
+          this.state.wordAuthors = [""]
           this.state.usedWords = [startingWord.toLowerCase()]
 
           // Reset hearts for all players
@@ -469,7 +495,10 @@ export default class WordChainParty implements Party.Server {
           }
 
           // Randomize player order
-          this.state.playerOrder = [...this.state.playerOrder].sort(() => Math.random() - 0.5)
+          this.state.playerOrder = Object.values(this.state.players)
+            .filter(player => player.connected !== false)
+            .map(player => player.id)
+            .sort(() => Math.random() - 0.5)
           const firstPlayerId = this.state.playerOrder[0]
 
           await this.saveState()
@@ -482,6 +511,7 @@ export default class WordChainParty implements Party.Server {
 
           // Start first turn
           this.startTurn(firstPlayerId)
+          await this.saveState()
           break
         }
 
@@ -533,6 +563,7 @@ export default class WordChainParty implements Party.Server {
 
           // Word accepted!
           this.state.wordChain.push(word)
+          this.state.wordAuthors.push(sender.id)
           this.state.usedWords.push(word)
 
           // Cancel current alarm
@@ -561,16 +592,23 @@ export default class WordChainParty implements Party.Server {
         case "leave": {
           const wasPlaying = this.state.status === "playing"
           const wasCurrentPlayer = sender.id === this.state.currentPlayerId
+          const nextPlayerId = wasCurrentPlayer ? this.getNextPlayerId(sender.id) : null
 
           delete this.state.players[sender.id]
           this.state.playerOrder = this.state.playerOrder.filter(id => id !== sender.id)
+
+          if (Object.keys(this.state.players).length === 0) {
+            this.state = null
+            await this.room.storage.delete("state")
+            await this.room.storage.deleteAlarm()
+            return
+          }
 
           if (sender.id === this.state.hostId) {
             const next = nextHost(this.state.players, sender.id);
             if (next) this.state.hostId = next;
           }
 
-          await this.saveState()
           this.broadcast({ type: "player-left", playerId: sender.id })
 
           // If game was playing, handle turn/win logic
@@ -582,10 +620,11 @@ export default class WordChainParty implements Party.Server {
               this.endGame(null)
             } else if (wasCurrentPlayer) {
               // Move to next player
-              this.startTurn(this.getNextPlayerId(sender.id))
+              this.startTurn(nextPlayerId)
             }
           }
 
+          await this.saveState()
           this.broadcast({ type: "state", state: this.getPublicState() })
           break
         }
@@ -599,6 +638,7 @@ export default class WordChainParty implements Party.Server {
           // Reset game state
           this.state.status = "waiting"
           this.state.wordChain = []
+          this.state.wordAuthors = []
           this.state.usedWords = []
           this.state.currentPlayerId = null
           this.state.turnStartedAt = null
@@ -629,32 +669,17 @@ export default class WordChainParty implements Party.Server {
   async onClose(conn: Party.Connection) {
     if (!this.state) return
 
+    const replacementIsOpen = Array.from(this.room.getConnections()).some(
+      connection => connection.id === conn.id && connection !== conn,
+    )
+    if (replacementIsOpen) return
+
     if (this.state.players[conn.id]) {
-      const wasPlaying = this.state.status === "playing"
-      const wasCurrentPlayer = conn.id === this.state.currentPlayerId
-
       markDisconnected(this.state.players, conn.id);
-      this.state.playerOrder = this.state.playerOrder.filter(id => id !== conn.id)
-
-      // The host keeps the role across a blip; canControlGame lets someone else
-      // act only once the host is genuinely absent.
 
       await this.saveState()
       // No "player-left" here: they may be back in a moment, and the client
       // removes players on that message.
-
-      // If game was playing, handle turn/win logic
-      if (wasPlaying) {
-        const activePlayers = this.getActivePlayers()
-        if (activePlayers.length === 1) {
-          this.endGame(activePlayers[0].id)
-        } else if (activePlayers.length === 0) {
-          this.endGame(null)
-        } else if (wasCurrentPlayer) {
-          this.startTurn(this.getNextPlayerId(conn.id))
-        }
-      }
-
       this.broadcast({ type: "state", state: this.getPublicState() })
     }
   }

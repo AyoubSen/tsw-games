@@ -1,6 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import PartySocket from "partysocket"
-import { PARTYKIT_HOST, generateRoomCode, getPersistentPlayerId } from "@/lib/partykit"
+import {
+  PARTYKIT_HOST,
+  clearPersistentPlayerId,
+  clearPersistentPlayerToken,
+  generateRoomCode,
+  getPersistentPlayerId,
+  getPersistentPlayerToken,
+  leavePartySocket,
+} from "@/lib/partykit"
 import type {
   ServerMessage,
   PublicGameState,
@@ -29,27 +37,33 @@ export function useMultiplayerMafia() {
   })
 
   const socketRef = useRef<PartySocket | null>(null)
+  const roomCodeRef = useRef("")
 
   const connect = useCallback(
     (roomCode: string, isHost: boolean, playerName: string, settings?: MafiaSettings) => {
-      if (socketRef.current) {
-        socketRef.current.close()
-      }
+      const normalizedRoomCode = roomCode.toUpperCase()
+      const previousSocket = socketRef.current
+      socketRef.current = null
+      previousSocket?.close()
+      roomCodeRef.current = normalizedRoomCode
+      const playerId = getPersistentPlayerId("mafia", normalizedRoomCode)
 
       setState((prev) => ({
         ...prev,
         connectionStatus: "connecting",
         error: null,
-        isHost,
+        playerId,
       }))
 
       const socket = new PartySocket({
         host: PARTYKIT_HOST,
-        room: roomCode,
-        id: getPersistentPlayerId("mafia", roomCode),
+        room: normalizedRoomCode,
+        id: playerId,
         party: "mafia",
+        maxEnqueuedMessages: 0,
         query: {
           host: isHost.toString(),
+          playerToken: getPersistentPlayerToken("mafia", normalizedRoomCode),
           ...(settings && {
             discussionTime: settings.discussionTime.toString(),
             votingTime: settings.votingTime.toString(),
@@ -57,17 +71,21 @@ export function useMultiplayerMafia() {
           }),
         },
       })
+      socketRef.current = socket
 
       socket.addEventListener("open", () => {
+        if (socketRef.current !== socket) return
         setState((prev) => ({
           ...prev,
           connectionStatus: "connected",
           playerId: socket.id,
+          error: null,
         }))
         socket.send(JSON.stringify({ type: "join", name: playerName }))
       })
 
       socket.addEventListener("message", (event) => {
+        if (socketRef.current !== socket) return
         try {
           const message: ServerMessage = JSON.parse(event.data)
           handleMessage(message)
@@ -77,21 +95,22 @@ export function useMultiplayerMafia() {
       })
 
       socket.addEventListener("close", () => {
+        if (socketRef.current !== socket) return
         setState((prev) => ({
           ...prev,
-          connectionStatus: "disconnected",
+          connectionStatus: "connecting",
+          error: "Connection lost. Reconnecting...",
         }))
       })
 
       socket.addEventListener("error", () => {
+        if (socketRef.current !== socket) return
         setState((prev) => ({
           ...prev,
-          connectionStatus: "error",
-          error: "Connection failed",
+          connectionStatus: "connecting",
+          error: "Connection lost. Reconnecting...",
         }))
       })
-
-      socketRef.current = socket
     },
     []
   )
@@ -101,7 +120,10 @@ export function useMultiplayerMafia() {
       case "state":
         setState((prev) => ({
           ...prev,
+          connectionStatus: "connected",
           gameState: message.state,
+          isHost: Boolean(prev.playerId && message.state.hostId === prev.playerId),
+          error: null,
         }))
         break
 
@@ -141,6 +163,11 @@ export function useMultiplayerMafia() {
         break
 
       case "error":
+		if (message.message === "Invalid player session" && roomCodeRef.current) {
+		  clearPersistentPlayerId("mafia", roomCodeRef.current)
+		  clearPersistentPlayerToken("mafia", roomCodeRef.current)
+		  roomCodeRef.current = ""
+		}
         setState((prev) => ({
           ...prev,
           error: message.message,
@@ -153,10 +180,13 @@ export function useMultiplayerMafia() {
   }, [])
 
   const disconnect = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: "leave" }))
-      socketRef.current.close()
-      socketRef.current = null
+    const socket = socketRef.current
+    socketRef.current = null
+    if (socket) leavePartySocket(socket, { type: "leave" })
+    if (roomCodeRef.current) {
+      clearPersistentPlayerId("mafia", roomCodeRef.current)
+      clearPersistentPlayerToken("mafia", roomCodeRef.current)
+      roomCodeRef.current = ""
     }
     setState({
       connectionStatus: "disconnected",
@@ -165,6 +195,27 @@ export function useMultiplayerMafia() {
       error: null,
       isHost: false,
     })
+  }, [])
+
+  const abandonReconnect = useCallback(() => {
+    const socket = socketRef.current
+    socketRef.current = null
+    socket?.close()
+    roomCodeRef.current = ""
+    setState({
+      connectionStatus: "disconnected",
+      gameState: null,
+      playerId: null,
+      error: null,
+      isHost: false,
+    })
+  }, [])
+
+  const sendNow = useCallback((message: object) => {
+    const socket = socketRef.current
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false
+    socket.send(JSON.stringify(message))
+    return true
   }, [])
 
   const createGame = useCallback(
@@ -184,34 +235,32 @@ export function useMultiplayerMafia() {
   )
 
   const startGame = useCallback(() => {
-    if (socketRef.current && state.isHost) {
-      socketRef.current.send(JSON.stringify({ type: "start-game" }))
-    }
-  }, [state.isHost])
+    if (state.isHost) sendNow({ type: "start-game" })
+  }, [sendNow, state.isHost])
 
   const sendNightAction = useCallback((targetId: string) => {
-    socketRef.current?.send(JSON.stringify({ type: "night-action", targetId }))
-  }, [])
+    sendNow({ type: "night-action", targetId })
+  }, [sendNow])
 
   const sendWitchAction = useCallback((heal: boolean, killTargetId: string | null) => {
-    socketRef.current?.send(JSON.stringify({ type: "witch-action", heal, killTargetId }))
-  }, [])
+    sendNow({ type: "witch-action", heal, killTargetId })
+  }, [sendNow])
 
   const sendCupidAction = useCallback((lover1: string, lover2: string) => {
-    socketRef.current?.send(JSON.stringify({ type: "cupid-action", lover1, lover2 }))
-  }, [])
+    sendNow({ type: "cupid-action", lover1, lover2 })
+  }, [sendNow])
 
   const sendHunterKill = useCallback((targetId: string) => {
-    socketRef.current?.send(JSON.stringify({ type: "hunter-kill", targetId }))
-  }, [])
+    sendNow({ type: "hunter-kill", targetId })
+  }, [sendNow])
 
   const sendDayVote = useCallback((targetId: string) => {
-    socketRef.current?.send(JSON.stringify({ type: "day-vote", targetId }))
-  }, [])
+    sendNow({ type: "day-vote", targetId })
+  }, [sendNow])
 
   const sendChat = useCallback((text: string) => {
-    socketRef.current?.send(JSON.stringify({ type: "chat", text }))
-  }, [])
+    sendNow({ type: "chat", text })
+  }, [sendNow])
 
   useEffect(() => {
     return () => {
@@ -233,5 +282,6 @@ export function useMultiplayerMafia() {
     sendDayVote,
     sendChat,
     disconnect,
+    abandonReconnect,
   }
 }

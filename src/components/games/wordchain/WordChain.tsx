@@ -1,20 +1,27 @@
 import { useRef, useEffect } from "react"
-import { ArrowRight } from "lucide-react"
 import { cn } from "@/lib/utils"
+import type { Player } from "../../../../party/wordchain"
 
 interface WordChainProps {
   words: string[]
+  authors?: string[]
+  players?: Record<string, Player>
+  localPlayerId?: string
   className?: string
 }
 
-export function WordChain({ words, className }: WordChainProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
+export function WordChain({
+  words,
+  authors = [],
+  players = {},
+  localPlayerId,
+  className,
+}: WordChainProps) {
+  const endRef = useRef<HTMLDivElement>(null)
 
-  // Auto-scroll to the end when new words are added
+  // Keep the newest word in view
   useEffect(() => {
-    if (containerRef.current) {
-      containerRef.current.scrollLeft = containerRef.current.scrollWidth
-    }
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
   }, [words.length])
 
   if (words.length === 0) {
@@ -26,48 +33,76 @@ export function WordChain({ words, className }: WordChainProps) {
   }
 
   return (
-    <div
-      ref={containerRef}
-      className={cn(
-        "flex items-center gap-2 overflow-x-auto py-4 px-2 scrollbar-thin",
-        className
-      )}
-    >
+    <div className={cn("flex flex-col gap-1 py-1", className)}>
       {words.map((word, index) => {
         const isLast = index === words.length - 1
         const isFirst = index === 0
-        const lastLetter = word[word.length - 1].toUpperCase()
+        const authorId = authors[index]
+        const author = authorId ? players[authorId] : undefined
+        const isMine = !!authorId && authorId === localPlayerId
+        const head = word.slice(0, -1)
+        const tail = word.slice(-1)
 
         return (
-          <div key={index} className="flex items-center gap-2 shrink-0">
+          <div key={index} className="flex items-stretch gap-3">
+            {/* Connector rail */}
+            <div className="flex w-6 shrink-0 flex-col items-center">
+              <div
+                className={cn(
+                  "w-px flex-1",
+                  isFirst ? "bg-transparent" : "bg-border"
+                )}
+              />
+              <div
+                className={cn(
+                  "flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-bold uppercase",
+                  isLast
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border bg-muted text-muted-foreground"
+                )}
+              >
+                {isFirst ? "1" : index + 1}
+              </div>
+              <div
+                className={cn(
+                  "w-px flex-1",
+                  isLast ? "bg-transparent" : "bg-border"
+                )}
+              />
+            </div>
+
+            {/* Word row */}
             <div
               className={cn(
-                "px-4 py-2 rounded-lg font-mono text-lg font-bold uppercase tracking-wider transition-all",
-                isFirst && "bg-primary/20 text-primary border-2 border-primary/30",
-                isLast && !isFirst && "bg-green-500/20 text-green-600 border-2 border-green-500/30 animate-pulse",
-                !isFirst && !isLast && "bg-muted text-foreground"
+                "flex min-w-0 flex-1 items-baseline gap-2 rounded-lg border px-3 py-2 transition-colors",
+                isLast
+                  ? "border-primary/40 bg-primary/10"
+                  : "border-transparent bg-muted/40",
+                isMine && !isLast && "bg-primary/5"
               )}
             >
-              {word.split("").map((letter, letterIndex) => (
-                <span
-                  key={letterIndex}
-                  className={cn(
-                    letterIndex === word.length - 1 && !isLast && "text-primary font-extrabold"
-                  )}
-                >
-                  {letter}
+              <span className="font-mono text-lg font-bold uppercase tracking-wider break-all">
+                {head}
+                <span className={cn(isLast ? "text-primary" : "text-primary/80", "font-extrabold")}>
+                  {tail}
                 </span>
-              ))}
+              </span>
+
+              <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                {isFirst && !authorId ? (
+                  <span className="uppercase tracking-wide">Start</span>
+                ) : (
+                  <>
+                    {author?.name ?? "—"}
+                    {isMine && <span className="ml-1 opacity-70">(you)</span>}
+                  </>
+                )}
+              </span>
             </div>
-            {!isLast && (
-              <div className="flex items-center text-muted-foreground">
-                <ArrowRight className="w-4 h-4" />
-                <span className="text-xs font-bold text-primary ml-1">{lastLetter}</span>
-              </div>
-            )}
           </div>
         )
       })}
+      <div ref={endRef} />
     </div>
   )
 }

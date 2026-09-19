@@ -98,11 +98,15 @@ function PressureButtonPage() {
 	const session = useMultiplayerSession({
 		game: "pressure-button",
 		joinGame: multiplayer.joinGame,
-		hasGameState: !!multiplayer.gameState,
+		hasGameState: Boolean(
+			multiplayer.gameState &&
+				multiplayer.playerId &&
+				multiplayer.gameState.players[multiplayer.playerId],
+		),
 		error: multiplayer.error,
 		connectionStatus: multiplayer.connectionStatus,
 		inviteRoomCode: invitedRoomCode,
-		onAbandon: multiplayer.disconnect,
+		onAbandon: multiplayer.abandonReconnect,
 	});
 	const activeTurnNumber = multiplayer.gameState?.turnNumber;
 
@@ -192,10 +196,8 @@ function PressureButtonPage() {
 		multiplayer.playerId === gameState?.responderId;
 
 	const handleBack = () => {
-		if (multiplayer.connectionStatus !== "disconnected") {
-			session.forget();
-			multiplayer.disconnect();
-		}
+		session.forget();
+		multiplayer.disconnect();
 
 		setView("setup");
 		setAnswer("");
@@ -425,7 +427,7 @@ function PressureButtonPage() {
 				onCopyRoomCode={handleCopyRoomCode}
 				onStart={multiplayer.startGame}
 				onLeave={handleBack}
-				canStart={playerList.length >= 2}
+				canStart={playerList.filter((player) => player.connected !== false).length >= 2}
 				isHost={multiplayer.isHost}
 				message={message}
 				startLabel="Start Pressure"
@@ -550,7 +552,9 @@ function PressureButtonPage() {
 												<div className="mt-4 grid gap-2 sm:grid-cols-2">
 													{playerList
 														.filter(
-															(player) => player.id !== multiplayer.playerId,
+													(player) =>
+														player.id !== multiplayer.playerId &&
+														player.connected !== false,
 														)
 														.map((player) => (
 															<Button

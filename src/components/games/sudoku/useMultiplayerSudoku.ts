@@ -1,6 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import PartySocket from "partysocket"
-import { PARTYKIT_HOST, generateRoomCode, getPersistentPlayerId, clearPersistentPlayerId } from "@/lib/partykit"
+import {
+  PARTYKIT_HOST,
+  clearPersistentPlayerId,
+  clearPersistentPlayerToken,
+  generateRoomCode,
+  getPersistentPlayerId,
+  getPersistentPlayerToken,
+  leavePartySocket,
+} from "@/lib/partykit"
 import {
   SUDOKU_PROTOCOL_VERSION,
   type ClientMessage,
@@ -79,24 +87,35 @@ export function useMultiplayerSudoku() {
   const roundIdRef = useRef("")
   const revisionRef = useRef(0)
   const resumingRef = useRef(false)
+  const resumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleMessage = useCallback((message: ServerMessage) => {
     if (message.type === "error") {
       const terminalJoinError = (
         message.message === "Game already started" ||
-        message.message === "Game is full"
+        message.message === "Game is full" ||
+        message.message === "Invalid player session"
       )
       const quietResumeFailure = resumingRef.current && message.message === "Game not found"
       if (message.message === "Game not found" || terminalJoinError) {
         resumingRef.current = false
+        if (resumeTimeoutRef.current) {
+          clearTimeout(resumeTimeoutRef.current)
+          resumeTimeoutRef.current = null
+        }
         clearSession()
+        if (roomCodeRef.current) {
+          clearPersistentPlayerId("sudoku", roomCodeRef.current)
+          clearPersistentPlayerToken("sudoku", roomCodeRef.current)
+          roomCodeRef.current = ""
+        }
         const socket = socketRef.current
         socketRef.current = null
         socket?.close()
         roundIdRef.current = ""
         revisionRef.current = 0
         setState(initialState({
-          connectionStatus: quietResumeFailure ? "disconnected" : "error",
+          connectionStatus: "error",
           error: quietResumeFailure ? null : message.message,
         }))
         return
@@ -112,6 +131,10 @@ export function useMultiplayerSudoku() {
     switch (message.type) {
       case "state":
         resumingRef.current = false
+        if (resumeTimeoutRef.current) {
+          clearTimeout(resumeTimeoutRef.current)
+          resumeTimeoutRef.current = null
+        }
         roundIdRef.current = message.state.roundId
         setState(prev => {
           const roundChanged = prev.gameState?.roundId !== message.state.roundId
@@ -160,6 +183,7 @@ export function useMultiplayerSudoku() {
       id: playerId,
       query: {
         host: isHost.toString(),
+        playerToken: getPersistentPlayerToken("sudoku", roomCode),
         protocolVersion: String(SUDOKU_PROTOCOL_VERSION),
         ...(difficulty && { difficulty }),
       },
@@ -188,6 +212,11 @@ export function useMultiplayerSudoku() {
       try {
         const message = JSON.parse(event.data) as ServerMessage
         if (message.protocolVersion !== SUDOKU_PROTOCOL_VERSION) {
+          resumingRef.current = false
+          if (resumeTimeoutRef.current) {
+            clearTimeout(resumeTimeoutRef.current)
+            resumeTimeoutRef.current = null
+          }
           setState(prev => ({
             ...prev,
             connectionStatus: "error",
@@ -205,14 +234,18 @@ export function useMultiplayerSudoku() {
 
     socket.addEventListener("close", () => {
       if (socketRef.current !== socket) return
-      setState(prev => ({ ...prev, connectionStatus: "disconnected" }))
+      setState(prev => ({
+        ...prev,
+        connectionStatus: "connecting",
+        error: "Connection lost. Reconnecting...",
+      }))
     })
 
     socket.addEventListener("error", () => {
       if (socketRef.current !== socket) return
       setState(prev => ({
         ...prev,
-        connectionStatus: "error",
+        connectionStatus: "connecting",
         error: "Connection lost. Reconnecting...",
       }))
     })
@@ -231,19 +264,23 @@ export function useMultiplayerSudoku() {
   const disconnect = useCallback(() => {
     const socket = socketRef.current
     socketRef.current = null
-    if (socket?.readyState === 1) {
+    if (socket) {
       const leave: ClientMessage = { type: "leave", protocolVersion: SUDOKU_PROTOCOL_VERSION }
-      socket.send(JSON.stringify(leave))
+      leavePartySocket(socket, leave)
     }
-    socket?.close()
 
     if (roomCodeRef.current) {
       clearPersistentPlayerId("sudoku", roomCodeRef.current)
+      clearPersistentPlayerToken("sudoku", roomCodeRef.current)
       roomCodeRef.current = ""
     }
     roundIdRef.current = ""
     revisionRef.current = 0
     resumingRef.current = false
+    if (resumeTimeoutRef.current) {
+      clearTimeout(resumeTimeoutRef.current)
+      resumeTimeoutRef.current = null
+    }
     clearSession()
     setState(initialState())
   }, [])
@@ -253,17 +290,43 @@ export function useMultiplayerSudoku() {
     if (!record) return false
     if (inviteRoomCode && record.roomCode !== inviteRoomCode) return false
     resumingRef.current = true
+    if (resumeTimeoutRef.current) clearTimeout(resumeTimeoutRef.current)
+    const normalizedRoomCode = record.roomCode.toUpperCase()
+    resumeTimeoutRef.current = setTimeout(() => {
+      resumeTimeoutRef.current = null
+      if (!resumingRef.current || roomCodeRef.current !== normalizedRoomCode) return
+
+      resumingRef.current = false
+      clearSession()
+      const socket = socketRef.current
+      socketRef.current = null
+      socket?.close()
+      roomCodeRef.current = ""
+      roundIdRef.current = ""
+      revisionRef.current = 0
+      setState(initialState({ connectionStatus: "error" }))
+    }, 15_000)
     connect(record.roomCode, false, record.name)
     return true
   }, [connect])
 
   const createGame = useCallback((playerName: string, difficulty: Difficulty) => {
+    resumingRef.current = false
+    if (resumeTimeoutRef.current) {
+      clearTimeout(resumeTimeoutRef.current)
+      resumeTimeoutRef.current = null
+    }
     const roomCode = generateRoomCode()
     connect(roomCode, true, playerName, difficulty)
     return roomCode
   }, [connect])
 
   const joinGame = useCallback((roomCode: string, playerName: string) => {
+    resumingRef.current = false
+    if (resumeTimeoutRef.current) {
+      clearTimeout(resumeTimeoutRef.current)
+      resumeTimeoutRef.current = null
+    }
     connect(roomCode.toUpperCase(), false, playerName)
   }, [connect])
 
@@ -300,14 +363,14 @@ export function useMultiplayerSudoku() {
       const socket = socketRef.current
       socketRef.current = null
       socket?.close()
+      if (resumeTimeoutRef.current) clearTimeout(resumeTimeoutRef.current)
     }
   }, [])
 
-  const recordedHost = state.gameState?.players[state.gameState.hostId]
   const isHost = Boolean(
     state.gameState &&
     state.playerId &&
-    (state.gameState.hostId === state.playerId || !recordedHost || recordedHost.connected === false)
+    state.gameState.hostId === state.playerId
   )
 
   return {

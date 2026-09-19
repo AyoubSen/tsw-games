@@ -3,6 +3,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { parseInviteSearch } from '@/lib/inviteLinks'
+import { useMultiplayerSession } from '@/lib/multiplayerSession'
 import { GameModeSelector } from '@/components/games/codenames/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/codenames/MultiplayerLobby'
 import { TeamSelector } from '@/components/games/codenames/TeamSelector'
@@ -22,15 +23,30 @@ function CodenamesPage() {
   const [view, setView] = useState<GameView>('select')
 
   const multiplayer = useMultiplayerCodenames()
+  const session = useMultiplayerSession({
+    game: 'codenames',
+    joinGame: multiplayer.joinGame,
+    hasGameState: Boolean(
+      multiplayer.gameState &&
+      multiplayer.playerId &&
+      multiplayer.gameState.players[multiplayer.playerId]
+    ),
+    error: multiplayer.error,
+    connectionStatus: multiplayer.connectionStatus,
+    inviteRoomCode: invitedRoomCode,
+    onAbandon: multiplayer.abandonReconnect,
+  })
 
   // Handle multiplayer game creation
   const handleCreateMultiplayer = (playerName: string, settings: GameSettings) => {
-    multiplayer.createGame(playerName, settings)
+    const roomCode = multiplayer.createGame(playerName, settings)
+    session.remember(roomCode, playerName)
   }
 
   // Handle multiplayer game join
   const handleJoinMultiplayer = (roomCode: string, playerName: string) => {
     multiplayer.joinGame(roomCode, playerName)
+    session.remember(roomCode.toUpperCase(), playerName)
   }
 
   // Handle team selection
@@ -55,15 +71,15 @@ function CodenamesPage() {
 
   // Handle leaving multiplayer
   const handleLeaveMultiplayer = () => {
+    session.forget()
     multiplayer.disconnect()
     setView('select')
   }
 
   // Handle back to mode selection
   const handleBackToSelect = () => {
-    if (multiplayer.connectionStatus !== 'disconnected') {
-      multiplayer.disconnect()
-    }
+    session.forget()
+    multiplayer.disconnect()
     setView('select')
   }
 
@@ -73,6 +89,14 @@ function CodenamesPage() {
   }
 
   // Mode selection view
+  if (session.isResuming && view === 'select') {
+    return (
+      <div className="min-h-[calc(100vh-73px)] bg-background flex items-center justify-center">
+        <p className="text-muted-foreground">Rejoining your game…</p>
+      </div>
+    )
+  }
+
   if (view === 'select') {
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background">

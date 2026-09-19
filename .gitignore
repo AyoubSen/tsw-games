@@ -10,6 +10,7 @@ count.txt
 .wrangler
 .output
 .vinxi
+.partykit
 todos.json
 
 # Local Netlify folder

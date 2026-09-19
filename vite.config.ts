@@ -15,7 +15,7 @@ const config = defineConfig({
     },
   },
   plugins: [
-    devtools(),
+    devtools({ eventBusConfig: { port: 42070 } }),
     netlify(),
     // this is the plugin that enables path aliases
     viteTsConfigPaths({

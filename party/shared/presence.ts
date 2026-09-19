@@ -68,18 +68,13 @@ export function nextHost(
 }
 
 /**
- * Whether `senderId` may perform host-only actions.
- *
- * A host whose socket merely blipped keeps the role - that is the whole point
- * of not deleting them. But if the recorded host is genuinely gone, someone
- * else must be able to act, otherwise a host closing their tab freezes the
- * room for everyone still in it.
+ * Whether `senderId` may perform host-only actions. Socket loss does not
+ * transfer ownership; explicit leave elects and persists the next host.
  */
 export function canControlGame(
-  players: Record<string, PresencePlayer>,
+  _players: Record<string, PresencePlayer>,
   hostId: string,
   senderId: string,
 ): boolean {
-  if (senderId === hostId) return true
-  return !isPresent(players[hostId])
+  return senderId === hostId
 }

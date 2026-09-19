@@ -51,7 +51,7 @@ interface UseMultiplayerSessionOptions {
   /** Storage namespace - use the same key as getPersistentPlayerId. */
   game: string
   joinGame: (roomCode: string, playerName: string) => void
-  /** True once the server has sent real game state, i.e. the resume worked. */
+  /** True once the server confirms this player is a member of the room. */
   hasGameState: boolean
   error: string | null
   connectionStatus: string
@@ -128,7 +128,7 @@ export function useMultiplayerSession({
       return
     }
 
-    if (error || connectionStatus === "error") {
+    if (error && connectionStatus !== "connecting") {
       forgetSession(game)
       abandonRef.current?.()
       setIsResuming(false)

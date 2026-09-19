@@ -76,10 +76,31 @@ export function getPersistentPlayerId(game: string, roomCode: string): string {
   return id
 }
 
+/**
+ * A private per-tab credential used to prove ownership of a public player ID.
+ * It must only be sent during connection/join and never included in public state.
+ */
+export function getPersistentPlayerToken(game: string, roomCode: string): string {
+  const key = `${game}:playerToken:${roomCode}`
+  if (typeof sessionStorage === "undefined") {
+    return crypto.randomUUID()
+  }
+  const existing = sessionStorage.getItem(key)
+  if (existing) return existing
+  const token = crypto.randomUUID()
+  sessionStorage.setItem(key, token)
+  return token
+}
+
 /** Forget this tab's identity for a room - used when the player deliberately leaves. */
 export function clearPersistentPlayerId(game: string, roomCode: string): void {
   if (typeof sessionStorage === "undefined") return
   sessionStorage.removeItem(`${game}:playerId:${roomCode}`)
+}
+
+export function clearPersistentPlayerToken(game: string, roomCode: string): void {
+  if (typeof sessionStorage === "undefined") return
+  sessionStorage.removeItem(`${game}:playerToken:${roomCode}`)
 }
 
 export function generateRoomCode(): string {

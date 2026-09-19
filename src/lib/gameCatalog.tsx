@@ -1,5 +1,6 @@
 import {
 	Brain,
+	Flag,
 	Grid2X2,
 	Grid3X3,
 	Keyboard,
@@ -16,14 +17,38 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
+export const GAME_TAGS = [
+	{ id: "solo", label: "Single Player" },
+	{ id: "multiplayer", label: "Multiplayer" },
+	{ id: "casual", label: "Casual" },
+	{ id: "chill", label: "Chill" },
+	{ id: "fun", label: "Fun" },
+	{ id: "hot", label: "Hot" },
+	{ id: "drinking", label: "Drinking" },
+	{ id: "brainy", label: "Brainy" },
+	{ id: "quick", label: "Quick" },
+	{ id: "competitive", label: "Competitive" },
+	{ id: "creative", label: "Creative" },
+	{ id: "deduction", label: "Deduction" },
+] as const;
+
+export type GameTag = (typeof GAME_TAGS)[number]["id"];
+
+export const GAME_TAG_LABELS: Record<GameTag, string> = Object.fromEntries(
+	GAME_TAGS.map((tag) => [tag.id, tag.label]),
+) as Record<GameTag, string>;
+
 interface GameCatalogBaseEntry {
 	id: string;
 	title: string;
 	description: string;
 	icon: ReactNode;
 	players: string;
+	minPlayers: number;
+	maxPlayers: number;
 	color: string;
 	category: "word" | "arcade" | "party" | "strategy" | "social";
+	tags: GameTag[];
 	isNew?: boolean;
 }
 
@@ -40,6 +65,22 @@ export type GameCatalogEntry = LiveGameCatalogEntry | PlannedGameCatalogEntry;
 
 export const liveGames: LiveGameCatalogEntry[] = [
 	{
+		id: "guess-the-country",
+		title: "Guess the Country",
+		description:
+			"Name flags from 195 countries solo, against the clock, or live with friends.",
+		icon: <Flag className="w-10 h-10" />,
+		path: "/games/guess-the-country",
+		players: "1-8 players",
+		minPlayers: 1,
+		maxPlayers: 8,
+		tags: ["solo", "multiplayer", "casual", "brainy", "quick", "competitive"],
+		color: "from-sky-500 to-indigo-600",
+		status: "live",
+		category: "party",
+		isNew: true,
+	},
+	{
 		id: "wordle",
 		title: "Wordle",
 		description:
@@ -47,6 +88,9 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		icon: <LetterText className="w-10 h-10" />,
 		path: "/games/wordle",
 		players: "1-8 players",
+		minPlayers: 1,
+		maxPlayers: 8,
+		tags: ["solo", "multiplayer", "casual", "chill", "brainy", "quick"],
 		color: "from-emerald-500 to-green-600",
 		status: "live",
 		category: "word",
@@ -59,6 +103,9 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		icon: <Keyboard className="w-10 h-10" />,
 		path: "/games/typerace",
 		players: "1-8 players",
+		minPlayers: 1,
+		maxPlayers: 8,
+		tags: ["solo", "multiplayer", "casual", "quick", "competitive"],
 		color: "from-blue-500 to-cyan-600",
 		status: "live",
 		category: "arcade",
@@ -71,6 +118,9 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		icon: <Palette className="w-10 h-10" />,
 		path: "/games/drawing",
 		players: "2-8 players",
+		minPlayers: 2,
+		maxPlayers: 8,
+		tags: ["multiplayer", "fun", "casual", "creative"],
 		color: "from-purple-500 to-pink-600",
 		status: "live",
 		category: "party",
@@ -83,6 +133,9 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		icon: <Shuffle className="w-10 h-10" />,
 		path: "/games/word-scramble",
 		players: "2-8 players",
+		minPlayers: 2,
+		maxPlayers: 8,
+		tags: ["multiplayer", "casual", "brainy", "quick"],
 		color: "from-yellow-500 to-orange-500",
 		status: "live",
 		category: "word",
@@ -96,6 +149,9 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		icon: <Sparkles className="w-10 h-10" />,
 		path: "/games/sync-up",
 		players: "2-12 players",
+		minPlayers: 2,
+		maxPlayers: 12,
+		tags: ["multiplayer", "fun", "casual", "chill"],
 		color: "from-cyan-500 to-amber-500",
 		status: "live",
 		category: "social",
@@ -109,6 +165,9 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		icon: <Vote className="w-10 h-10" />,
 		path: "/games/hot-take-arena",
 		players: "2-12 players",
+		minPlayers: 2,
+		maxPlayers: 12,
+		tags: ["multiplayer", "hot", "fun", "drinking"],
 		color: "from-rose-500 to-orange-500",
 		status: "live",
 		category: "social",
@@ -122,6 +181,9 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		icon: <Zap className="w-10 h-10" />,
 		path: "/games/pressure-button",
 		players: "2-10 players",
+		minPlayers: 2,
+		maxPlayers: 10,
+		tags: ["multiplayer", "hot", "fun", "drinking", "quick"],
 		color: "from-red-500 to-orange-600",
 		status: "live",
 		category: "social",
@@ -135,6 +197,9 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		icon: <Link2 className="w-10 h-10" />,
 		path: "/games/wordchain",
 		players: "2-8 players",
+		minPlayers: 2,
+		maxPlayers: 8,
+		tags: ["multiplayer", "casual", "brainy", "quick"],
 		color: "from-orange-500 to-amber-600",
 		status: "live",
 		category: "word",
@@ -147,6 +212,9 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		icon: <Grid3X3 className="w-10 h-10" />,
 		path: "/games/codenames",
 		players: "4-8 players",
+		minPlayers: 4,
+		maxPlayers: 8,
+		tags: ["multiplayer", "brainy", "competitive", "deduction"],
 		color: "from-rose-500 to-red-600",
 		status: "live",
 		category: "strategy",
@@ -159,6 +227,9 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		icon: <Grid2X2 className="w-10 h-10" />,
 		path: "/games/sudoku",
 		players: "1-8 players",
+		minPlayers: 1,
+		maxPlayers: 8,
+		tags: ["solo", "multiplayer", "chill", "brainy"],
 		color: "from-indigo-500 to-violet-600",
 		status: "live",
 		category: "strategy",
@@ -172,6 +243,9 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		icon: <span className="text-3xl">♠</span>,
 		path: "/games/poker",
 		players: "2-8 players",
+		minPlayers: 2,
+		maxPlayers: 8,
+		tags: ["multiplayer", "competitive", "brainy", "drinking"],
 		color: "from-emerald-600 to-teal-700",
 		status: "live",
 		category: "strategy",
@@ -185,6 +259,9 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		icon: <Moon className="w-10 h-10" />,
 		path: "/games/mafia",
 		players: "5-12 players",
+		minPlayers: 5,
+		maxPlayers: 12,
+		tags: ["multiplayer", "deduction", "fun", "competitive"],
 		color: "from-slate-700 to-zinc-900",
 		status: "live",
 		category: "social",
@@ -200,6 +277,9 @@ export const plannedGames: PlannedGameCatalogEntry[] = [
 			"Timed category-based questions with points for both speed and correct answers.",
 		icon: <Brain className="w-10 h-10" />,
 		players: "2-12 players",
+		minPlayers: 2,
+		maxPlayers: 12,
+		tags: ["multiplayer", "casual", "brainy", "fun"],
 		color: "from-fuchsia-500 to-pink-600",
 		status: "planned",
 		category: "party",
@@ -211,6 +291,9 @@ export const plannedGames: PlannedGameCatalogEntry[] = [
 			"Wait for the signal and click first. Random delays keep every round tense.",
 		icon: <TimerReset className="w-10 h-10" />,
 		players: "2-10 players",
+		minPlayers: 2,
+		maxPlayers: 10,
+		tags: ["multiplayer", "quick", "competitive", "fun"],
 		color: "from-sky-500 to-cyan-500",
 		status: "planned",
 		category: "arcade",
@@ -222,6 +305,9 @@ export const plannedGames: PlannedGameCatalogEntry[] = [
 			"Rapid-fire arithmetic where the fastest correct answer steals the point.",
 		icon: <Swords className="w-10 h-10" />,
 		players: "1-8 players",
+		minPlayers: 1,
+		maxPlayers: 8,
+		tags: ["solo", "multiplayer", "brainy", "quick"],
 		color: "from-lime-500 to-green-500",
 		status: "planned",
 		category: "arcade",
@@ -233,6 +319,9 @@ export const plannedGames: PlannedGameCatalogEntry[] = [
 			"Vote on impossible choices and immediately see who matched the group.",
 		icon: <Vote className="w-10 h-10" />,
 		players: "3-20 players",
+		minPlayers: 3,
+		maxPlayers: 20,
+		tags: ["multiplayer", "fun", "hot", "drinking", "chill"],
 		color: "from-zinc-500 to-slate-600",
 		status: "planned",
 		category: "social",

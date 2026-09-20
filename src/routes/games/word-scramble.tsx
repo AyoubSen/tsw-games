@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMultiplayerWordScramble } from "@/components/games/word-scramble/useMultiplayerWordScramble";
+import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge";
 import {
 	GameTopBar,
 	MultiplayerLobby,
@@ -28,7 +29,7 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
+import { getGameNightInviteLink, getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
 import {
 	buildWordScramblePuzzles,
 	pickNextWordScramblePuzzle,
@@ -142,6 +143,13 @@ function WordScramblePage() {
 	}, [invitedRoomCode]);
 
 	const multiplayer = useMultiplayerWordScramble();
+	const gameNight = useGameNightGameBridge({
+		gameId: "word-scramble",
+		hasGameState: Boolean(multiplayer.gameState && multiplayer.playerId && multiplayer.gameState.players[multiplayer.playerId]),
+		finished: multiplayer.gameState?.status === "finished",
+		connectHost: (roomId, name) => { multiplayer.createGame(name, { roundTimeLimit: 60, difficulty: "normal", claimVisibility: "hidden" }, roomId); },
+		connectPlayer: multiplayer.joinGame,
+	});
 
 	// Walk back into the room this tab was in before a reload.
 	const session = useMultiplayerSession({
@@ -156,6 +164,7 @@ function WordScramblePage() {
 		connectionStatus: multiplayer.connectionStatus,
 		inviteRoomCode: invitedRoomCode,
 		onAbandon: multiplayer.abandonReconnect,
+		disabled: gameNight.isGameNight,
 	});
 
 	useEffect(() => {
@@ -390,7 +399,7 @@ function WordScramblePage() {
 
 		try {
 			await navigator.clipboard.writeText(
-				getInviteLink(multiplayer.gameState.roomCode),
+				gameNight.isGameNight ? getGameNightInviteLink(gameNight.publicRoomCode) : getInviteLink(multiplayer.gameState.roomCode),
 			);
 			setCopiedRoomCode(true);
 			window.setTimeout(() => setCopiedRoomCode(false), 1600);
@@ -398,6 +407,8 @@ function WordScramblePage() {
 			setMultiplayerMessage("Could not copy the invite link.");
 		}
 	};
+
+	if (gameNight.isConnecting) return <div className="flex min-h-[calc(100vh-73px)] items-center justify-center text-muted-foreground">Joining your Game Night scramble...</div>;
 
 	const handleJoinMultiplayer = () => {
 		if (!playerName.trim() || !joinRoomCode.trim()) {
@@ -835,7 +846,7 @@ function WordScramblePage() {
 						</p>
 					</div>
 				}
-				roomCode={multiplayer.gameState.roomCode}
+				roomCode={gameNight.isGameNight ? gameNight.publicRoomCode : multiplayer.gameState.roomCode}
 				copiedRoomCode={copiedRoomCode}
 				onCopyRoomCode={handleCopyRoomCode}
 				onStart={multiplayer.startGame}
@@ -876,7 +887,7 @@ function WordScramblePage() {
 			<div className="min-h-[calc(100vh-73px)] bg-background">
 				<GameTopBar
 					title="Multiplayer Word Scramble"
-					subtitle={`Room ${multiplayer.gameState.roomCode}`}
+					subtitle={`Room ${gameNight.isGameNight ? gameNight.publicRoomCode : multiplayer.gameState.roomCode}`}
 					onBack={handleBackToSelect}
 					rightAction={
 						<Button

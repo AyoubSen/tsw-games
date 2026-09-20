@@ -10,6 +10,7 @@ import {
 	Trophy,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge";
 import { useMultiplayerSyncUp } from "@/components/games/sync-up/useMultiplayerSyncUp";
 import {
 	GameTopBar,
@@ -25,7 +26,7 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
+import { getGameNightInviteLink, getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
 import type { SyncUpPromptPack } from "@/lib/syncUpPrompts";
 import type { SyncUpSettings } from "../../../party/sync-up";
 
@@ -56,7 +57,8 @@ const PROMPT_PACK_OPTIONS: Array<{
 ];
 
 function SyncUpPage() {
-	const { room: invitedRoomCode } = Route.useSearch();
+	const { room: invitedRoomCode, night } = Route.useSearch();
+	const isGameNightMode = Boolean(night);
 	const [view, setView] = useState<SyncUpView>("setup");
 	const [playerName, setPlayerName] = useState("");
 	const [joinRoomCode, setJoinRoomCode] = useState(invitedRoomCode ?? "");
@@ -87,7 +89,18 @@ function SyncUpPage() {
 		connectionStatus: multiplayer.connectionStatus,
 		inviteRoomCode: invitedRoomCode,
 		onAbandon: multiplayer.abandonReconnect,
+		disabled: isGameNightMode,
 	});
+	const gameNightBridge = useGameNightGameBridge({
+		gameId: "sync-up",
+		hasGameState: Boolean(multiplayer.gameState && multiplayer.playerId),
+		finished: multiplayer.gameState?.status === "finished",
+		connectHost: (roomId, name) => multiplayer.createGame(name, { rounds, roundTimeLimit, promptPack }, roomId),
+		connectPlayer: multiplayer.joinGame,
+	});
+	const displayedRoomCode = gameNightBridge.isGameNight
+		? gameNightBridge.publicRoomCode
+		: multiplayer.gameState?.roomCode ?? "";
 	const activeRoundNumber = multiplayer.gameState?.roundNumber;
 
 	useEffect(() => {
@@ -215,9 +228,9 @@ function SyncUpPage() {
 		}
 
 		try {
-			await navigator.clipboard.writeText(
-				getInviteLink(multiplayer.gameState.roomCode),
-			);
+			await navigator.clipboard.writeText(gameNightBridge.isGameNight
+				? getGameNightInviteLink(displayedRoomCode)
+				: getInviteLink(multiplayer.gameState.roomCode));
 			setCopiedRoomCode(true);
 			window.setTimeout(() => setCopiedRoomCode(false), 1600);
 		} catch {
@@ -236,6 +249,10 @@ function SyncUpPage() {
 		multiplayer.submitAnswer(answer.trim());
 		setMessage(null);
 	};
+
+	if (isGameNightMode && !multiplayer.gameState) {
+		return <div className="flex min-h-[calc(100vh-73px)] items-center justify-center text-muted-foreground">Connecting to Game Night...</div>;
+	}
 
 	if (session.isResuming && view === "setup") {
 		return (
@@ -373,7 +390,7 @@ function SyncUpPage() {
 		return (
 			<MultiplayerLobby
 				title="Sync Up Lobby"
-				subtitle={`Room ${multiplayer.gameState.roomCode}`}
+				subtitle={`Room ${displayedRoomCode}`}
 				onBack={handleBack}
 				players={playerList}
 				hostId={multiplayer.gameState.hostId}
@@ -401,7 +418,7 @@ function SyncUpPage() {
 						</p>
 					</div>
 				}
-				roomCode={multiplayer.gameState.roomCode}
+				roomCode={displayedRoomCode}
 				copiedRoomCode={copiedRoomCode}
 				onCopyRoomCode={handleCopyRoomCode}
 				onStart={multiplayer.startGame}

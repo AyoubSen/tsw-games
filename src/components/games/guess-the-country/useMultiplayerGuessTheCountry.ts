@@ -4,6 +4,7 @@ import {
   clearPersistentPlayerId,
   clearPersistentPlayerToken,
   generateRoomCode,
+  getGameNightSocketQuery,
   getPersistentPlayerId,
   getPersistentPlayerToken,
   leavePartySocket,
@@ -93,7 +94,9 @@ export function useMultiplayerGuessTheCountry() {
       playerName: string,
       settings?: GameSettings,
     ) => {
-      const normalizedRoomCode = roomCode.toUpperCase()
+      const normalizedRoomCode = getGameNightSocketQuery(roomCode).night
+        ? roomCode
+        : roomCode.toUpperCase()
       const previousSocket = socketRef.current
       socketRef.current = null
       previousSocket?.close()
@@ -115,6 +118,7 @@ export function useMultiplayerGuessTheCountry() {
         id: playerId,
         party: "guessthecountry",
         query: {
+          ...getGameNightSocketQuery(roomCode),
           host: hosting.toString(),
           playerToken: getPersistentPlayerToken(
             "guess-the-country",
@@ -178,8 +182,8 @@ export function useMultiplayerGuessTheCountry() {
   }, [])
 
   const createGame = useCallback(
-    (playerName: string, settings: GameSettings) => {
-      const roomCode = generateRoomCode()
+    (playerName: string, settings: GameSettings, roomId?: string) => {
+      const roomCode = roomId ?? generateRoomCode()
       connect(roomCode, true, playerName, settings)
       return roomCode
     },

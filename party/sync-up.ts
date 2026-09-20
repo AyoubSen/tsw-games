@@ -12,6 +12,11 @@ import {
 	type SyncUpPrompt,
 	type SyncUpPromptPack,
 } from "../src/lib/syncUpPrompts";
+import {
+	getGameNightResultMatch,
+	validateGameNightConnection,
+	type GameNightMember,
+} from "./shared/gameNight";
 
 export interface SyncUpPlayer {
 	id: string;
@@ -159,6 +164,7 @@ export default class SyncUpParty implements Party.Server {
 	constructor(readonly room: Party.Room) {}
 
 	state: SyncUpGameState | null = null;
+	gameNightMembers = new WeakMap<Party.Connection, GameNightMember>();
 
 	async onStart() {
 		const stored = await this.room.storage.get<SyncUpGameState>("state");
@@ -297,8 +303,14 @@ export default class SyncUpParty implements Party.Server {
 	async onConnect(connection: Party.Connection, context: Party.ConnectionContext) {
 		const url = new URL(context.request.url);
 		const isHost = url.searchParams.get("host") === "true";
+		const gameNight = await validateGameNightConnection(this.room, connection, context, "sync-up");
+		if (gameNight.mode === "invalid") {
+			connection.close(1008, "Invalid Game Night connection");
+			return;
+		}
+		if (gameNight.mode === "game-night") this.gameNightMembers.set(connection, gameNight.member);
 
-		if (isHost && !this.state) {
+		if (!this.state && (gameNight.mode === "game-night" ? gameNight.member.isHost : isHost)) {
 			this.state = {
 				roomCode: this.room.id,
 				hostId: connection.id,
@@ -337,10 +349,12 @@ export default class SyncUpParty implements Party.Server {
 
 			switch (data.type) {
 				case "join": {
+					const member = this.gameNightMembers.get(sender);
+					const playerName = member?.name ?? data.name;
 					const returning = markConnected(this.state.players, sender.id);
 					if (returning) {
 						// A reconnect, not a new player - never rejected mid-game.
-						returning.name = data.name || returning.name;
+						returning.name = playerName || returning.name;
 						await this.saveState();
 						this.broadcast({ type: "player-joined", player: returning });
 						this.broadcast({ type: "state", state: this.getPublicState() });
@@ -359,7 +373,7 @@ export default class SyncUpParty implements Party.Server {
 
 					const player: SyncUpPlayer = {
 						id: sender.id,
-						name: data.name.slice(0, 20),
+						name: member?.name ?? data.name.slice(0, 20),
 						score: 0,
 						joinedAt: Date.now(),
 						connected: true,
@@ -519,6 +533,7 @@ export default class SyncUpParty implements Party.Server {
 	}
 
 	async onClose(connection: Party.Connection) {
+		this.gameNightMembers.delete(connection);
 		if (!this.state || !this.state.players[connection.id]) {
 			return;
 		}
@@ -533,5 +548,20 @@ export default class SyncUpParty implements Party.Server {
 		// No "player-left" here: they may be back in a moment, and the client
 		// removes players on that message.
 		this.broadcast({ type: "state", state: this.getPublicState() });
+	}
+
+	async onRequest(request: Party.Request) {
+		const match = await getGameNightResultMatch(this.room, request, "sync-up");
+		if (!match) return new Response("Not found", { status: 404 });
+		if (!this.state || this.state.status !== "finished" || this.state.finishedAt === null) {
+			return Response.json({ finished: false, scored: false, winnerIds: [] });
+		}
+		const players = Object.values(this.state.players);
+		const highestScore = Math.max(...players.map((player) => player.score), 0);
+		return Response.json({
+			finished: true,
+			scored: true,
+			winnerIds: players.filter((player) => player.score === highestScore).map((player) => player.id),
+		});
 	}
 }

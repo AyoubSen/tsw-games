@@ -10,6 +10,7 @@ import {
 	Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge";
 import { useMultiplayerPressureButton } from "@/components/games/pressure-button/useMultiplayerPressureButton";
 import {
 	GameTopBar,
@@ -25,7 +26,7 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
+import { getGameNightInviteLink, getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
 import type { PressurePromptPack } from "@/lib/pressurePrompts";
 import type { PressureButtonSettings } from "../../../party/pressure-button";
 
@@ -76,7 +77,8 @@ const PROMPT_PACK_OPTIONS: Array<{
 ];
 
 function PressureButtonPage() {
-	const { room: invitedRoomCode } = Route.useSearch();
+	const { room: invitedRoomCode, night } = Route.useSearch();
+	const isGameNightMode = Boolean(night);
 	const [view, setView] = useState<PressureButtonView>("setup");
 	const [playerName, setPlayerName] = useState("");
 	const [joinRoomCode, setJoinRoomCode] = useState(invitedRoomCode ?? "");
@@ -107,7 +109,18 @@ function PressureButtonPage() {
 		connectionStatus: multiplayer.connectionStatus,
 		inviteRoomCode: invitedRoomCode,
 		onAbandon: multiplayer.abandonReconnect,
+		disabled: isGameNightMode,
 	});
+	const gameNightBridge = useGameNightGameBridge({
+		gameId: "pressure-button",
+		hasGameState: Boolean(multiplayer.gameState && multiplayer.playerId),
+		finished: multiplayer.gameState?.status === "finished",
+		connectHost: (roomId, name) => multiplayer.createGame(name, { turns, answerTimeLimit, promptPack }, roomId),
+		connectPlayer: multiplayer.joinGame,
+	});
+	const displayedRoomCode = gameNightBridge.isGameNight
+		? gameNightBridge.publicRoomCode
+		: multiplayer.gameState?.roomCode ?? "";
 	const activeTurnNumber = multiplayer.gameState?.turnNumber;
 
 	useEffect(() => {
@@ -238,7 +251,9 @@ function PressureButtonPage() {
 		}
 
 		try {
-			await navigator.clipboard.writeText(getInviteLink(gameState.roomCode));
+			await navigator.clipboard.writeText(gameNightBridge.isGameNight
+				? getGameNightInviteLink(displayedRoomCode)
+				: getInviteLink(gameState.roomCode));
 			setCopiedRoomCode(true);
 			window.setTimeout(() => setCopiedRoomCode(false), 1600);
 		} catch {
@@ -256,6 +271,10 @@ function PressureButtonPage() {
 		multiplayer.submitAnswer(answer.trim());
 		setMessage(null);
 	};
+
+	if (isGameNightMode && !gameState) {
+		return <div className="flex min-h-[calc(100vh-73px)] items-center justify-center text-muted-foreground">Connecting to Game Night...</div>;
+	}
 
 	if (session.isResuming && view === "setup") {
 		return (
@@ -394,7 +413,7 @@ function PressureButtonPage() {
 		return (
 			<MultiplayerLobby
 				title="Pressure Button Lobby"
-				subtitle={`Room ${gameState.roomCode}`}
+				subtitle={`Room ${displayedRoomCode}`}
 				onBack={handleBack}
 				players={playerList}
 				hostId={gameState.hostId}
@@ -422,7 +441,7 @@ function PressureButtonPage() {
 						</p>
 					</div>
 				}
-				roomCode={gameState.roomCode}
+				roomCode={displayedRoomCode}
 				copiedRoomCode={copiedRoomCode}
 				onCopyRoomCode={handleCopyRoomCode}
 				onStart={multiplayer.startGame}

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	clearPersistentPlayerId,
 	generateRoomCode,
+	getGameNightSocketQuery,
 	leavePartySocket,
 	PARTYKIT_HOST,
 	getPersistentPlayerId,
@@ -187,25 +188,31 @@ export function useMultiplayerPressureButton() {
 			playerName: string,
 			settings?: PressureButtonSettings,
 		) => {
+			const gameNightQuery = getGameNightSocketQuery(roomCode);
+			const normalizedRoomCode = Object.keys(gameNightQuery).length
+				? roomCode
+				: roomCode.toUpperCase();
 			if (socketRef.current) {
 				socketRef.current.close();
 			}
-			roomCodeRef.current = roomCode;
+			roomCodeRef.current = normalizedRoomCode;
 
 			setState((previous) => ({
 				...previous,
 				connectionStatus: "connecting",
+				gameState: null,
 				error: null,
 			}));
 
 			const socket = new PartySocket({
 				host: PARTYKIT_HOST,
-				room: roomCode,
-				id: getPersistentPlayerId("pressure-button", roomCode),
+				room: normalizedRoomCode,
+				id: getPersistentPlayerId("pressure-button", normalizedRoomCode),
 				party: "pressurebutton",
 				maxEnqueuedMessages: 0,
 				query: {
 					host: isHost.toString(),
+					...gameNightQuery,
 					...(settings && {
 						turns: settings.turns.toString(),
 						answerTimeLimit: settings.answerTimeLimit.toString(),
@@ -290,8 +297,8 @@ export function useMultiplayerPressureButton() {
 	}, []);
 
 	const createGame = useCallback(
-		(playerName: string, settings: PressureButtonSettings) => {
-			const roomCode = generateRoomCode();
+		(playerName: string, settings: PressureButtonSettings, suppliedRoomId?: string) => {
+			const roomCode = suppliedRoomId ?? generateRoomCode();
 			connect(roomCode, true, playerName, settings);
 			return roomCode;
 		},
@@ -300,7 +307,7 @@ export function useMultiplayerPressureButton() {
 
 	const joinGame = useCallback(
 		(roomCode: string, playerName: string) => {
-			connect(roomCode.toUpperCase(), false, playerName);
+			connect(roomCode, false, playerName);
 		},
 		[connect],
 	);

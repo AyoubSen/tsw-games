@@ -1,5 +1,6 @@
 import type * as Party from "partykit/server"
 import { isPresent, markConnected, markDisconnected } from "./shared/presence"
+import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight"
 
 export const WORDLE_PROTOCOL_VERSION = 4
 const STATE_SCHEMA_VERSION = 4
@@ -415,6 +416,7 @@ export default class WordleParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
+  gameNightMembers = new Map<string, GameNightMember>()
 
   async onStart() {
     void getValidWords()
@@ -691,6 +693,13 @@ export default class WordleParty implements Party.Server {
       return
     }
 
+    const gameNight = await validateGameNightConnection(this.room, conn, ctx, "wordle")
+    if (gameNight.mode === "invalid") {
+      conn.close(1008, "Invalid Game Night connection")
+      return
+    }
+    if (gameNight.mode === "game-night") this.gameNightMembers.set(conn.id, gameNight.member)
+
     const modeParam = url.searchParams.get("mode")
     const revealParam = url.searchParams.get("revealMode")
     const mode = isGameMode(modeParam) ? modeParam : "race"
@@ -699,7 +708,7 @@ export default class WordleParty implements Party.Server {
     const seriesLength = parseSeriesLength(url.searchParams.get("seriesLength"))
     const isHost = url.searchParams.get("host") === "true"
 
-    if (isHost && !this.state) {
+    if ((gameNight.mode === "direct" ? isHost : gameNight.member.isHost) && !this.state) {
       this.state = {
         schemaVersion: STATE_SCHEMA_VERSION,
         revision: 1,
@@ -775,7 +784,8 @@ export default class WordleParty implements Party.Server {
 
       switch (data.type) {
         case "join": {
-          const name = typeof data.name === "string" ? data.name.trim().slice(0, 20) : ""
+          const rosterName = this.gameNightMembers.get(sender.id)?.name
+          const name = rosterName ?? (typeof data.name === "string" ? data.name.trim().slice(0, 20) : "")
           if (!name) {
             this.send(sender, { type: "error", message: "Enter a player name" })
             return
@@ -1034,11 +1044,28 @@ export default class WordleParty implements Party.Server {
 
   async onClose(conn: Party.Connection) {
     await this.handleDisconnect(conn)
+    if (!Array.from(this.room.getConnections()).some(connection => connection.id === conn.id && connection !== conn)) {
+      this.gameNightMembers.delete(conn.id)
+    }
   }
 
   async onError(conn: Party.Connection, error: Error) {
     console.error(`Wordle connection error for ${conn.id}:`, error)
     await this.handleDisconnect(conn)
+  }
+
+  async onRequest(request: Party.Request) {
+    const match = await getGameNightResultMatch(this.room, request, "wordle")
+    if (!match) return new Response("Not found", { status: 404 })
+    const finished = this.state?.status === "finished" && (this.state.seriesLength === 1 || this.state.seriesComplete)
+    const publicWinnerIds = finished
+      ? (this.state!.seriesLength > 1 ? this.state!.seriesWinnerIds : this.state!.winnerIds)
+      : []
+    const winnerIds = publicWinnerIds.flatMap(playerId => {
+      const entry = Object.entries(this.state!.players).find(([, player]) => player.id === playerId)
+      return entry ? [entry[0]] : []
+    })
+    return Response.json({ finished, scored: true, winnerIds })
   }
 
   async onAlarm() {

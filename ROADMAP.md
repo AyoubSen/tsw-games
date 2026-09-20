@@ -75,7 +75,6 @@ check this file so useful ideas are not lost, while the user's current request a
 
 - [x] **Drawing Game (Pictionary)** - One player draws, others guess the word. Canvas-based drawing with real-time sync.
 - [ ] **Trivia Quiz** - Use template-driven rounds instead of a giant fixed question bank. Best variants: ranking, image reveal, category sort, fake-vs-real.
-- [ ] **Reaction Game** - Screen shows a signal, first to click wins the round. Test reflexes with random delays.
 
 ### Medium Priority
 
@@ -101,7 +100,7 @@ check this file so useful ideas are not lost, while the user's current request a
 - [ ] **Hot Take Arena** - Prompt templates plus group voting. The fun comes from defending takes, not from storing hundreds of prompts.
 - [ ] **Sync Up** - Everyone answers privately and scores by matching other players without coordinating.
 - [ ] **Pressure Button** - Answer, pass, or pressure another player into answering under risk.
-- [ ] **Timeline Chaos** - Order real and fake events, or even friend-group memories, on a shared timeline.
+- [x] **Timeline Chaos** - Order real events from oldest to newest in solo or server-authoritative multiplayer rounds.
 - [ ] **One Mic** - Collaborative story building where each player only sees the previous line or two.
 - [ ] **Tier List Battle** - Players drag items into a shared tier board and vote on the final arrangement.
 - [ ] **Bomb Defusal** - One player sees clues while another manipulates wires, symbols, switches, or sequences.
@@ -112,7 +111,6 @@ check this file so useful ideas are not lost, while the user's current request a
 
 - Prefer games with replayability from player input, combinations, procedural generation, voting, dragging, or hidden information instead of giant hardcoded content banks.
 - `Trivia`, `Would You Rather`, `Hot Take Arena`, and `Sync Up` should be driven by templates, room-generated content, or mixed system prompts.
-- `Reaction Game` works in the current realtime setup if the rounds include fake-outs, moving targets, pattern rules, or elimination pressure instead of a single plain click race.
 - `Memory Match` should start with generated symbols or icons and not depend on external image packs.
 - Shared manipulation games are a strong fit for this app: drag-to-sort, place-and-rotate, cooperative assembly, sabotage, and hidden-role board interaction all map well to the existing browser multiplayer setup.
 

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	clearPersistentPlayerId,
 	generateRoomCode,
+	getGameNightSocketQuery,
 	leavePartySocket,
 	PARTYKIT_HOST,
 	getPersistentPlayerId,
@@ -212,6 +213,7 @@ export function useMultiplayerTypeRace() {
 				query: {
 					host: isHost.toString(),
 					mode,
+					...getGameNightSocketQuery(roomCode),
 				},
 				maxEnqueuedMessages: 0,
 			});
@@ -294,8 +296,8 @@ export function useMultiplayerTypeRace() {
 	}, []);
 
 	const createGame = useCallback(
-		(mode: GameMode, playerName: string) => {
-			const roomCode = generateRoomCode();
+		(mode: GameMode, playerName: string, roomId?: string) => {
+			const roomCode = roomId ?? generateRoomCode();
 			connect(roomCode, true, mode, playerName);
 			return roomCode;
 		},

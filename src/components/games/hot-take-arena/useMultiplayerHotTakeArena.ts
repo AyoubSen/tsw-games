@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	clearPersistentPlayerId,
 	generateRoomCode,
+	getGameNightSocketQuery,
 	leavePartySocket,
 	PARTYKIT_HOST,
 	getPersistentPlayerId,
@@ -176,7 +177,10 @@ export function useMultiplayerHotTakeArena() {
 			playerName: string,
 			settings?: HotTakeSettings,
 		) => {
-			const normalizedRoomCode = roomCode.toUpperCase();
+			const gameNightQuery = getGameNightSocketQuery(roomCode);
+			const normalizedRoomCode = Object.keys(gameNightQuery).length
+				? roomCode
+				: roomCode.toUpperCase();
 			const previousSocket = socketRef.current;
 			socketRef.current = null;
 			previousSocket?.close();
@@ -186,6 +190,7 @@ export function useMultiplayerHotTakeArena() {
 			setState((previous) => ({
 				...previous,
 				connectionStatus: "connecting",
+				gameState: null,
 				error: null,
 				playerId,
 			}));
@@ -197,6 +202,7 @@ export function useMultiplayerHotTakeArena() {
 				party: "hottakearena",
 				query: {
 					host: isHost.toString(),
+					...gameNightQuery,
 					...(settings && {
 						rounds: settings.rounds.toString(),
 						roundTimeLimit: settings.roundTimeLimit.toString(),
@@ -288,8 +294,8 @@ export function useMultiplayerHotTakeArena() {
 	}, []);
 
 	const createGame = useCallback(
-		(playerName: string, settings: HotTakeSettings) => {
-			const roomCode = generateRoomCode();
+		(playerName: string, settings: HotTakeSettings, suppliedRoomId?: string) => {
+			const roomCode = suppliedRoomId ?? generateRoomCode();
 			connect(roomCode, true, playerName, settings);
 			return roomCode;
 		},
@@ -298,7 +304,7 @@ export function useMultiplayerHotTakeArena() {
 
 	const joinGame = useCallback(
 		(roomCode: string, playerName: string) => {
-			connect(roomCode.toUpperCase(), false, playerName);
+			connect(roomCode, false, playerName);
 		},
 		[connect],
 	);

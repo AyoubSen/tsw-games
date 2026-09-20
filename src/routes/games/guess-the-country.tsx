@@ -13,6 +13,8 @@ import {
   XCircle,
 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { useGameNight } from "@/components/game-night/GameNightProvider"
+import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge"
 import { useMultiplayerGuessTheCountry } from "@/components/games/guess-the-country/useMultiplayerGuessTheCountry"
 import {
   GameTopBar,
@@ -34,7 +36,7 @@ import {
   pickNextCountry,
   type Country,
 } from "@/lib/guessTheCountry"
-import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks"
+import { getGameNightInviteLink, getInviteLink, parseInviteSearch } from "@/lib/inviteLinks"
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
 import type {
   GameMode,
@@ -214,18 +216,34 @@ function GuessTheCountryPage() {
   const [copiedRoomCode, setCopiedRoomCode] = useState(false)
 
   const multiplayer = useMultiplayerGuessTheCountry()
+  const gameNight = useGameNight()
+  const hasGameState = Boolean(
+    multiplayer.gameState && multiplayer.playerId && multiplayer.gameState.players[multiplayer.playerId],
+  )
+  const isGameNightConnection = gameNight.connection?.gameId === "guess-the-country"
   const session = useMultiplayerSession({
     game: "guess-the-country",
     joinGame: multiplayer.joinGame,
-    hasGameState: Boolean(
-      multiplayer.gameState &&
-        multiplayer.playerId &&
-        multiplayer.gameState.players[multiplayer.playerId],
-    ),
+    hasGameState,
     error: multiplayer.error,
     connectionStatus: multiplayer.connectionStatus,
     inviteRoomCode: invitedRoomCode,
     onAbandon: multiplayer.abandonReconnect,
+    disabled: isGameNightConnection,
+  })
+  const connectGameNightHost = useCallback((roomId: string, name: string) => {
+    multiplayer.createGame(name, {
+      mode: multiplayerMode,
+      targetScore,
+      timeLimit: multiplayerTimeLimit,
+    }, roomId)
+  }, [multiplayer.createGame, multiplayerMode, targetScore, multiplayerTimeLimit])
+  const bridge = useGameNightGameBridge({
+    gameId: "guess-the-country",
+    hasGameState,
+    finished: multiplayer.gameState?.status === "finished",
+    connectHost: connectGameNightHost,
+    connectPlayer: multiplayer.joinGame,
   })
 
   useEffect(() => {
@@ -464,7 +482,9 @@ function GuessTheCountryPage() {
     if (!multiplayer.gameState) return
     try {
       await navigator.clipboard.writeText(
-        getInviteLink(multiplayer.gameState.roomCode),
+        bridge.isGameNight
+          ? getGameNightInviteLink(bridge.publicRoomCode)
+          : getInviteLink(multiplayer.gameState.roomCode),
       )
       setCopiedRoomCode(true)
       window.setTimeout(() => setCopiedRoomCode(false), 1600)
@@ -489,6 +509,14 @@ function GuessTheCountryPage() {
     setMultiplayerGuess("")
     setMultiplayerMessage(null)
     setView("select")
+  }
+
+  if (bridge.isConnecting) {
+    return (
+      <div className="flex min-h-[calc(100vh-73px)] items-center justify-center">
+        <p className="text-muted-foreground">Connecting to Game Night...</p>
+      </div>
+    )
   }
 
   if (session.isResuming && view === "select") {
@@ -877,7 +905,7 @@ function GuessTheCountryPage() {
             </p>
           </div>
         }
-        roomCode={multiplayer.gameState.roomCode}
+        roomCode={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode}
         copiedRoomCode={copiedRoomCode}
         onCopyRoomCode={handleCopyRoomCode}
         onStart={multiplayer.startGame}

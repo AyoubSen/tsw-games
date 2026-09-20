@@ -166,7 +166,7 @@ export default function Header() {
 						Library
 					</div>
 
-					<div className="mx-3 mb-4 rounded-2xl border border-border/70 bg-accent/40 p-4">
+					<Link to="/game-night" onClick={() => setIsOpen(false)} className="mx-3 mb-4 block rounded-2xl border border-border/70 bg-accent/40 p-4 transition-colors hover:border-primary/40 hover:bg-primary/5">
 						<div className="flex items-center justify-between gap-3">
 							<div>
 								<p className="text-sm font-semibold">Game Night Launcher</p>
@@ -181,7 +181,7 @@ export default function Header() {
 						<p className="mt-3 text-xs leading-5 text-muted-foreground">
 							{categorySummary}
 						</p>
-					</div>
+					</Link>
 
 					<div className="mb-2 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
 						Play Now

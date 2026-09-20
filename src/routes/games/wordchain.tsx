@@ -5,13 +5,14 @@ import { useEffect, useMemo, useState } from "react";
 import { MultiplayerGame } from "@/components/games/wordchain/MultiplayerGame";
 import type { GameSettings } from "@/components/games/wordchain/useMultiplayerWordchain";
 import { useMultiplayerWordchain } from "@/components/games/wordchain/useMultiplayerWordchain";
+import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge";
 import {
 	GameTopBar,
 	MultiplayerLobby,
 	MultiplayerSetupCard,
 } from "@/components/multiplayer/shared";
 import { Button } from "@/components/ui/button";
-import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
+import { getGameNightInviteLink, getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
 import {
 	Card,
 	CardContent,
@@ -57,6 +58,13 @@ function WordChainPage() {
 	}, [invitedRoomCode]);
 
 	const multiplayer = useMultiplayerWordchain();
+	const gameNight = useGameNightGameBridge({
+		gameId: "wordchain",
+		hasGameState: Boolean(multiplayer.gameState && multiplayer.playerId && multiplayer.gameState.players[multiplayer.playerId]),
+		finished: multiplayer.gameState?.status === "finished",
+		connectHost: (roomId, name) => { multiplayer.createGame(name, { turnTimeLimit: 15, gameMode: "casual", maxHearts: 3 }, roomId); },
+		connectPlayer: multiplayer.joinGame,
+	});
 
 	// Walk back into the room this tab was in before a reload.
 	const session = useMultiplayerSession({
@@ -71,6 +79,7 @@ function WordChainPage() {
 		connectionStatus: multiplayer.connectionStatus,
 		inviteRoomCode: invitedRoomCode,
 		onAbandon: multiplayer.abandonReconnect,
+		disabled: gameNight.isGameNight,
 	});
 	const multiplayerGameState = multiplayer.gameState;
 
@@ -152,7 +161,7 @@ function WordChainPage() {
 
 		try {
 			await navigator.clipboard.writeText(
-				getInviteLink(multiplayer.gameState.roomCode),
+				gameNight.isGameNight ? getGameNightInviteLink(gameNight.publicRoomCode) : getInviteLink(multiplayer.gameState.roomCode),
 			);
 			setCopiedRoomCode(true);
 			window.setTimeout(() => setCopiedRoomCode(false), 1600);
@@ -160,6 +169,8 @@ function WordChainPage() {
 			setMessage("Could not copy the invite link.");
 		}
 	};
+
+	if (gameNight.isConnecting) return <div className="flex min-h-[calc(100vh-73px)] items-center justify-center text-muted-foreground">Joining your Game Night chain...</div>;
 
 	if (session.isResuming && view === "select") {
 		return (
@@ -359,7 +370,7 @@ function WordChainPage() {
 						</p>
 					</div>
 				}
-				roomCode={multiplayer.gameState.roomCode}
+				roomCode={gameNight.isGameNight ? gameNight.publicRoomCode : multiplayer.gameState.roomCode}
 				copiedRoomCode={copiedRoomCode}
 				onCopyRoomCode={handleCopyRoomCode}
 				onStart={multiplayer.startGame}
@@ -380,7 +391,7 @@ function WordChainPage() {
 			<div className="min-h-[calc(100vh-73px)] bg-background">
 				<GameTopBar
 					title="Word Chain"
-					subtitle={`Room ${multiplayer.gameState.roomCode}`}
+					subtitle={`Room ${gameNight.isGameNight ? gameNight.publicRoomCode : multiplayer.gameState.roomCode}`}
 					onBack={handleBackToSelect}
 					rightAction={
 						<Button

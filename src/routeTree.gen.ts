@@ -9,11 +9,14 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as GameNightRouteImport } from './routes/game-night'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as GamesWordleRouteImport } from './routes/games/wordle'
 import { Route as GamesWordchainRouteImport } from './routes/games/wordchain'
 import { Route as GamesWordScrambleRouteImport } from './routes/games/word-scramble'
 import { Route as GamesTyperaceRouteImport } from './routes/games/typerace'
+import { Route as GamesTriviaQuizRouteImport } from './routes/games/trivia-quiz'
+import { Route as GamesTimelineChaosRouteImport } from './routes/games/timeline-chaos'
 import { Route as GamesSyncUpRouteImport } from './routes/games/sync-up'
 import { Route as GamesSudokuRouteImport } from './routes/games/sudoku'
 import { Route as GamesPressureButtonRouteImport } from './routes/games/pressure-button'
@@ -26,6 +29,11 @@ import { Route as GamesDrawingRouteImport } from './routes/games/drawing'
 import { Route as GamesCodenamesRouteImport } from './routes/games/codenames'
 import { Route as GamesCodeBreakerRouteImport } from './routes/games/code-breaker'
 
+const GameNightRoute = GameNightRouteImport.update({
+  id: '/game-night',
+  path: '/game-night',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -49,6 +57,16 @@ const GamesWordScrambleRoute = GamesWordScrambleRouteImport.update({
 const GamesTyperaceRoute = GamesTyperaceRouteImport.update({
   id: '/games/typerace',
   path: '/games/typerace',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GamesTriviaQuizRoute = GamesTriviaQuizRouteImport.update({
+  id: '/games/trivia-quiz',
+  path: '/games/trivia-quiz',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GamesTimelineChaosRoute = GamesTimelineChaosRouteImport.update({
+  id: '/games/timeline-chaos',
+  path: '/games/timeline-chaos',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GamesSyncUpRoute = GamesSyncUpRouteImport.update({
@@ -109,6 +127,7 @@ const GamesCodeBreakerRoute = GamesCodeBreakerRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/game-night': typeof GameNightRoute
   '/games/code-breaker': typeof GamesCodeBreakerRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
@@ -120,6 +139,8 @@ export interface FileRoutesByFullPath {
   '/games/pressure-button': typeof GamesPressureButtonRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/sync-up': typeof GamesSyncUpRoute
+  '/games/timeline-chaos': typeof GamesTimelineChaosRoute
+  '/games/trivia-quiz': typeof GamesTriviaQuizRoute
   '/games/typerace': typeof GamesTyperaceRoute
   '/games/word-scramble': typeof GamesWordScrambleRoute
   '/games/wordchain': typeof GamesWordchainRoute
@@ -127,6 +148,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/game-night': typeof GameNightRoute
   '/games/code-breaker': typeof GamesCodeBreakerRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
@@ -138,6 +160,8 @@ export interface FileRoutesByTo {
   '/games/pressure-button': typeof GamesPressureButtonRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/sync-up': typeof GamesSyncUpRoute
+  '/games/timeline-chaos': typeof GamesTimelineChaosRoute
+  '/games/trivia-quiz': typeof GamesTriviaQuizRoute
   '/games/typerace': typeof GamesTyperaceRoute
   '/games/word-scramble': typeof GamesWordScrambleRoute
   '/games/wordchain': typeof GamesWordchainRoute
@@ -146,6 +170,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/game-night': typeof GameNightRoute
   '/games/code-breaker': typeof GamesCodeBreakerRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
@@ -157,6 +182,8 @@ export interface FileRoutesById {
   '/games/pressure-button': typeof GamesPressureButtonRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/sync-up': typeof GamesSyncUpRoute
+  '/games/timeline-chaos': typeof GamesTimelineChaosRoute
+  '/games/trivia-quiz': typeof GamesTriviaQuizRoute
   '/games/typerace': typeof GamesTyperaceRoute
   '/games/word-scramble': typeof GamesWordScrambleRoute
   '/games/wordchain': typeof GamesWordchainRoute
@@ -166,6 +193,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/game-night'
     | '/games/code-breaker'
     | '/games/codenames'
     | '/games/drawing'
@@ -177,6 +205,8 @@ export interface FileRouteTypes {
     | '/games/pressure-button'
     | '/games/sudoku'
     | '/games/sync-up'
+    | '/games/timeline-chaos'
+    | '/games/trivia-quiz'
     | '/games/typerace'
     | '/games/word-scramble'
     | '/games/wordchain'
@@ -184,6 +214,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/game-night'
     | '/games/code-breaker'
     | '/games/codenames'
     | '/games/drawing'
@@ -195,6 +226,8 @@ export interface FileRouteTypes {
     | '/games/pressure-button'
     | '/games/sudoku'
     | '/games/sync-up'
+    | '/games/timeline-chaos'
+    | '/games/trivia-quiz'
     | '/games/typerace'
     | '/games/word-scramble'
     | '/games/wordchain'
@@ -202,6 +235,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/game-night'
     | '/games/code-breaker'
     | '/games/codenames'
     | '/games/drawing'
@@ -213,6 +247,8 @@ export interface FileRouteTypes {
     | '/games/pressure-button'
     | '/games/sudoku'
     | '/games/sync-up'
+    | '/games/timeline-chaos'
+    | '/games/trivia-quiz'
     | '/games/typerace'
     | '/games/word-scramble'
     | '/games/wordchain'
@@ -221,6 +257,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  GameNightRoute: typeof GameNightRoute
   GamesCodeBreakerRoute: typeof GamesCodeBreakerRoute
   GamesCodenamesRoute: typeof GamesCodenamesRoute
   GamesDrawingRoute: typeof GamesDrawingRoute
@@ -232,6 +269,8 @@ export interface RootRouteChildren {
   GamesPressureButtonRoute: typeof GamesPressureButtonRoute
   GamesSudokuRoute: typeof GamesSudokuRoute
   GamesSyncUpRoute: typeof GamesSyncUpRoute
+  GamesTimelineChaosRoute: typeof GamesTimelineChaosRoute
+  GamesTriviaQuizRoute: typeof GamesTriviaQuizRoute
   GamesTyperaceRoute: typeof GamesTyperaceRoute
   GamesWordScrambleRoute: typeof GamesWordScrambleRoute
   GamesWordchainRoute: typeof GamesWordchainRoute
@@ -240,6 +279,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/game-night': {
+      id: '/game-night'
+      path: '/game-night'
+      fullPath: '/game-night'
+      preLoaderRoute: typeof GameNightRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -273,6 +319,20 @@ declare module '@tanstack/react-router' {
       path: '/games/typerace'
       fullPath: '/games/typerace'
       preLoaderRoute: typeof GamesTyperaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/games/trivia-quiz': {
+      id: '/games/trivia-quiz'
+      path: '/games/trivia-quiz'
+      fullPath: '/games/trivia-quiz'
+      preLoaderRoute: typeof GamesTriviaQuizRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/games/timeline-chaos': {
+      id: '/games/timeline-chaos'
+      path: '/games/timeline-chaos'
+      fullPath: '/games/timeline-chaos'
+      preLoaderRoute: typeof GamesTimelineChaosRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/games/sync-up': {
@@ -357,6 +417,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  GameNightRoute: GameNightRoute,
   GamesCodeBreakerRoute: GamesCodeBreakerRoute,
   GamesCodenamesRoute: GamesCodenamesRoute,
   GamesDrawingRoute: GamesDrawingRoute,
@@ -368,6 +429,8 @@ const rootRouteChildren: RootRouteChildren = {
   GamesPressureButtonRoute: GamesPressureButtonRoute,
   GamesSudokuRoute: GamesSudokuRoute,
   GamesSyncUpRoute: GamesSyncUpRoute,
+  GamesTimelineChaosRoute: GamesTimelineChaosRoute,
+  GamesTriviaQuizRoute: GamesTriviaQuizRoute,
   GamesTyperaceRoute: GamesTyperaceRoute,
   GamesWordScrambleRoute: GamesWordScrambleRoute,
   GamesWordchainRoute: GamesWordchainRoute,

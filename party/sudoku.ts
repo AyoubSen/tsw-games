@@ -6,6 +6,11 @@ import {
   markDisconnected,
   nextHost,
 } from "./shared/presence"
+import {
+  getGameNightResultMatch,
+  validateGameNightConnection,
+  type GameNightMember,
+} from "./shared/gameNight"
 
 export const SUDOKU_PROTOCOL_VERSION = 2
 const STATE_SCHEMA_VERSION = 2
@@ -269,6 +274,7 @@ export default class SudokuParty implements Party.Server {
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
+  gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
 
   async onStart() {
     const stored = await this.room.storage.get<unknown>("state")
@@ -380,7 +386,17 @@ export default class SudokuParty implements Party.Server {
       return
     }
 
-    const isHost = url.searchParams.get("host") === "true"
+    const gameNight = await validateGameNightConnection(this.room, conn, ctx, "sudoku")
+    if (gameNight.mode === "invalid") {
+      this.send(conn, { type: "error", message: "Invalid Game Night connection" })
+      conn.close(1008, "Invalid Game Night connection")
+      return
+    }
+    if (gameNight.mode === "game-night") this.gameNightMembers.set(conn, gameNight.member)
+
+    const isHost = gameNight.mode === "game-night"
+      ? gameNight.member.isHost
+      : url.searchParams.get("host") === "true"
 	const playerToken = url.searchParams.get("playerToken") || ""
 	if (playerToken) this.connectionTokens.set(conn, playerToken)
     const requestedDifficulty = url.searchParams.get("difficulty")
@@ -457,7 +473,8 @@ export default class SudokuParty implements Party.Server {
 			this.send(sender, { type: "error", message: "Invalid player session" })
 			return
 		  }
-          const name = typeof data.name === "string" ? data.name.trim().slice(0, 32) : ""
+          const coordinatorName = this.gameNightMembers.get(sender)?.name
+          const name = coordinatorName ?? (typeof data.name === "string" ? data.name.trim().slice(0, 32) : "")
           if (!name) {
             this.send(sender, { type: "error", message: "Enter a player name" })
             return
@@ -665,5 +682,20 @@ export default class SudokuParty implements Party.Server {
   async onError(conn: Party.Connection, error: Error) {
     console.error(`Sudoku connection error for ${conn.id}:`, error)
     await this.handleDisconnect(conn)
+  }
+
+  async onRequest(request: Party.Request) {
+    try {
+      const match = await getGameNightResultMatch(this.room, request, "sudoku")
+      if (!match) return new Response("Not found", { status: 404 })
+      const finished = this.state?.status === "finished" && this.state.winnerId !== null
+      return Response.json({
+        finished,
+        scored: true,
+        winnerIds: finished ? [this.state!.winnerId!] : [],
+      })
+    } catch {
+      return new Response("Not found", { status: 404 })
+    }
   }
 }

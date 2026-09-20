@@ -23,6 +23,9 @@ import { GameModeSelector } from '@/components/games/wordle/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/wordle/MultiplayerLobby'
 import { MultiplayerGame } from '@/components/games/wordle/MultiplayerGame'
 import { useMultiplayerWordle } from '@/components/games/wordle/useMultiplayerWordle'
+import { useGameNightGameBridge } from '@/components/game-night/useGameNightGameBridge'
+import { MultiplayerLobby as SharedMultiplayerLobby } from '@/components/multiplayer/shared'
+import { getGameNightInviteLink } from '@/lib/inviteLinks'
 import type { GameMode, RevealMode, SeriesLength } from '../../../party/wordle'
 
 export const Route = createFileRoute('/games/wordle')({
@@ -38,6 +41,7 @@ function WordlePage() {
   const [colorblind, setColorblind] = useState(() =>
     typeof window !== 'undefined' && window.localStorage.getItem('wordle-colorblind') === 'true')
   const [singleResultCopied, setSingleResultCopied] = useState(false)
+  const [gameNightCodeCopied, setGameNightCodeCopied] = useState(false)
 
   // Single player state
   const singlePlayer = useWordle()
@@ -61,6 +65,13 @@ function WordlePage() {
 
   // Multiplayer state
   const multiplayer = useMultiplayerWordle()
+  const gameNight = useGameNightGameBridge({
+    gameId: 'wordle',
+    hasGameState: Boolean(multiplayer.gameState && multiplayer.playerId && multiplayer.gameState.players[multiplayer.playerId]),
+    finished: multiplayer.gameState?.status === 'finished',
+    connectHost: (roomId, name) => { multiplayer.createGame('race', 'after-round', false, 1, name, roomId) },
+    connectPlayer: multiplayer.joinGame,
+  })
 
   // Walk back into the room this tab was in before a reload.
   const session = useMultiplayerSession({
@@ -71,6 +82,7 @@ function WordlePage() {
     connectionStatus: multiplayer.connectionStatus,
     inviteRoomCode: invitedRoomCode,
     onAbandon: multiplayer.abandonReconnect,
+    disabled: gameNight.isGameNight,
   });
 
   // Handle single player selection
@@ -126,6 +138,16 @@ function WordlePage() {
     }
     singlePlayer.resetGame()
     setView('select')
+  }
+
+  const copyGameNightInvite = async () => {
+    await navigator.clipboard.writeText(getGameNightInviteLink(gameNight.publicRoomCode))
+    setGameNightCodeCopied(true)
+    window.setTimeout(() => setGameNightCodeCopied(false), 1600)
+  }
+
+  if (gameNight.isConnecting) {
+    return <div className="flex min-h-[calc(100vh-73px)] items-center justify-center text-muted-foreground">Joining your Game Night Wordle...</div>
   }
 
   // Mode selection view
@@ -322,6 +344,30 @@ function WordlePage() {
   }
 
   // Multiplayer lobby view
+  if (gameNight.isGameNight && view === 'multiplayer-lobby' && multiplayer.gameState && multiplayer.playerId) {
+    const players = Object.values(multiplayer.gameState.players)
+    return (
+      <SharedMultiplayerLobby
+        title="Multiplayer Wordle"
+        subtitle="Game Night Wordle race"
+        onBack={handleLeaveMultiplayer}
+        players={players}
+        hostId={multiplayer.gameState.hostId}
+        currentPlayerId={multiplayer.playerId}
+        playerDescription={`${players.filter(player => player.connected).length} of ${players.length} players connected`}
+        settings={<div className="rounded-2xl border px-4 py-3 text-sm text-muted-foreground">Race mode, reveal after each round</div>}
+        roomCode={gameNight.publicRoomCode}
+        copiedRoomCode={gameNightCodeCopied}
+        onCopyRoomCode={copyGameNightInvite}
+        onStart={multiplayer.startGame}
+        onLeave={handleLeaveMultiplayer}
+        canStart={players.filter(player => player.connected).length >= 2}
+        isHost={multiplayer.isHost}
+        message={multiplayer.error}
+      />
+    )
+  }
+
   if (view === 'multiplayer-lobby' && multiplayer.gameState && multiplayer.playerId) {
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background">
@@ -350,7 +396,7 @@ function WordlePage() {
   if (view === 'multiplayer-game' && multiplayer.gameState && multiplayer.playerId) {
     return (
       <MultiplayerGame
-        gameState={multiplayer.gameState}
+        gameState={gameNight.isGameNight ? { ...multiplayer.gameState, roomCode: gameNight.publicRoomCode } : multiplayer.gameState}
         privatePlayer={multiplayer.privatePlayer}
         playerId={multiplayer.playerId}
         isHost={multiplayer.isHost}

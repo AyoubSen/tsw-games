@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	clearPersistentPlayerId,
 	generateRoomCode,
+	getGameNightSocketQuery,
 	leavePartySocket,
 	PARTYKIT_HOST,
 	getPersistentPlayerId,
@@ -205,7 +206,10 @@ export function useMultiplayerWordScramble() {
 			playerName: string,
 			settings?: GameSettings,
 		) => {
-			const normalizedRoomCode = roomCode.toUpperCase();
+			const gameNightQuery = getGameNightSocketQuery(roomCode);
+			const normalizedRoomCode = Object.keys(gameNightQuery).length
+				? roomCode
+				: roomCode.toUpperCase();
 			const previousSocket = socketRef.current;
 			socketRef.current = null;
 			previousSocket?.close();
@@ -232,6 +236,7 @@ export function useMultiplayerWordScramble() {
 						difficulty: settings.difficulty,
 						claimVisibility: settings.claimVisibility,
 					}),
+					...gameNightQuery,
 				},
 				maxEnqueuedMessages: 0,
 			});
@@ -320,8 +325,8 @@ export function useMultiplayerWordScramble() {
 	}, []);
 
 	const createGame = useCallback(
-		(playerName: string, settings: GameSettings) => {
-			const roomCode = generateRoomCode();
+		(playerName: string, settings: GameSettings, roomId?: string) => {
+			const roomCode = roomId ?? generateRoomCode();
 			connect(roomCode, true, playerName, settings);
 			return roomCode;
 		},
@@ -330,7 +335,7 @@ export function useMultiplayerWordScramble() {
 
 	const joinGame = useCallback(
 		(roomCode: string, playerName: string) => {
-			connect(roomCode.toUpperCase(), false, playerName);
+			connect(roomCode, false, playerName);
 		},
 		[connect],
 	);

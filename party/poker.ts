@@ -7,6 +7,11 @@ import {
   type HandResult,
 } from "../src/lib/poker/handEvaluator"
 import { calculatePots, type PotContribution } from "../src/lib/poker/potCalculator"
+import {
+  getGameNightResultMatch,
+  validateGameNightConnection,
+  type GameNightMember,
+} from "./shared/gameNight"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -187,6 +192,7 @@ export default class PokerParty implements Party.Server {
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
+  gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
 
   async onStart() {
     const stored = await this.room.storage.get<string>("state")
@@ -853,7 +859,16 @@ export default class PokerParty implements Party.Server {
 
   async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     const url = new URL(ctx.request.url)
-    const isHost = url.searchParams.get("host") === "true"
+    const gameNight = await validateGameNightConnection(this.room, conn, ctx, "poker")
+    if (gameNight.mode === "invalid") {
+      this.send(conn, { type: "error", message: "Invalid Game Night connection" })
+      conn.close(1008, "Invalid Game Night connection")
+      return
+    }
+    if (gameNight.mode === "game-night") this.gameNightMembers.set(conn, gameNight.member)
+    const isHost = gameNight.mode === "game-night"
+      ? gameNight.member.isHost
+      : url.searchParams.get("host") === "true"
     const playerToken = url.searchParams.get("playerToken") || ""
     if (playerToken) this.connectionTokens.set(conn, playerToken)
 
@@ -922,6 +937,7 @@ export default class PokerParty implements Party.Server {
 			this.send(sender, { type: "error", message: "Invalid player session" })
 			return
 		  }
+		  const name = this.gameNightMembers.get(sender)?.name ?? data.name
 		  const returningPlayer = this.state.players[sender.id]
 		  const expectedToken = this.state.playerTokens[sender.id]
 		  if (returningPlayer && expectedToken !== playerToken) {
@@ -942,7 +958,7 @@ export default class PokerParty implements Party.Server {
           if (this.state.players[sender.id]) {
 			this.state.playerTokens[sender.id] = playerToken
             this.state.players[sender.id].connected = true
-            this.state.players[sender.id].name = data.name
+            this.state.players[sender.id].name = name
             await this.saveState()
             this.broadcastState()
             return
@@ -951,7 +967,7 @@ export default class PokerParty implements Party.Server {
           const seatIndex = this.state.seatOrder.length
           const player: Player = {
             id: sender.id,
-            name: data.name,
+            name,
             chips: this.state.settings.startingChips,
             holeCards: [],
             currentBet: 0,
@@ -1203,6 +1219,22 @@ export default class PokerParty implements Party.Server {
     if (!player.connected || this.state.settings.turnTimeLimit > 0) {
       this.handleFold(currentId)
       await this.saveState()
+    }
+  }
+
+  async onRequest(request: Party.Request) {
+    try {
+      const match = await getGameNightResultMatch(this.room, request, "poker")
+      if (!match) return new Response("Not found", { status: 404 })
+      const finished = this.state?.status === "finished"
+      const remaining = finished ? Object.values(this.state!.players) : []
+      const highestChips = remaining.length > 0 ? Math.max(...remaining.map((player) => player.chips)) : null
+      const winnerIds = highestChips === null
+        ? []
+        : remaining.filter((player) => player.chips === highestChips).map((player) => player.id)
+      return Response.json({ finished, scored: true, winnerIds })
+    } catch {
+      return new Response("Not found", { status: 404 })
     }
   }
 }

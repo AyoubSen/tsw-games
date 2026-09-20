@@ -4,6 +4,7 @@ import {
   PARTYKIT_HOST,
   clearPersistentPlayerId,
   generateRoomCode,
+  getGameNightSocketQuery,
   getPersistentPlayerId,
   leavePartySocket,
 } from "@/lib/partykit"
@@ -140,12 +141,14 @@ export function useMultiplayerWordle() {
     roundIdRef.current = ""
     revisionRef.current = 0
     const playerId = getPersistentPlayerId("wordle", roomCode)
+    const gameNightQuery = getGameNightSocketQuery(roomCode)
     setState(initialState({ connectionStatus: "connecting", playerId }))
 
     const socket = new PartySocket({
       host: PARTYKIT_HOST,
       room: roomCode,
       id: playerId,
+      party: gameNightQuery.night ? "wordle" : undefined,
       query: {
         host: isHost.toString(),
         mode,
@@ -153,6 +156,7 @@ export function useMultiplayerWordle() {
         hardMode: hardMode.toString(),
         seriesLength: String(seriesLength),
         protocolVersion: String(WORDLE_PROTOCOL_VERSION),
+        ...gameNightQuery,
       },
       maxEnqueuedMessages: 0,
     })
@@ -249,8 +253,9 @@ export function useMultiplayerWordle() {
     hardMode: boolean,
     seriesLength: SeriesLength,
     playerName: string,
+    roomId?: string,
   ) => {
-    const roomCode = generateRoomCode()
+    const roomCode = roomId ?? generateRoomCode()
     connect(roomCode, true, mode, revealMode, hardMode, seriesLength, playerName)
     return roomCode
   }, [connect])

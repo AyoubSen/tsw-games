@@ -4,6 +4,7 @@ import {
 	Flag,
 	Grid2X2,
 	Grid3X3,
+	History,
 	Keyboard,
 	LetterText,
 	Link2,
@@ -12,7 +13,6 @@ import {
 	Shuffle,
 	Sparkles,
 	Swords,
-	TimerReset,
 	Vote,
 	Zap,
 } from "lucide-react";
@@ -65,6 +65,38 @@ export interface PlannedGameCatalogEntry extends GameCatalogBaseEntry {
 export type GameCatalogEntry = LiveGameCatalogEntry | PlannedGameCatalogEntry;
 
 export const liveGames: LiveGameCatalogEntry[] = [
+	{
+		id: "timeline-chaos",
+		title: "Timeline Chaos",
+		description:
+			"Put four events in order from oldest to newest, solo or against friends before time runs out.",
+		icon: <History className="w-10 h-10" />,
+		path: "/games/timeline-chaos",
+		players: "1-12 players",
+		minPlayers: 1,
+		maxPlayers: 12,
+		tags: ["solo", "multiplayer", "brainy", "quick", "competitive"],
+		color: "from-amber-500 to-rose-600",
+		status: "live",
+		category: "strategy",
+		isNew: true,
+	},
+	{
+		id: "trivia-quiz",
+		title: "Trivia Quiz",
+		description:
+			"Race through generated world, science, history, and culture questions solo or live with friends.",
+		icon: <Brain className="w-10 h-10" />,
+		path: "/games/trivia-quiz",
+		players: "1-12 players",
+		minPlayers: 1,
+		maxPlayers: 12,
+		tags: ["solo", "multiplayer", "casual", "brainy", "quick", "competitive"],
+		color: "from-fuchsia-500 to-pink-600",
+		status: "live",
+		category: "party",
+		isNew: true,
+	},
 	{
 		id: "memory-match",
 		title: "Memory Match",
@@ -303,34 +335,6 @@ export const liveGames: LiveGameCatalogEntry[] = [
 ];
 
 export const plannedGames: PlannedGameCatalogEntry[] = [
-	{
-		id: "trivia-quiz",
-		title: "Trivia Quiz",
-		description:
-			"Timed category-based questions with points for both speed and correct answers.",
-		icon: <Brain className="w-10 h-10" />,
-		players: "2-12 players",
-		minPlayers: 2,
-		maxPlayers: 12,
-		tags: ["multiplayer", "casual", "brainy", "fun"],
-		color: "from-fuchsia-500 to-pink-600",
-		status: "planned",
-		category: "party",
-	},
-	{
-		id: "reaction-game",
-		title: "Reaction Game",
-		description:
-			"Wait for the signal and click first. Random delays keep every round tense.",
-		icon: <TimerReset className="w-10 h-10" />,
-		players: "2-10 players",
-		minPlayers: 2,
-		maxPlayers: 10,
-		tags: ["multiplayer", "quick", "competitive", "fun"],
-		color: "from-sky-500 to-cyan-500",
-		status: "planned",
-		category: "arcade",
-	},
 	{
 		id: "quick-math",
 		title: "Quick Math",

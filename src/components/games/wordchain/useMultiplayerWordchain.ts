@@ -4,6 +4,7 @@ import {
   PARTYKIT_HOST,
   clearPersistentPlayerId,
   generateRoomCode,
+  getGameNightSocketQuery,
   getPersistentPlayerId,
   leavePartySocket,
 } from "@/lib/partykit"
@@ -61,6 +62,7 @@ export function useMultiplayerWordchain() {
           gameMode: settings.gameMode,
           maxHearts: settings.maxHearts.toString(),
         }),
+        ...getGameNightSocketQuery(roomCode),
       },
     })
 
@@ -303,8 +305,8 @@ export function useMultiplayerWordchain() {
     })
   }, [])
 
-  const createGame = useCallback((playerName: string, settings: GameSettings) => {
-    const roomCode = generateRoomCode()
+  const createGame = useCallback((playerName: string, settings: GameSettings, roomId?: string) => {
+    const roomCode = roomId ?? generateRoomCode()
     connect(roomCode, true, playerName, settings)
     return roomCode
   }, [connect])

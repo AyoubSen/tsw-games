@@ -5,6 +5,7 @@ import {
   clearPersistentPlayerId,
   clearPersistentPlayerToken,
   generateRoomCode,
+  getGameNightSocketQuery,
   getPersistentPlayerId,
   getPersistentPlayerToken,
   leavePartySocket,
@@ -46,7 +47,8 @@ export function useMultiplayerCodenames() {
   const playerNameRef = useRef<string>("")
 
   const connect = useCallback((roomCode: string, isHost: boolean, playerName: string, settings?: GameSettings) => {
-    const normalizedRoomCode = roomCode.toUpperCase()
+    const gameNightQuery = getGameNightSocketQuery(roomCode)
+    const normalizedRoomCode = gameNightQuery.night ? roomCode : roomCode.toUpperCase()
     const previousSocket = socketRef.current
     socketRef.current = null
     previousSocket?.close()
@@ -71,6 +73,7 @@ export function useMultiplayerCodenames() {
       query: {
         host: isHost.toString(),
         playerToken: getPersistentPlayerToken("codenames", normalizedRoomCode),
+        ...gameNightQuery,
         ...(settings && {
           gameMode: settings.gameMode,
           clueTimeLimit: settings.clueTimeLimit.toString(),
@@ -290,8 +293,8 @@ export function useMultiplayerCodenames() {
     return true
   }, [])
 
-  const createGame = useCallback((playerName: string, settings: GameSettings) => {
-    const roomCode = generateRoomCode()
+  const createGame = useCallback((playerName: string, settings: GameSettings, childRoomId?: string) => {
+    const roomCode = childRoomId ?? generateRoomCode()
     connect(roomCode, true, playerName, settings)
     return roomCode
   }, [connect])

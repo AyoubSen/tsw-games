@@ -5,6 +5,7 @@ import {
   clearPersistentPlayerId,
   clearPersistentPlayerToken,
   generateRoomCode,
+  getGameNightSocketQuery,
   getPersistentPlayerId,
   getPersistentPlayerToken,
   leavePartySocket,
@@ -60,7 +61,9 @@ export function useMultiplayerCodeBreaker() {
 
   const connect = useCallback(
     (roomCode: string, hosting: boolean, playerName: string) => {
-      const normalizedRoomCode = roomCode.toUpperCase()
+      const normalizedRoomCode = getGameNightSocketQuery(roomCode).night
+        ? roomCode
+        : roomCode.toUpperCase()
       const previousSocket = socketRef.current
       socketRef.current = null
       previousSocket?.close()
@@ -79,6 +82,7 @@ export function useMultiplayerCodeBreaker() {
         id: playerId,
         party: "codebreaker",
         query: {
+          ...getGameNightSocketQuery(roomCode),
           host: hosting.toString(),
           playerToken: getPersistentPlayerToken(
             "code-breaker",
@@ -130,8 +134,8 @@ export function useMultiplayerCodeBreaker() {
   }, [])
 
   const createGame = useCallback(
-    (playerName: string) => {
-      const roomCode = generateRoomCode()
+    (playerName: string, roomId?: string) => {
+      const roomCode = roomId ?? generateRoomCode()
       connect(roomCode, true, playerName)
       return roomCode
     },

@@ -180,7 +180,6 @@ Recommended priority tiers:
 
 - Trivia, but only with interesting variants: ranking, image reveal, fake-or-real, category sort, wagering, or team steal rounds.
 - Would You Rather as either a mode inside `Hot Take Arena` or a separate very lightweight social vote game.
-- Reaction Game only if it has fake-outs, pattern rules, moving targets, or elimination pressure.
 - Friend trivia: questions about the group, submitted by players.
 - Trust Fall: true/fake statements, room votes on what is believable.
 - Timeline Chaos: order real events, fake events, or friend-group memories.

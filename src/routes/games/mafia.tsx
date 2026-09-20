@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { parseInviteSearch } from '@/lib/inviteLinks'
+import { useGameNight } from '@/components/game-night/GameNightProvider'
+import { useGameNightGameBridge } from '@/components/game-night/useGameNightGameBridge'
+import { getGameNightInviteLink, parseInviteSearch } from '@/lib/inviteLinks'
 import { useMultiplayerSession } from '@/lib/multiplayerSession'
 import { GameModeSelector } from '@/components/games/mafia/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/mafia/MultiplayerLobby'
@@ -17,21 +19,34 @@ export const Route = createFileRoute('/games/mafia')({
 type GameView = 'select' | 'lobby' | 'game'
 
 function MafiaPage() {
-  const { room: invitedRoomCode } = Route.useSearch()
+  const { room: invitedRoomCode, night } = Route.useSearch()
   const [view, setView] = useState<GameView>('select')
   const multiplayer = useMultiplayerMafia()
+  const gameNight = useGameNight()
+  const gameNightConnection = gameNight.connection?.gameId === 'mafia' && gameNight.connection.roomCode === night
+    ? gameNight.connection
+    : null
+  const hasGameState = Boolean(multiplayer.gameState && multiplayer.playerId && multiplayer.gameState.players[multiplayer.playerId])
   const session = useMultiplayerSession({
     game: 'mafia',
     joinGame: multiplayer.joinGame,
-    hasGameState: Boolean(
-      multiplayer.gameState &&
-      multiplayer.playerId &&
-      multiplayer.gameState.players[multiplayer.playerId]
-    ),
+    hasGameState,
     error: multiplayer.error,
     connectionStatus: multiplayer.connectionStatus,
     inviteRoomCode: invitedRoomCode,
     onAbandon: multiplayer.abandonReconnect,
+    disabled: Boolean(night),
+  })
+  const bridge = useGameNightGameBridge({
+    gameId: 'mafia',
+    hasGameState,
+    finished: multiplayer.gameState?.status === 'finished',
+    connectHost: (roomId, playerName) => {
+      if (gameNightConnection) multiplayer.createGame(playerName, { discussionTime: 90, votingTime: 30, nightTime: 30 }, roomId)
+    },
+    connectPlayer: (roomId, playerName) => {
+      if (gameNightConnection) multiplayer.joinGame(roomId, playerName)
+    },
   })
 
   const handleCreateMultiplayer = (playerName: string, settings: MafiaSettings) => {
@@ -77,7 +92,7 @@ function MafiaPage() {
     setView('select')
   }
 
-  if (session.isResuming && effectiveView === 'select') {
+  if ((session.isResuming || (night && (!gameNightConnection || bridge.isConnecting))) && effectiveView === 'select') {
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background flex items-center justify-center">
         <p className="text-muted-foreground">Rejoining your game…</p>
@@ -111,6 +126,9 @@ function MafiaPage() {
   }
 
   if (effectiveView === 'lobby' && multiplayer.gameState && multiplayer.playerId) {
+    const lobbyState = gameNightConnection
+      ? { ...multiplayer.gameState, roomCode: bridge.publicRoomCode }
+      : multiplayer.gameState
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background">
         <div className="px-4 py-3 flex items-center justify-between border-b border-border">
@@ -121,13 +139,20 @@ function MafiaPage() {
           <h1 className="text-lg font-bold">Mafia</h1>
           <div className="w-[60px]" />
         </div>
+        <div onClickCapture={(event) => {
+          if (!gameNightConnection || !(event.target as HTMLElement).closest('button[aria-label*="invite link"]')) return
+          event.preventDefault()
+          event.stopPropagation()
+          navigator.clipboard.writeText(getGameNightInviteLink(bridge.publicRoomCode))
+        }}>
         <MultiplayerLobby
-          gameState={multiplayer.gameState}
+          gameState={lobbyState}
           playerId={multiplayer.playerId}
           isHost={multiplayer.isHost}
           onStartGame={multiplayer.startGame}
           onLeave={handleLeaveMultiplayer}
         />
+        </div>
       </div>
     )
   }

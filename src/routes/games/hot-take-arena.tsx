@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
 import { Check, Loader2, RotateCcw, Timer, Trophy, Vote } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge";
 import { useMultiplayerHotTakeArena } from "@/components/games/hot-take-arena/useMultiplayerHotTakeArena";
 import {
 	GameTopBar,
@@ -17,7 +18,7 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import type { HotTakePack } from "@/lib/hotTakePrompts";
-import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
+import { getGameNightInviteLink, getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
 import type {
 	HotTakePosition,
 	HotTakeSettings,
@@ -120,7 +121,8 @@ const POSITION_OPTIONS: Array<{
 ];
 
 function HotTakeArenaPage() {
-	const { room: invitedRoomCode } = Route.useSearch();
+	const { room: invitedRoomCode, night } = Route.useSearch();
+	const isGameNightMode = Boolean(night);
 	const [view, setView] = useState<HotTakeArenaView>("setup");
 	const [playerName, setPlayerName] = useState("");
 	const [joinRoomCode, setJoinRoomCode] = useState(invitedRoomCode ?? "");
@@ -152,7 +154,18 @@ function HotTakeArenaPage() {
 		connectionStatus: multiplayer.connectionStatus,
 		inviteRoomCode: invitedRoomCode,
 		onAbandon: multiplayer.abandonReconnect,
+		disabled: isGameNightMode,
 	});
+	const gameNightBridge = useGameNightGameBridge({
+		gameId: "hot-take-arena",
+		hasGameState: Boolean(multiplayer.gameState && multiplayer.playerId),
+		finished: multiplayer.gameState?.status === "finished",
+		connectHost: (roomId, name) => multiplayer.createGame(name, { rounds, roundTimeLimit, promptPack }, roomId),
+		connectPlayer: multiplayer.joinGame,
+	});
+	const displayedRoomCode = gameNightBridge.isGameNight
+		? gameNightBridge.publicRoomCode
+		: multiplayer.gameState?.roomCode ?? "";
 	const activeRoundNumber = multiplayer.gameState?.roundNumber;
 
 	useEffect(() => {
@@ -280,9 +293,9 @@ function HotTakeArenaPage() {
 		}
 
 		try {
-			await navigator.clipboard.writeText(
-				getInviteLink(multiplayer.gameState.roomCode),
-			);
+			await navigator.clipboard.writeText(gameNightBridge.isGameNight
+				? getGameNightInviteLink(displayedRoomCode)
+				: getInviteLink(multiplayer.gameState.roomCode));
 			setCopiedRoomCode(true);
 			window.setTimeout(() => setCopiedRoomCode(false), 1600);
 		} catch {
@@ -295,6 +308,10 @@ function HotTakeArenaPage() {
 		multiplayer.submitVote(position);
 		setMessage(null);
 	};
+
+	if (isGameNightMode && !multiplayer.gameState) {
+		return <div className="flex min-h-[calc(100vh-73px)] items-center justify-center text-muted-foreground">Connecting to Game Night...</div>;
+	}
 
 	if (session.isResuming && view === "setup") {
 		return (
@@ -430,7 +447,7 @@ function HotTakeArenaPage() {
 		return (
 			<MultiplayerLobby
 				title="Hot Take Arena Lobby"
-				subtitle={`Room ${multiplayer.gameState.roomCode}`}
+				subtitle={`Room ${displayedRoomCode}`}
 				onBack={handleBack}
 				players={playerList}
 				hostId={multiplayer.gameState.hostId}
@@ -458,7 +475,7 @@ function HotTakeArenaPage() {
 						</p>
 					</div>
 				}
-				roomCode={multiplayer.gameState.roomCode}
+				roomCode={displayedRoomCode}
 				copiedRoomCode={copiedRoomCode}
 				onCopyRoomCode={handleCopyRoomCode}
 				onStart={multiplayer.startGame}

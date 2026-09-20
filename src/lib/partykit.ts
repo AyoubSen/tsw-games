@@ -16,6 +16,10 @@ export const PARTYKIT_HOST = getPartyKitHost()
 
 /** Deliver an explicit leave after a transient outage, then stop reconnecting. */
 export function leavePartySocket(socket: PartySocket, message: object): void {
+  if (new URL(socket.url).searchParams.has("night")) {
+    socket.close()
+    return
+  }
   const sendAndClose = () => {
     try {
       socket.send(JSON.stringify(message))
@@ -65,6 +69,8 @@ export function createPartySocket(roomId: string, isHost: boolean, mode: string)
  * collide on a single connection id.
  */
 export function getPersistentPlayerId(game: string, roomCode: string): string {
+  const gameNight = readGameNightChildConnection(roomCode)
+  if (gameNight) return gameNight.playerId
   const key = `${game}:playerId:${roomCode}`
   if (typeof sessionStorage === "undefined") {
     return crypto.randomUUID()
@@ -92,14 +98,49 @@ export function getPersistentPlayerToken(game: string, roomCode: string): string
   return token
 }
 
+interface StoredGameNightChildConnection {
+  roomCode: string
+  matchId: string
+  playerId: string
+  ticket: string
+}
+
+const gameNightChildKey = (roomId: string) => `game-night:child:${roomId}`
+
+function readGameNightChildConnection(roomId: string): StoredGameNightChildConnection | null {
+  if (typeof sessionStorage === "undefined") return null
+  try {
+    const value = sessionStorage.getItem(gameNightChildKey(roomId))
+    return value ? JSON.parse(value) as StoredGameNightChildConnection : null
+  } catch {
+    return null
+  }
+}
+
+export function rememberGameNightChildConnection(roomId: string, connection: StoredGameNightChildConnection): void {
+  if (typeof sessionStorage === "undefined") return
+  sessionStorage.setItem(gameNightChildKey(roomId), JSON.stringify(connection))
+}
+
+export function getGameNightSocketQuery(roomId: string): Record<string, string> {
+  const connection = readGameNightChildConnection(roomId)
+  return connection ? {
+    night: connection.roomCode,
+    nightMatch: connection.matchId,
+    nightTicket: connection.ticket,
+  } : {}
+}
+
 /** Forget this tab's identity for a room - used when the player deliberately leaves. */
 export function clearPersistentPlayerId(game: string, roomCode: string): void {
   if (typeof sessionStorage === "undefined") return
+  if (readGameNightChildConnection(roomCode)) return
   sessionStorage.removeItem(`${game}:playerId:${roomCode}`)
 }
 
 export function clearPersistentPlayerToken(game: string, roomCode: string): void {
   if (typeof sessionStorage === "undefined") return
+  if (readGameNightChildConnection(roomCode)) return
   sessionStorage.removeItem(`${game}:playerToken:${roomCode}`)
 }
 

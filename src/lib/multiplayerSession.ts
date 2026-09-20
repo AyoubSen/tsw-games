@@ -62,6 +62,8 @@ interface UseMultiplayerSessionOptions {
    * the hook's `disconnect` so the stale error never reaches the menu.
    */
   onAbandon?: () => void
+  /** A parent session, such as Game Night, owns reconnect for this game. */
+  disabled?: boolean
 }
 
 /**
@@ -79,6 +81,7 @@ export function useMultiplayerSession({
   connectionStatus,
   inviteRoomCode,
   onAbandon,
+  disabled = false,
 }: UseMultiplayerSessionOptions) {
   const [isResuming, setIsResuming] = useState(false)
   const attemptedRef = useRef(false)
@@ -107,6 +110,7 @@ export function useMultiplayerSession({
   abandonRef.current = onAbandon
 
   useEffect(() => {
+    if (disabled) return
     if (attemptedRef.current) return
     attemptedRef.current = true
 
@@ -117,7 +121,7 @@ export function useMultiplayerSession({
     suppressRef.current = true
     setIsResuming(true)
     joinRef.current(record.roomCode, record.name)
-  }, [game, inviteRoomCode])
+  }, [game, inviteRoomCode, disabled])
 
   useEffect(() => {
     if (!isResuming) return

@@ -9,6 +9,7 @@ function normalizeRoomCode(value: string): string {
 
 export interface InviteSearch {
 	room?: string;
+	night?: string;
 }
 
 export function parseInviteSearch(
@@ -17,8 +18,22 @@ export function parseInviteSearch(
 	const roomCode = normalizeRoomCode(
 		typeof search.room === "string" ? search.room : "",
 	);
+	const nightCode = normalizeRoomCode(
+		typeof search.night === "string" ? search.night : "",
+	);
 
-	return roomCode.length === ROOM_CODE_LENGTH ? { room: roomCode } : {};
+	return {
+		...(roomCode.length === ROOM_CODE_LENGTH && { room: roomCode }),
+		...(nightCode.length === ROOM_CODE_LENGTH && { night: nightCode }),
+	};
+}
+
+export function getGameNightInviteLink(roomCode: string): string {
+	const normalizedRoomCode = normalizeRoomCode(roomCode);
+	if (typeof window === "undefined") return `/game-night?room=${normalizedRoomCode}`;
+	const url = new URL("/game-night", window.location.origin);
+	url.searchParams.set("room", normalizedRoomCode);
+	return url.toString();
 }
 
 export function getInviteLink(roomCode: string): string {

@@ -16,6 +16,11 @@ import {
   nextHost,
   presentCount,
 } from "./shared/presence"
+import {
+  getGameNightResultMatch,
+  validateGameNightConnection,
+  type GameNightMember,
+} from "./shared/gameNight"
 
 export interface Player {
   id: string
@@ -81,6 +86,7 @@ export default class CodeBreakerParty implements Party.Server {
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
+  gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
 
   async onStart() {
     const stored = await this.room.storage.get<GameState>("state")
@@ -222,11 +228,20 @@ export default class CodeBreakerParty implements Party.Server {
   }
 
   async onConnect(connection: Party.Connection, context: Party.ConnectionContext) {
+    const gameNight = await validateGameNightConnection(this.room, connection, context, "code-breaker")
+    if (gameNight.mode === "invalid") {
+      this.send(connection, { type: "error", message: "Game not found" })
+      return
+    }
+    if (gameNight.mode === "game-night") this.gameNightMembers.set(connection, gameNight.member)
     const url = new URL(context.request.url)
     const playerToken = url.searchParams.get("playerToken") ?? ""
     if (playerToken) this.connectionTokens.set(connection, playerToken)
 
-    if (url.searchParams.get("host") === "true" && !this.state) {
+    const canCreate = gameNight.mode === "game-night"
+      ? gameNight.member.isHost
+      : url.searchParams.get("host") === "true"
+    if (canCreate && !this.state) {
       this.state = {
         roomCode: this.room.id,
         hostId: connection.id,
@@ -260,6 +275,7 @@ export default class CodeBreakerParty implements Party.Server {
 
       switch (data.type) {
         case "join": {
+          const gameNightMember = this.gameNightMembers.get(sender)
           const playerToken = this.connectionTokens.get(sender)
           if (!playerToken) {
             this.send(sender, { type: "error", message: "Invalid player session" })
@@ -273,7 +289,7 @@ export default class CodeBreakerParty implements Party.Server {
               return
             }
             markConnected(this.state.players, sender.id)
-            returning.name = data.name.trim().slice(0, 20) || returning.name
+            returning.name = gameNightMember?.name ?? (data.name.trim().slice(0, 20) || returning.name)
             returning.disconnectedAt = null
             if (
               !this.state.hostId ||
@@ -305,7 +321,7 @@ export default class CodeBreakerParty implements Party.Server {
             return
           }
 
-          const name = data.name.trim().slice(0, 20)
+          const name = gameNightMember?.name ?? data.name.trim().slice(0, 20)
           if (!name) {
             this.send(sender, { type: "error", message: "Enter a player name" })
             return
@@ -477,6 +493,17 @@ export default class CodeBreakerParty implements Party.Server {
     await this.refreshDisconnectAlarm()
     await this.saveState()
     this.broadcastState()
+  }
+
+  async onRequest(request: Party.Request) {
+    const match = await getGameNightResultMatch(this.room, request, "code-breaker")
+    if (!match) return new Response("Not found", { status: 404 })
+    const finished = this.state?.status === "finished"
+    return Response.json({
+      finished,
+      scored: true,
+      winnerIds: finished ? this.state?.winnerIds ?? [] : [],
+    })
   }
 
   async onAlarm() {

@@ -4,6 +4,7 @@ import {
 	clearPersistentPlayerId,
 	clearPersistentPlayerToken,
 	generateRoomCode,
+	getGameNightSocketQuery,
 	getPersistentPlayerId,
 	getPersistentPlayerToken,
 	leavePartySocket,
@@ -296,7 +297,10 @@ export function useMultiplayerDrawing() {
 			playerName: string,
 			settings?: GameSettings,
 		) => {
-			const normalizedRoomCode = roomCode.toUpperCase();
+			const gameNightQuery = getGameNightSocketQuery(roomCode);
+			const normalizedRoomCode = Object.keys(gameNightQuery).length
+				? roomCode
+				: roomCode.toUpperCase();
 			const previousSocket = socketRef.current;
 			socketRef.current = null;
 			previousSocket?.close();
@@ -309,7 +313,9 @@ export function useMultiplayerDrawing() {
 			setState((prev) => ({
 				...prev,
 				connectionStatus: "connecting",
+				gameState: null,
 				error: null,
+				isHost: false,
 				playerId,
 				strokes: [],
 				guesses: [],
@@ -325,6 +331,7 @@ export function useMultiplayerDrawing() {
 				query: {
 					host: isHost.toString(),
 					playerToken: getPersistentPlayerToken("drawing", normalizedRoomCode),
+					...gameNightQuery,
 					...(settings && {
 						mode: settings.mode,
 						roundTimeLimit: settings.roundTimeLimit.toString(),
@@ -426,8 +433,8 @@ export function useMultiplayerDrawing() {
 	}, []);
 
 	const createGame = useCallback(
-		(playerName: string, settings: GameSettings) => {
-			const roomCode = generateRoomCode();
+		(playerName: string, settings: GameSettings, suppliedRoomId?: string) => {
+			const roomCode = suppliedRoomId ?? generateRoomCode();
 			connect(roomCode, true, playerName, settings);
 			return roomCode;
 		},
@@ -436,7 +443,7 @@ export function useMultiplayerDrawing() {
 
 	const joinGame = useCallback(
 		(roomCode: string, playerName: string) => {
-			connect(roomCode.toUpperCase(), false, playerName);
+			connect(roomCode, false, playerName);
 		},
 		[connect],
 	);

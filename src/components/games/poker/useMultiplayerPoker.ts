@@ -5,6 +5,7 @@ import {
   clearPersistentPlayerId,
   clearPersistentPlayerToken,
   generateRoomCode,
+  getGameNightSocketQuery,
   getPersistentPlayerId,
   getPersistentPlayerToken,
   leavePartySocket,
@@ -42,7 +43,8 @@ export function useMultiplayerPoker() {
 
   const connect = useCallback(
     (roomCode: string, isHost: boolean, playerName: string, settings?: PokerSettings) => {
-      const normalizedRoomCode = roomCode.toUpperCase()
+      const gameNightQuery = getGameNightSocketQuery(roomCode)
+      const normalizedRoomCode = gameNightQuery.night ? roomCode : roomCode.toUpperCase()
       const previousSocket = socketRef.current
       socketRef.current = null
       previousSocket?.close()
@@ -67,6 +69,7 @@ export function useMultiplayerPoker() {
         query: {
           host: isHost.toString(),
           playerToken: getPersistentPlayerToken("poker", normalizedRoomCode),
+          ...gameNightQuery,
           ...(settings && {
             startingChips: settings.startingChips.toString(),
             smallBlind: settings.smallBlind.toString(),
@@ -223,8 +226,8 @@ export function useMultiplayerPoker() {
   }, [])
 
   const createGame = useCallback(
-    (playerName: string, settings: PokerSettings) => {
-      const roomCode = generateRoomCode()
+    (playerName: string, settings: PokerSettings, childRoomId?: string) => {
+      const roomCode = childRoomId ?? generateRoomCode()
       connect(roomCode, true, playerName, settings)
       return roomCode
     },

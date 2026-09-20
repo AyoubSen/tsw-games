@@ -3,6 +3,8 @@
   "name": "tsw-games",
   "main": "party/wordle.ts",
   "parties": {
+    "gamenight": "party/game-night.ts",
+    "wordle": "party/wordle.ts",
     "typerace": "party/typerace.ts",
     "drawing": "party/drawing.ts",
     "wordchain": "party/wordchain.ts",
@@ -16,7 +18,9 @@
     "mafia": "party/mafia.ts",
     "guessthecountry": "party/guess-the-country.ts",
     "codebreaker": "party/code-breaker.ts",
-    "memorymatch": "party/memory-match.ts"
+    "memorymatch": "party/memory-match.ts",
+    "triviaquiz": "party/trivia-quiz.ts",
+    "timelinechaos": "party/timeline-chaos.ts"
   },
   "compatibilityDate": "2024-01-01"
 }

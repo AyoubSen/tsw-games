@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server";
+import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight";
 import {
 	markConnected,
 	markDisconnected,
@@ -164,6 +165,7 @@ export default class WordScrambleParty implements Party.Server {
 	constructor(readonly room: Party.Room) {}
 
 	state: GameState | null = null;
+	gameNightMembers = new Map<string, GameNightMember>();
 
 	async onStart() {
 		const stored = await this.room.storage.get<GameState>("state");
@@ -227,9 +229,15 @@ export default class WordScrambleParty implements Party.Server {
 
 	async onConnect(connection: Party.Connection, context: Party.ConnectionContext) {
 		const url = new URL(context.request.url);
+		const gameNight = await validateGameNightConnection(this.room, connection, context, "word-scramble");
+		if (gameNight.mode === "invalid") {
+			connection.close(1008, "Invalid Game Night connection");
+			return;
+		}
+		if (gameNight.mode === "game-night") this.gameNightMembers.set(connection.id, gameNight.member);
 		const isHost = url.searchParams.get("host") === "true";
 
-		if (isHost && !this.state) {
+		if ((gameNight.mode === "direct" ? isHost : gameNight.member.isHost) && !this.state) {
 			const roundTimeLimit = Math.max(
 				30,
 				Math.min(120, Number.parseInt(url.searchParams.get("roundTimeLimit") || "60", 10)),
@@ -282,10 +290,11 @@ export default class WordScrambleParty implements Party.Server {
 
 			switch (data.type) {
 				case "join": {
+					const name = this.gameNightMembers.get(sender.id)?.name ?? data.name;
 					const returning = markConnected(this.state.players, sender.id);
 					if (returning) {
 						// A reconnect, not a new player - never rejected mid-game.
-						returning.name = data.name || returning.name;
+						returning.name = name || returning.name;
 						await this.saveState();
 						this.broadcast({ type: "player-joined", player: returning });
 						this.broadcast({ type: "state", state: this.getPublicState() });
@@ -304,7 +313,7 @@ export default class WordScrambleParty implements Party.Server {
 
 					const player: Player = {
 						id: sender.id,
-						name: data.name,
+						name,
 						score: 0,
 						foundWords: [],
 						joinedAt: Date.now(),
@@ -532,6 +541,7 @@ export default class WordScrambleParty implements Party.Server {
 			(candidate) => candidate.id === connection.id && candidate !== connection,
 		);
 		if (replacementIsOpen) return;
+		this.gameNightMembers.delete(connection.id);
 
 		markDisconnected(this.state.players, connection.id);
 
@@ -539,5 +549,16 @@ export default class WordScrambleParty implements Party.Server {
 		// No "player-left" here: they may be back in a moment, and the client
 		// removes players on that message.
 		this.broadcast({ type: "state", state: this.getPublicState() });
+	}
+
+	async onRequest(request: Party.Request) {
+		const match = await getGameNightResultMatch(this.room, request, "word-scramble");
+		if (!match) return new Response("Not found", { status: 404 });
+		const finished = this.state?.status === "finished";
+		return Response.json({
+			finished,
+			scored: true,
+			winnerIds: finished ? this.state!.winnerIds : [],
+		});
 	}
 }

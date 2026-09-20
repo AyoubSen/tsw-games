@@ -4,6 +4,7 @@ import {
   clearPersistentPlayerId,
   clearPersistentPlayerToken,
   generateRoomCode,
+  getGameNightSocketQuery,
   getPersistentPlayerId,
   getPersistentPlayerToken,
   leavePartySocket,
@@ -63,7 +64,9 @@ export function useMultiplayerMemoryMatch() {
 
   const connect = useCallback(
     (roomCode: string, hosting: boolean, playerName: string) => {
-      const normalizedRoomCode = roomCode.toUpperCase()
+      const normalizedRoomCode = getGameNightSocketQuery(roomCode).night
+        ? roomCode
+        : roomCode.toUpperCase()
       const previousSocket = socketRef.current
       socketRef.current = null
       previousSocket?.close()
@@ -82,6 +85,7 @@ export function useMultiplayerMemoryMatch() {
         id: playerId,
         party: "memorymatch",
         query: {
+          ...getGameNightSocketQuery(roomCode),
           host: hosting.toString(),
           playerToken: getPersistentPlayerToken(
             "memory-match",
@@ -133,8 +137,8 @@ export function useMultiplayerMemoryMatch() {
   }, [])
 
   const createGame = useCallback(
-    (playerName: string) => {
-      const roomCode = generateRoomCode()
+    (playerName: string, roomId?: string) => {
+      const roomCode = roomId ?? generateRoomCode()
       connect(roomCode, true, playerName)
       return roomCode
     },

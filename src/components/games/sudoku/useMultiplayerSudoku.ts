@@ -5,6 +5,7 @@ import {
   clearPersistentPlayerId,
   clearPersistentPlayerToken,
   generateRoomCode,
+  getGameNightSocketQuery,
   getPersistentPlayerId,
   getPersistentPlayerToken,
   leavePartySocket,
@@ -184,6 +185,7 @@ export function useMultiplayerSudoku() {
       query: {
         host: isHost.toString(),
         playerToken: getPersistentPlayerToken("sudoku", roomCode),
+        ...getGameNightSocketQuery(roomCode),
         protocolVersion: String(SUDOKU_PROTOCOL_VERSION),
         ...(difficulty && { difficulty }),
       },
@@ -310,13 +312,13 @@ export function useMultiplayerSudoku() {
     return true
   }, [connect])
 
-  const createGame = useCallback((playerName: string, difficulty: Difficulty) => {
+  const createGame = useCallback((playerName: string, difficulty: Difficulty, childRoomId?: string) => {
     resumingRef.current = false
     if (resumeTimeoutRef.current) {
       clearTimeout(resumeTimeoutRef.current)
       resumeTimeoutRef.current = null
     }
-    const roomCode = generateRoomCode()
+    const roomCode = childRoomId ?? generateRoomCode()
     connect(roomCode, true, playerName, difficulty)
     return roomCode
   }, [connect])
@@ -327,7 +329,7 @@ export function useMultiplayerSudoku() {
       clearTimeout(resumeTimeoutRef.current)
       resumeTimeoutRef.current = null
     }
-    connect(roomCode.toUpperCase(), false, playerName)
+    connect(getGameNightSocketQuery(roomCode).night ? roomCode : roomCode.toUpperCase(), false, playerName)
   }, [connect])
 
   const startGame = useCallback(() => {

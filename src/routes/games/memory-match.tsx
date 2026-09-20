@@ -9,7 +9,9 @@ import {
   Trophy,
   Users,
 } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useGameNight } from "@/components/game-night/GameNightProvider"
+import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge"
 import {
   MemoryBoard,
   type MemoryCardView,
@@ -36,7 +38,7 @@ import {
   MEMORY_PAIR_COUNT,
   type MemorySymbol,
 } from "@/lib/memoryMatch"
-import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks"
+import { getGameNightInviteLink, getInviteLink, parseInviteSearch } from "@/lib/inviteLinks"
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
 
 export const Route = createFileRoute("/games/memory-match")({
@@ -69,18 +71,30 @@ function MemoryMatchPage() {
   const [copiedRoomCode, setCopiedRoomCode] = useState(false)
 
   const multiplayer = useMultiplayerMemoryMatch()
+  const gameNight = useGameNight()
+  const hasGameState = Boolean(
+    multiplayer.gameState && multiplayer.playerId && multiplayer.gameState.players[multiplayer.playerId],
+  )
+  const isGameNightConnection = gameNight.connection?.gameId === "memory-match"
   const session = useMultiplayerSession({
     game: "memory-match",
     joinGame: multiplayer.joinGame,
-    hasGameState: Boolean(
-      multiplayer.gameState &&
-        multiplayer.playerId &&
-        multiplayer.gameState.players[multiplayer.playerId],
-    ),
+    hasGameState,
     error: multiplayer.error,
     connectionStatus: multiplayer.connectionStatus,
     inviteRoomCode: invitedRoomCode,
     onAbandon: multiplayer.abandonReconnect,
+    disabled: isGameNightConnection,
+  })
+  const connectGameNightHost = useCallback((roomId: string, name: string) => {
+    multiplayer.createGame(name, roomId)
+  }, [multiplayer.createGame])
+  const bridge = useGameNightGameBridge({
+    gameId: "memory-match",
+    hasGameState,
+    finished: multiplayer.gameState?.status === "finished",
+    connectHost: connectGameNightHost,
+    connectPlayer: multiplayer.joinGame,
   })
 
   useEffect(() => {
@@ -238,7 +252,9 @@ function MemoryMatchPage() {
     if (!multiplayer.gameState) return
     try {
       await navigator.clipboard.writeText(
-        getInviteLink(multiplayer.gameState.roomCode),
+        bridge.isGameNight
+          ? getGameNightInviteLink(bridge.publicRoomCode)
+          : getInviteLink(multiplayer.gameState.roomCode),
       )
       setCopiedRoomCode(true)
       window.setTimeout(() => setCopiedRoomCode(false), 1600)
@@ -252,6 +268,14 @@ function MemoryMatchPage() {
     multiplayer.disconnect()
     setMessage(null)
     setView("select")
+  }
+
+  if (bridge.isConnecting) {
+    return (
+      <div className="flex min-h-[calc(100vh-73px)] items-center justify-center">
+        <p className="text-muted-foreground">Connecting to Game Night...</p>
+      </div>
+    )
   }
 
   if (session.isResuming && view === "select") {
@@ -425,7 +449,7 @@ function MemoryMatchPage() {
             </p>
           </div>
         }
-        roomCode={multiplayer.gameState.roomCode}
+        roomCode={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode}
         copiedRoomCode={copiedRoomCode}
         onCopyRoomCode={copyRoomCode}
         onStart={multiplayer.startGame}

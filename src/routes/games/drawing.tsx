@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Clock, Palette, Phone, RotateCcw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge";
 import { MultiplayerGame } from "@/components/games/drawing/MultiplayerGame";
 import { TelephoneGame } from "@/components/games/drawing/TelephoneGame";
 import type {
@@ -14,7 +15,7 @@ import {
 	MultiplayerSetupCard,
 } from "@/components/multiplayer/shared";
 import { Button } from "@/components/ui/button";
-import { getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
+import { getGameNightInviteLink, getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
 import { useMultiplayerSession } from "@/lib/multiplayerSession";
 import {
 	Card,
@@ -45,7 +46,8 @@ const ROUNDS_OPTIONS = [
 ];
 
 function DrawingPage() {
-	const { room: invitedRoomCode } = Route.useSearch();
+	const { room: invitedRoomCode, night } = Route.useSearch();
+	const isGameNightMode = Boolean(night);
 	const [view, setView] = useState<GameView>("select");
 	const [playerName, setPlayerName] = useState("");
 	const [joinRoomCode, setJoinRoomCode] = useState(invitedRoomCode ?? "");
@@ -73,7 +75,18 @@ function DrawingPage() {
 		connectionStatus: multiplayer.connectionStatus,
 		inviteRoomCode: invitedRoomCode,
 		onAbandon: multiplayer.abandonReconnect,
+		disabled: isGameNightMode,
 	});
+	const gameNightBridge = useGameNightGameBridge({
+		gameId: "drawing",
+		hasGameState: Boolean(multiplayer.gameState && multiplayer.playerId),
+		finished: multiplayer.gameState?.status === "finished",
+		connectHost: (roomId, name) => multiplayer.createGame(name, { mode, roundTimeLimit, roundsPerPlayer }, roomId),
+		connectPlayer: multiplayer.joinGame,
+	});
+	const displayedRoomCode = gameNightBridge.isGameNight
+		? gameNightBridge.publicRoomCode
+		: multiplayer.gameState?.roomCode ?? "";
 
 	useEffect(() => {
 		if (session.isSuppressingErrors()) return;
@@ -155,15 +168,19 @@ function DrawingPage() {
 		}
 
 		try {
-			await navigator.clipboard.writeText(
-				getInviteLink(multiplayer.gameState.roomCode),
-			);
+			await navigator.clipboard.writeText(gameNightBridge.isGameNight
+				? getGameNightInviteLink(displayedRoomCode)
+				: getInviteLink(multiplayer.gameState.roomCode));
 			setCopiedRoomCode(true);
 			window.setTimeout(() => setCopiedRoomCode(false), 1600);
 		} catch {
 			setMessage("Could not copy the invite link.");
 		}
 	};
+
+	if (isGameNightMode && !multiplayer.gameState) {
+		return <div className="flex min-h-[calc(100vh-73px)] items-center justify-center text-muted-foreground">Connecting to Game Night...</div>;
+	}
 
 	if (session.isResuming && view === "select") {
 		return (
@@ -337,7 +354,7 @@ function DrawingPage() {
 		return (
 			<MultiplayerLobby
 				title="Drawing Lobby"
-				subtitle={`Room ${multiplayer.gameState.roomCode}`}
+				subtitle={`Room ${displayedRoomCode}`}
 				onBack={handleBackToSelect}
 				players={playerList}
 				hostId={multiplayer.gameState.hostId}
@@ -375,7 +392,7 @@ function DrawingPage() {
 						</p>
 					</div>
 				}
-				roomCode={multiplayer.gameState.roomCode}
+				roomCode={displayedRoomCode}
 				copiedRoomCode={copiedRoomCode}
 				onCopyRoomCode={handleCopyRoomCode}
 				onStart={multiplayer.startGame}
@@ -403,7 +420,7 @@ function DrawingPage() {
 							? "Drawing Telephone"
 							: "Drawing Game"
 					}
-					subtitle={`Room ${multiplayer.gameState.roomCode}`}
+					subtitle={`Room ${displayedRoomCode}`}
 					onBack={handleBackToSelect}
 					rightAction={
 						<Button

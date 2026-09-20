@@ -5,6 +5,7 @@ import {
   clearPersistentPlayerId,
   clearPersistentPlayerToken,
   generateRoomCode,
+  getGameNightSocketQuery,
   getPersistentPlayerId,
   getPersistentPlayerToken,
   leavePartySocket,
@@ -41,7 +42,8 @@ export function useMultiplayerMafia() {
 
   const connect = useCallback(
     (roomCode: string, isHost: boolean, playerName: string, settings?: MafiaSettings) => {
-      const normalizedRoomCode = roomCode.toUpperCase()
+      const gameNightQuery = getGameNightSocketQuery(roomCode)
+      const normalizedRoomCode = gameNightQuery.night ? roomCode : roomCode.toUpperCase()
       const previousSocket = socketRef.current
       socketRef.current = null
       previousSocket?.close()
@@ -64,6 +66,7 @@ export function useMultiplayerMafia() {
         query: {
           host: isHost.toString(),
           playerToken: getPersistentPlayerToken("mafia", normalizedRoomCode),
+          ...gameNightQuery,
           ...(settings && {
             discussionTime: settings.discussionTime.toString(),
             votingTime: settings.votingTime.toString(),
@@ -219,8 +222,8 @@ export function useMultiplayerMafia() {
   }, [])
 
   const createGame = useCallback(
-    (playerName: string, settings: MafiaSettings) => {
-      const roomCode = generateRoomCode()
+    (playerName: string, settings: MafiaSettings, childRoomId?: string) => {
+      const roomCode = childRoomId ?? generateRoomCode()
       connect(roomCode, true, playerName, settings)
       return roomCode
     },

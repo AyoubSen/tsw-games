@@ -5,6 +5,11 @@ import {
   nextHost,
   canControlGame,
 } from "./shared/presence"
+import {
+  getGameNightResultMatch,
+  validateGameNightConnection,
+  type GameNightMember,
+} from "./shared/gameNight"
 
 // Core types
 export type Team = "red" | "blue"
@@ -217,6 +222,7 @@ export default class CodenamesParty implements Party.Server {
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
+  gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
 
   async onStart() {
     const stored = await this.room.storage.get<GameState>("state")
@@ -509,7 +515,16 @@ export default class CodenamesParty implements Party.Server {
 
   async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     const url = new URL(ctx.request.url)
-    const isHost = url.searchParams.get("host") === "true"
+    const gameNight = await validateGameNightConnection(this.room, conn, ctx, "codenames")
+    if (gameNight.mode === "invalid") {
+      this.send(conn, { type: "error", message: "Invalid Game Night connection" })
+      conn.close(1008, "Invalid Game Night connection")
+      return
+    }
+    if (gameNight.mode === "game-night") this.gameNightMembers.set(conn, gameNight.member)
+    const isHost = gameNight.mode === "game-night"
+      ? gameNight.member.isHost
+      : url.searchParams.get("host") === "true"
     const playerToken = url.searchParams.get("playerToken") || ""
     if (playerToken) this.connectionTokens.set(conn, playerToken)
 
@@ -571,6 +586,7 @@ export default class CodenamesParty implements Party.Server {
 			this.send(sender, { type: "error", message: "Invalid player session" })
 			return
 		  }
+		  const gameNightName = this.gameNightMembers.get(sender)?.name
 		  const returningPlayer = this.state.players[sender.id]
 		  const expectedToken = this.state.playerTokens[sender.id]
 		  if (returningPlayer && expectedToken !== playerToken) {
@@ -583,7 +599,7 @@ export default class CodenamesParty implements Party.Server {
           const returning = markConnected(this.state.players, sender.id)
           if (returning) {
 			this.state.playerTokens[sender.id] = playerToken
-            returning.name = data.name || returning.name
+            returning.name = gameNightName || data.name || returning.name
             await this.saveState()
             this.broadcast({ type: "player-joined", player: returning })
             this.broadcastState()
@@ -602,7 +618,7 @@ export default class CodenamesParty implements Party.Server {
 
           const player: Player = {
             id: sender.id,
-            name: data.name,
+            name: gameNightName || data.name,
             team: null,
             role: null,
             joinedAt: Date.now(),
@@ -937,5 +953,19 @@ export default class CodenamesParty implements Party.Server {
       this.broadcastState()
     }
 	this.connectionTokens.delete(conn)
+  }
+
+  async onRequest(request: Party.Request) {
+    try {
+      const match = await getGameNightResultMatch(this.room, request, "codenames")
+      if (!match) return new Response("Not found", { status: 404 })
+      const finished = this.state?.status === "finished" && this.state.winner !== null
+      const winnerIds = finished
+        ? Object.values(this.state!.players).filter((player) => player.team === this.state!.winner).map((player) => player.id)
+        : []
+      return Response.json({ finished, scored: true, winnerIds })
+    } catch {
+      return new Response("Not found", { status: 404 })
+    }
   }
 }

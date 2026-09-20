@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight"
 import {
   markConnected,
   markDisconnected,
@@ -110,6 +111,7 @@ export default class TypeRaceParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
+  gameNightMembers = new Map<string, GameNightMember>()
 
   async onStart() {
     const stored = await this.room.storage.get<GameState>("state")
@@ -162,10 +164,16 @@ export default class TypeRaceParty implements Party.Server {
 
   async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     const url = new URL(ctx.request.url)
+    const gameNight = await validateGameNightConnection(this.room, conn, ctx, "typerace")
+    if (gameNight.mode === "invalid") {
+      conn.close(1008, "Invalid Game Night connection")
+      return
+    }
+    if (gameNight.mode === "game-night") this.gameNightMembers.set(conn.id, gameNight.member)
     const mode = (url.searchParams.get("mode") as GameMode) || "race"
     const isHost = url.searchParams.get("host") === "true"
 
-    if (isHost && !this.state) {
+    if ((gameNight.mode === "direct" ? isHost : gameNight.member.isHost) && !this.state) {
       this.state = {
         roomCode: this.room.id,
         mode,
@@ -194,10 +202,11 @@ export default class TypeRaceParty implements Party.Server {
 
       switch (data.type) {
         case "join": {
+          const name = this.gameNightMembers.get(sender.id)?.name ?? data.name
           const returning = markConnected(this.state.players, sender.id);
           if (returning) {
             // A reconnect, not a new player - never rejected mid-game.
-            returning.name = data.name || returning.name;
+            returning.name = name || returning.name;
             await this.saveState();
             this.broadcast({ type: "player-joined", player: returning });
             this.broadcast({ type: "state", state: this.getPublicState() });
@@ -216,7 +225,7 @@ export default class TypeRaceParty implements Party.Server {
 
           const player: Player = {
             id: sender.id,
-            name: data.name,
+            name,
             progress: 0,
             wpm: 0,
             accuracy: 100,
@@ -424,6 +433,7 @@ export default class TypeRaceParty implements Party.Server {
       connection => connection.id === conn.id && connection !== conn,
     )
     if (replacementIsOpen) return
+    this.gameNightMembers.delete(conn.id)
 
     if (this.state.players[conn.id]) {
       markDisconnected(this.state.players, conn.id);
@@ -433,5 +443,17 @@ export default class TypeRaceParty implements Party.Server {
       // removes players on that message.
       this.broadcast({ type: "state", state: this.getPublicState() })
     }
+  }
+
+
+  async onRequest(request: Party.Request) {
+    const match = await getGameNightResultMatch(this.room, request, "typerace")
+    if (!match) return new Response("Not found", { status: 404 })
+    const finished = this.state?.status === "finished"
+    return Response.json({
+      finished,
+      scored: true,
+      winnerIds: finished && this.state?.winnerId ? [this.state.winnerId] : [],
+    })
   }
 }

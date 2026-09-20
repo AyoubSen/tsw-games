@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { parseInviteSearch } from '@/lib/inviteLinks'
+import { useGameNight } from '@/components/game-night/GameNightProvider'
+import { useGameNightGameBridge } from '@/components/game-night/useGameNightGameBridge'
+import { getGameNightInviteLink, parseInviteSearch } from '@/lib/inviteLinks'
 import { useMultiplayerSession } from '@/lib/multiplayerSession'
 import { GameModeSelector } from '@/components/games/poker/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/poker/MultiplayerLobby'
@@ -17,21 +19,34 @@ export const Route = createFileRoute('/games/poker')({
 type GameView = 'select' | 'lobby' | 'game'
 
 function PokerPage() {
-  const { room: invitedRoomCode } = Route.useSearch()
+  const { room: invitedRoomCode, night } = Route.useSearch()
   const [view, setView] = useState<GameView>('select')
   const multiplayer = useMultiplayerPoker()
+  const gameNight = useGameNight()
+  const gameNightConnection = gameNight.connection?.gameId === 'poker' && gameNight.connection.roomCode === night
+    ? gameNight.connection
+    : null
+  const hasGameState = Boolean(multiplayer.gameState && multiplayer.playerId && multiplayer.gameState.players[multiplayer.playerId])
   const session = useMultiplayerSession({
     game: 'poker',
     joinGame: multiplayer.joinGame,
-    hasGameState: Boolean(
-      multiplayer.gameState &&
-      multiplayer.playerId &&
-      multiplayer.gameState.players[multiplayer.playerId]
-    ),
+    hasGameState,
     error: multiplayer.error,
     connectionStatus: multiplayer.connectionStatus,
     inviteRoomCode: invitedRoomCode,
     onAbandon: multiplayer.abandonReconnect,
+    disabled: Boolean(night),
+  })
+  const bridge = useGameNightGameBridge({
+    gameId: 'poker',
+    hasGameState,
+    finished: multiplayer.gameState?.status === 'finished',
+    connectHost: (roomId, playerName) => {
+      if (gameNightConnection) multiplayer.createGame(playerName, { startingChips: 1000, smallBlind: 10, blindIncrease: 0, turnTimeLimit: 0 }, roomId)
+    },
+    connectPlayer: (roomId, playerName) => {
+      if (gameNightConnection) multiplayer.joinGame(roomId, playerName)
+    },
   })
 
   const handleCreateMultiplayer = (playerName: string, settings: PokerSettings) => {
@@ -81,7 +96,7 @@ function PokerPage() {
   }
 
   // View 1: Mode Selection (always v1)
-  if (session.isResuming && effectiveView === 'select') {
+  if ((session.isResuming || (night && (!gameNightConnection || bridge.isConnecting))) && effectiveView === 'select') {
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background flex items-center justify-center">
         <p className="text-muted-foreground">Rejoining your game…</p>
@@ -116,6 +131,9 @@ function PokerPage() {
 
   // View 2: Lobby (always v1)
   if (effectiveView === 'lobby' && multiplayer.gameState && multiplayer.playerId) {
+    const lobbyState = gameNightConnection
+      ? { ...multiplayer.gameState, roomCode: bridge.publicRoomCode }
+      : multiplayer.gameState
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background">
         <div className="px-4 py-3 flex items-center justify-between border-b border-border">
@@ -126,13 +144,20 @@ function PokerPage() {
           <h1 className="text-lg font-bold">Texas Hold'em</h1>
           <div className="w-[60px]" />
         </div>
+        <div onClickCapture={(event) => {
+          if (!gameNightConnection || !(event.target as HTMLElement).closest('button[aria-label*="invite link"]')) return
+          event.preventDefault()
+          event.stopPropagation()
+          navigator.clipboard.writeText(getGameNightInviteLink(bridge.publicRoomCode))
+        }}>
         <MultiplayerLobby
-          gameState={multiplayer.gameState}
+          gameState={lobbyState}
           playerId={multiplayer.playerId}
           isHost={multiplayer.isHost}
           onStartGame={multiplayer.startGame}
           onLeave={handleLeaveMultiplayer}
         />
+        </div>
       </div>
     )
   }
@@ -153,7 +178,7 @@ function PokerPage() {
           </Button>
           <h1 className="text-sm font-semibold text-white/80">Texas Hold'em</h1>
           <span className="font-mono text-xs text-white/30">
-            {multiplayer.gameState.roomCode}
+            {gameNightConnection ? bridge.publicRoomCode : multiplayer.gameState.roomCode}
           </span>
         </div>
         <MultiplayerGame

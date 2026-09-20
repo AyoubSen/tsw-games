@@ -214,6 +214,9 @@ function HomePage() {
 						{liveGames.length} games ready to go. Grab a code, share the link,
 						start a round.
 					</p>
+					<Link to="/game-night" className="mt-5 inline-flex items-center rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground transition hover:bg-primary/90">
+						Start a Game Night
+					</Link>
 
 					<div className="relative mt-6">
 						<Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

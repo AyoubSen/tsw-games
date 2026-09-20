@@ -5,6 +5,11 @@ import {
   nextHost,
   canControlGame,
 } from "./shared/presence"
+import {
+  getGameNightResultMatch,
+  validateGameNightConnection,
+  type GameNightMember,
+} from "./shared/gameNight"
 
 // Stroke data for drawing
 export interface Stroke {
@@ -241,6 +246,7 @@ export default class DrawingParty implements Party.Server {
   state: GameState | null = null
   roundTimer: ReturnType<typeof setTimeout> | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
+  gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
 
   async onStart() {
     const stored = await this.room.storage.get<GameState>("state")
@@ -702,13 +708,22 @@ export default class DrawingParty implements Party.Server {
   async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     const url = new URL(ctx.request.url)
     const isHost = url.searchParams.get("host") === "true"
+    const gameNight = await validateGameNightConnection(this.room, conn, ctx, "drawing")
+    if (gameNight.mode === "invalid") {
+      conn.close(1008, "Invalid Game Night connection")
+      return
+    }
+    if (gameNight.mode === "game-night") this.gameNightMembers.set(conn, gameNight.member)
     const roundTimeLimit = parseInt(url.searchParams.get("roundTimeLimit") || "60", 10)
     const roundsPerPlayer = parseInt(url.searchParams.get("roundsPerPlayer") || "1", 10)
     const mode = url.searchParams.get("mode") === "telephone" ? "telephone" : "classic"
     const playerToken = url.searchParams.get("playerToken") || ""
     if (playerToken) this.connectionTokens.set(conn, playerToken)
 
-    if (isHost && !this.state) {
+    if (
+      !this.state &&
+      (gameNight.mode === "game-night" ? gameNight.member.isHost : isHost)
+    ) {
       this.state = {
         roomCode: this.room.id,
         mode,
@@ -766,6 +781,8 @@ export default class DrawingParty implements Party.Server {
             return
           }
 
+          const member = this.gameNightMembers.get(sender)
+          const playerName = member?.name ?? data.name
           const returningPlayer = this.state.players[sender.id]
           const expectedToken = this.state.playerTokens[sender.id]
           if (returningPlayer && expectedToken !== playerToken) {
@@ -776,7 +793,7 @@ export default class DrawingParty implements Party.Server {
           const returning = markConnected(this.state.players, sender.id)
           if (returning) {
             this.state.playerTokens[sender.id] = playerToken
-            returning.name = data.name || returning.name
+            returning.name = playerName || returning.name
             await this.saveState()
             this.broadcast({ type: "player-joined", player: returning })
             this.broadcastState()
@@ -795,7 +812,7 @@ export default class DrawingParty implements Party.Server {
 
           const player: Player = {
             id: sender.id,
-            name: data.name,
+            name: playerName,
             score: 0,
             hasDrawn: false,
             hasGuessedCorrectly: false,
@@ -1208,6 +1225,7 @@ export default class DrawingParty implements Party.Server {
   }
 
   async onClose(conn: Party.Connection) {
+    this.gameNightMembers.delete(conn)
     if (!this.state) return
 	const replacementIsOpen = Array.from(this.room.getConnections()).some(
 	  connection => connection.id === conn.id && connection !== conn,
@@ -1230,5 +1248,25 @@ export default class DrawingParty implements Party.Server {
       this.broadcastState()
     }
     this.connectionTokens.delete(conn)
+  }
+
+  async onRequest(request: Party.Request) {
+    const match = await getGameNightResultMatch(this.room, request, "drawing")
+    if (!match) return new Response("Not found", { status: 404 })
+    if (!this.state || this.state.status !== "finished") {
+      return Response.json({ finished: false, scored: false, winnerIds: [] })
+    }
+    if (this.state.mode === "telephone") {
+      return Response.json({ finished: true, scored: false, winnerIds: [] })
+    }
+    const players = Object.values(this.state.players)
+    const highestScore = Math.max(...players.map((player) => player.score), 0)
+    return Response.json({
+      finished: true,
+      scored: true,
+      winnerIds: players
+        .filter((player) => player.score === highestScore)
+        .map((player) => player.id),
+    })
   }
 }

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	clearPersistentPlayerId,
 	generateRoomCode,
+	getGameNightSocketQuery,
 	leavePartySocket,
 	PARTYKIT_HOST,
 	getPersistentPlayerId,
@@ -175,7 +176,10 @@ export function useMultiplayerSyncUp() {
 			playerName: string,
 			settings?: SyncUpSettings,
 		) => {
-			const normalizedRoomCode = roomCode.toUpperCase();
+			const gameNightQuery = getGameNightSocketQuery(roomCode);
+			const normalizedRoomCode = Object.keys(gameNightQuery).length
+				? roomCode
+				: roomCode.toUpperCase();
 			const previousSocket = socketRef.current;
 			socketRef.current = null;
 			previousSocket?.close();
@@ -185,6 +189,7 @@ export function useMultiplayerSyncUp() {
 			setState((previous) => ({
 				...previous,
 				connectionStatus: "connecting",
+				gameState: null,
 				error: null,
 				playerId,
 			}));
@@ -196,6 +201,7 @@ export function useMultiplayerSyncUp() {
 				party: "syncup",
 				query: {
 					host: isHost.toString(),
+					...gameNightQuery,
 					...(settings && {
 						rounds: settings.rounds.toString(),
 						roundTimeLimit: settings.roundTimeLimit.toString(),
@@ -287,8 +293,8 @@ export function useMultiplayerSyncUp() {
 	}, []);
 
 	const createGame = useCallback(
-		(playerName: string, settings: SyncUpSettings) => {
-			const roomCode = generateRoomCode();
+		(playerName: string, settings: SyncUpSettings, suppliedRoomId?: string) => {
+			const roomCode = suppliedRoomId ?? generateRoomCode();
 			connect(roomCode, true, playerName, settings);
 			return roomCode;
 		},
@@ -297,7 +303,7 @@ export function useMultiplayerSyncUp() {
 
 	const joinGame = useCallback(
 		(roomCode: string, playerName: string) => {
-			connect(roomCode.toUpperCase(), false, playerName);
+			connect(roomCode, false, playerName);
 		},
 		[connect],
 	);

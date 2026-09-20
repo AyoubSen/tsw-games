@@ -2,7 +2,9 @@ import { useState, useEffect, useRef } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft, Clock, RotateCcw, Trophy, Pause, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { parseInviteSearch } from '@/lib/inviteLinks'
+import { useGameNight } from '@/components/game-night/GameNightProvider'
+import { useGameNightGameBridge } from '@/components/game-night/useGameNightGameBridge'
+import { getGameNightInviteLink, parseInviteSearch } from '@/lib/inviteLinks'
 import { GameModeSelector } from '@/components/games/sudoku/GameModeSelector'
 import { SudokuBoard } from '@/components/games/sudoku/SudokuBoard'
 import { NumberPad } from '@/components/games/sudoku/NumberPad'
@@ -33,7 +35,7 @@ const DIFFICULTY_LABELS: Record<Difficulty, string> = {
 }
 
 function SudokuPage() {
-  const { room: invitedRoomCode } = Route.useSearch()
+  const { room: invitedRoomCode, night } = Route.useSearch()
   const [view, setView] = useState<GameView>('select')
   const [isResuming, setIsResuming] = useState(false)
 
@@ -42,6 +44,22 @@ function SudokuPage() {
 
   // Multiplayer state
   const multiplayer = useMultiplayerSudoku()
+  const gameNight = useGameNight()
+  const gameNightConnection = gameNight.connection?.gameId === 'sudoku' && gameNight.connection.roomCode === night
+    ? gameNight.connection
+    : null
+  const hasGameState = Boolean(multiplayer.gameState && multiplayer.playerId && multiplayer.gameState.players[multiplayer.playerId])
+  const bridge = useGameNightGameBridge({
+    gameId: 'sudoku',
+    hasGameState,
+    finished: multiplayer.gameState?.status === 'finished',
+    connectHost: (roomId, playerName) => {
+      if (gameNightConnection) multiplayer.createGame(playerName, 'medium', roomId)
+    },
+    connectPlayer: (roomId, playerName) => {
+      if (gameNightConnection) multiplayer.joinGame(roomId, playerName)
+    },
+  })
 
   // Handle single player start
   const handleStartSinglePlayer = (difficulty: Difficulty, gameMode: GameMode) => {
@@ -64,10 +82,11 @@ function SudokuPage() {
   const resumeSession = multiplayer.resumeSession
   const hasAttemptedResume = useRef(false)
   useEffect(() => {
+    if (night) return
     if (hasAttemptedResume.current) return
     hasAttemptedResume.current = true
     setIsResuming(resumeSession(invitedRoomCode))
-  }, [invitedRoomCode, resumeSession])
+  }, [invitedRoomCode, resumeSession, night])
 
   // Give up the "resuming" placeholder once we land somewhere real.
   useEffect(() => {
@@ -116,7 +135,7 @@ function SudokuPage() {
   })
 
   // Rejoining a game from before a reload - avoids flashing the menu.
-  if (view === 'select' && isResuming) {
+  if (view === 'select' && (isResuming || (night && (!gameNightConnection || bridge.isConnecting)))) {
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background">
         <div className="px-4 py-3 flex items-center justify-between border-b border-border">
@@ -265,6 +284,9 @@ function SudokuPage() {
 
   // Multiplayer lobby view
   if (view === 'multiplayer-lobby' && multiplayer.gameState && multiplayer.playerId) {
+    const lobbyState = gameNightConnection
+      ? { ...multiplayer.gameState, roomCode: bridge.publicRoomCode }
+      : multiplayer.gameState
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background">
         <div className="px-4 py-3 flex items-center justify-between border-b border-border">
@@ -275,8 +297,14 @@ function SudokuPage() {
           <h1 className="text-lg font-bold">Sudoku Race</h1>
           <div className="w-[60px]" />
         </div>
+        <div onClickCapture={(event) => {
+          if (!gameNightConnection || !(event.target as HTMLElement).closest('button[aria-label*="invite link"]')) return
+          event.preventDefault()
+          event.stopPropagation()
+          navigator.clipboard.writeText(getGameNightInviteLink(bridge.publicRoomCode))
+        }}>
         <MultiplayerLobby
-          gameState={multiplayer.gameState}
+          gameState={lobbyState}
           playerId={multiplayer.playerId}
           isHost={multiplayer.isHost}
           connected={multiplayer.connectionStatus === 'connected'}
@@ -284,6 +312,7 @@ function SudokuPage() {
           onStart={multiplayer.startGame}
           onLeave={handleLeaveMultiplayer}
         />
+        </div>
       </div>
     )
   }

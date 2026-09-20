@@ -3,6 +3,8 @@ import { createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 
 import Header from "../components/Header";
+import { GameNightBar } from "../components/game-night/GameNightBar";
+import { GameNightProvider } from "../components/game-night/GameNightProvider";
 
 import appCss from "../styles.css?url";
 
@@ -62,8 +64,11 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 				<script dangerouslySetInnerHTML={{ __html: settingsScript }} />
 			</head>
 			<body>
-				<Header />
-				{children}
+				<GameNightProvider>
+					<Header />
+					<GameNightBar />
+					{children}
+				</GameNightProvider>
 				<TanStackDevtools
 					config={{
 						position: "bottom-right",

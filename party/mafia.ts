@@ -1,4 +1,9 @@
 import type * as Party from "partykit/server"
+import {
+  getGameNightResultMatch,
+  validateGameNightConnection,
+  type GameNightMember,
+} from "./shared/gameNight"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -251,6 +256,7 @@ export default class MafiaParty implements Party.Server {
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
+  gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
 
   async onStart() {
     const stored = await this.room.storage.get<string>("state")
@@ -1099,7 +1105,16 @@ export default class MafiaParty implements Party.Server {
 
   async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
     const url = new URL(ctx.request.url)
-    const isHost = url.searchParams.get("host") === "true"
+    const gameNight = await validateGameNightConnection(this.room, conn, ctx, "mafia")
+    if (gameNight.mode === "invalid") {
+      this.sendError(conn, "Invalid Game Night connection")
+      conn.close(1008, "Invalid Game Night connection")
+      return
+    }
+    if (gameNight.mode === "game-night") this.gameNightMembers.set(conn, gameNight.member)
+    const isHost = gameNight.mode === "game-night"
+      ? gameNight.member.isHost
+      : url.searchParams.get("host") === "true"
     const playerToken = url.searchParams.get("playerToken") || ""
     if (playerToken) this.connectionTokens.set(conn, playerToken)
 
@@ -1168,6 +1183,7 @@ export default class MafiaParty implements Party.Server {
 			this.sendError(sender, "Invalid player session")
 			return
 		  }
+		  const coordinatorName = this.gameNightMembers.get(sender)?.name
 		  const returningPlayer = this.state.players[sender.id]
 		  const expectedToken = this.state.playerTokens[sender.id]
 		  if (returningPlayer && expectedToken !== playerToken) {
@@ -1181,7 +1197,7 @@ export default class MafiaParty implements Party.Server {
           if (returning) {
 			this.state.playerTokens[sender.id] = playerToken
             returning.connected = true
-            returning.name = msg.name.trim().slice(0, 20) || returning.name
+            returning.name = coordinatorName || msg.name.trim().slice(0, 20) || returning.name
             await this.saveState()
             // Per-connection state, so they get their own role back and only theirs.
             this.broadcastState()
@@ -1199,7 +1215,7 @@ export default class MafiaParty implements Party.Server {
 
           const player: Player = {
             id: sender.id,
-            name: msg.name.trim().slice(0, 20) || "Player",
+            name: coordinatorName || msg.name.trim().slice(0, 20) || "Player",
             role: "villager", // placeholder until game starts
             alive: true,
             connected: true,
@@ -1369,6 +1385,21 @@ export default class MafiaParty implements Party.Server {
       await this.saveState()
     }
 	this.connectionTokens.delete(conn)
+  }
+
+  async onRequest(request: Party.Request) {
+    try {
+      const match = await getGameNightResultMatch(this.room, request, "mafia")
+      if (!match) return new Response("Not found", { status: 404 })
+      const finished = this.state?.status === "finished"
+      return Response.json({
+        finished,
+        scored: true,
+        winnerIds: finished ? this.state!.winningPlayerIds : [],
+      })
+    } catch {
+      return new Response("Not found", { status: 404 })
+    }
   }
 }
 

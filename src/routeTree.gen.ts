@@ -24,6 +24,7 @@ import { Route as GamesPressureButtonRouteImport } from './routes/games/pressure
 import { Route as GamesPokerRouteImport } from './routes/games/poker'
 import { Route as GamesMemoryMatchRouteImport } from './routes/games/memory-match'
 import { Route as GamesMafiaRouteImport } from './routes/games/mafia'
+import { Route as GamesLudoRouteImport } from './routes/games/ludo'
 import { Route as GamesHotTakeArenaRouteImport } from './routes/games/hot-take-arena'
 import { Route as GamesGuessTheCountryRouteImport } from './routes/games/guess-the-country'
 import { Route as GamesDrawingRouteImport } from './routes/games/drawing'
@@ -105,6 +106,11 @@ const GamesMafiaRoute = GamesMafiaRouteImport.update({
   path: '/games/mafia',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GamesLudoRoute = GamesLudoRouteImport.update({
+  id: '/games/ludo',
+  path: '/games/ludo',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GamesHotTakeArenaRoute = GamesHotTakeArenaRouteImport.update({
   id: '/games/hot-take-arena',
   path: '/games/hot-take-arena',
@@ -139,6 +145,7 @@ export interface FileRoutesByFullPath {
   '/games/drawing': typeof GamesDrawingRoute
   '/games/guess-the-country': typeof GamesGuessTheCountryRoute
   '/games/hot-take-arena': typeof GamesHotTakeArenaRoute
+  '/games/ludo': typeof GamesLudoRoute
   '/games/mafia': typeof GamesMafiaRoute
   '/games/memory-match': typeof GamesMemoryMatchRoute
   '/games/poker': typeof GamesPokerRoute
@@ -161,6 +168,7 @@ export interface FileRoutesByTo {
   '/games/drawing': typeof GamesDrawingRoute
   '/games/guess-the-country': typeof GamesGuessTheCountryRoute
   '/games/hot-take-arena': typeof GamesHotTakeArenaRoute
+  '/games/ludo': typeof GamesLudoRoute
   '/games/mafia': typeof GamesMafiaRoute
   '/games/memory-match': typeof GamesMemoryMatchRoute
   '/games/poker': typeof GamesPokerRoute
@@ -184,6 +192,7 @@ export interface FileRoutesById {
   '/games/drawing': typeof GamesDrawingRoute
   '/games/guess-the-country': typeof GamesGuessTheCountryRoute
   '/games/hot-take-arena': typeof GamesHotTakeArenaRoute
+  '/games/ludo': typeof GamesLudoRoute
   '/games/mafia': typeof GamesMafiaRoute
   '/games/memory-match': typeof GamesMemoryMatchRoute
   '/games/poker': typeof GamesPokerRoute
@@ -208,6 +217,7 @@ export interface FileRouteTypes {
     | '/games/drawing'
     | '/games/guess-the-country'
     | '/games/hot-take-arena'
+    | '/games/ludo'
     | '/games/mafia'
     | '/games/memory-match'
     | '/games/poker'
@@ -230,6 +240,7 @@ export interface FileRouteTypes {
     | '/games/drawing'
     | '/games/guess-the-country'
     | '/games/hot-take-arena'
+    | '/games/ludo'
     | '/games/mafia'
     | '/games/memory-match'
     | '/games/poker'
@@ -252,6 +263,7 @@ export interface FileRouteTypes {
     | '/games/drawing'
     | '/games/guess-the-country'
     | '/games/hot-take-arena'
+    | '/games/ludo'
     | '/games/mafia'
     | '/games/memory-match'
     | '/games/poker'
@@ -275,6 +287,7 @@ export interface RootRouteChildren {
   GamesDrawingRoute: typeof GamesDrawingRoute
   GamesGuessTheCountryRoute: typeof GamesGuessTheCountryRoute
   GamesHotTakeArenaRoute: typeof GamesHotTakeArenaRoute
+  GamesLudoRoute: typeof GamesLudoRoute
   GamesMafiaRoute: typeof GamesMafiaRoute
   GamesMemoryMatchRoute: typeof GamesMemoryMatchRoute
   GamesPokerRoute: typeof GamesPokerRoute
@@ -397,6 +410,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GamesMafiaRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/games/ludo': {
+      id: '/games/ludo'
+      path: '/games/ludo'
+      fullPath: '/games/ludo'
+      preLoaderRoute: typeof GamesLudoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/games/hot-take-arena': {
       id: '/games/hot-take-arena'
       path: '/games/hot-take-arena'
@@ -443,6 +463,7 @@ const rootRouteChildren: RootRouteChildren = {
   GamesDrawingRoute: GamesDrawingRoute,
   GamesGuessTheCountryRoute: GamesGuessTheCountryRoute,
   GamesHotTakeArenaRoute: GamesHotTakeArenaRoute,
+  GamesLudoRoute: GamesLudoRoute,
   GamesMafiaRoute: GamesMafiaRoute,
   GamesMemoryMatchRoute: GamesMemoryMatchRoute,
   GamesPokerRoute: GamesPokerRoute,

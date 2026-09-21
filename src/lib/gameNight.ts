@@ -1,4 +1,5 @@
 export const GAME_NIGHT_GAMES = [
+	{ id: "uno", title: "Uno", path: "/games/uno", party: "uno", minPlayers: 2, maxPlayers: 8 },
 	{ id: "timeline-chaos", title: "Timeline Chaos", path: "/games/timeline-chaos", party: "timelinechaos", minPlayers: 2, maxPlayers: 12 },
 	{ id: "trivia-quiz", title: "Trivia Quiz", path: "/games/trivia-quiz", party: "triviaquiz", minPlayers: 2, maxPlayers: 12 },
 	{ id: "memory-match", title: "Memory Match", path: "/games/memory-match", party: "memorymatch", minPlayers: 2, maxPlayers: 8 },

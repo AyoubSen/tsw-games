@@ -66,6 +66,21 @@ export type GameCatalogEntry = LiveGameCatalogEntry | PlannedGameCatalogEntry;
 
 export const liveGames: LiveGameCatalogEntry[] = [
 	{
+		id: "uno",
+		title: "Uno",
+		description: "Match colors and numbers, unleash action cards, and empty your hand before your friends.",
+		icon: <span className="text-2xl font-black italic">UNO</span>,
+		path: "/games/uno",
+		players: "2-8 players",
+		minPlayers: 2,
+		maxPlayers: 8,
+		tags: ["multiplayer", "casual", "fun", "competitive"],
+		color: "from-red-600 via-yellow-500 to-blue-600",
+		status: "live",
+		category: "strategy",
+		isNew: true,
+	},
+	{
 		id: "timeline-chaos",
 		title: "Timeline Chaos",
 		description:

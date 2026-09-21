@@ -152,6 +152,73 @@ html[data-home-layout="cards"] .home-layout-grid {
   display: none;
 }
 
+/* Uno table motion */
+@keyframes uno-card-deal {
+  0% { opacity: 0; transform: translate(180px, -220px) rotate(28deg) scale(0.7); }
+  65% { opacity: 1; transform: translate(-4px, 8px) rotate(-3deg) scale(1.03); }
+  100% { opacity: 1; transform: translate(0) rotate(0) scale(1); }
+}
+
+@keyframes uno-card-play {
+  0% { transform: translateY(0) scale(1); }
+  45% { transform: translateY(-28px) scale(1.08) rotate(-2deg); }
+  100% { transform: translate(70px, -180px) scale(0.72) rotate(12deg); opacity: 0; }
+}
+
+@keyframes uno-discard-land {
+  0% { opacity: 0; transform: translate(-75px, 90px) rotate(-18deg) scale(1.18); }
+  70% { opacity: 1; transform: translate(3px, -4px) rotate(6deg) scale(0.98); }
+  100% { transform: rotate(3deg) scale(1); }
+}
+
+@keyframes uno-deck-draw {
+  0%, 100% { transform: translate(0) rotate(0); }
+  40% { transform: translate(12px, -10px) rotate(4deg); }
+}
+
+@keyframes uno-turn-change {
+  0% { opacity: 0; transform: translateY(-10px) scale(0.9); }
+  70% { transform: translateY(2px) scale(1.04); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes uno-seat-change {
+  0% { transform: scale(0.94); filter: brightness(1.7); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+
+@keyframes uno-dialog-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes uno-dialog-card-in {
+  0% { opacity: 0; transform: translateY(28px) rotate(-3deg) scale(0.9); }
+  70% { transform: translateY(-4px) rotate(1deg) scale(1.02); }
+  100% { opacity: 1; transform: translateY(0) rotate(0) scale(1); }
+}
+
+.uno-card-deal { animation: uno-card-deal 520ms cubic-bezier(.2,.8,.2,1) var(--deal-delay, 0ms) backwards; }
+.uno-card-play { animation: uno-card-play 240ms cubic-bezier(.4,0,.8,.4) both !important; }
+.uno-discard-land { animation: uno-discard-land 360ms cubic-bezier(.2,.8,.2,1) both; }
+.uno-deck-draw { animation: uno-deck-draw 360ms ease-out; }
+.uno-turn-change { animation: uno-turn-change 280ms cubic-bezier(.2,.8,.2,1) both; }
+.uno-seat-change { animation: uno-seat-change 260ms ease-out; }
+.uno-dialog-backdrop { animation: uno-dialog-in 180ms ease-out both; }
+.uno-dialog-card, .uno-winner-card { animation: uno-dialog-card-in 380ms cubic-bezier(.2,.8,.2,1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .uno-card-deal,
+  .uno-card-play,
+  .uno-discard-land,
+  .uno-deck-draw,
+  .uno-turn-change,
+  .uno-seat-change,
+  .uno-dialog-backdrop,
+  .uno-dialog-card,
+  .uno-winner-card { animation: none !important; }
+}
+
 /* Wordle animations */
 @keyframes shake {
   0%, 100% { transform: translateX(0); }

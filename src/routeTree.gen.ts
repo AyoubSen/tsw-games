@@ -14,6 +14,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as GamesWordleRouteImport } from './routes/games/wordle'
 import { Route as GamesWordchainRouteImport } from './routes/games/wordchain'
 import { Route as GamesWordScrambleRouteImport } from './routes/games/word-scramble'
+import { Route as GamesUnoRouteImport } from './routes/games/uno'
 import { Route as GamesTyperaceRouteImport } from './routes/games/typerace'
 import { Route as GamesTriviaQuizRouteImport } from './routes/games/trivia-quiz'
 import { Route as GamesTimelineChaosRouteImport } from './routes/games/timeline-chaos'
@@ -52,6 +53,11 @@ const GamesWordchainRoute = GamesWordchainRouteImport.update({
 const GamesWordScrambleRoute = GamesWordScrambleRouteImport.update({
   id: '/games/word-scramble',
   path: '/games/word-scramble',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GamesUnoRoute = GamesUnoRouteImport.update({
+  id: '/games/uno',
+  path: '/games/uno',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GamesTyperaceRoute = GamesTyperaceRouteImport.update({
@@ -142,6 +148,7 @@ export interface FileRoutesByFullPath {
   '/games/timeline-chaos': typeof GamesTimelineChaosRoute
   '/games/trivia-quiz': typeof GamesTriviaQuizRoute
   '/games/typerace': typeof GamesTyperaceRoute
+  '/games/uno': typeof GamesUnoRoute
   '/games/word-scramble': typeof GamesWordScrambleRoute
   '/games/wordchain': typeof GamesWordchainRoute
   '/games/wordle': typeof GamesWordleRoute
@@ -163,6 +170,7 @@ export interface FileRoutesByTo {
   '/games/timeline-chaos': typeof GamesTimelineChaosRoute
   '/games/trivia-quiz': typeof GamesTriviaQuizRoute
   '/games/typerace': typeof GamesTyperaceRoute
+  '/games/uno': typeof GamesUnoRoute
   '/games/word-scramble': typeof GamesWordScrambleRoute
   '/games/wordchain': typeof GamesWordchainRoute
   '/games/wordle': typeof GamesWordleRoute
@@ -185,6 +193,7 @@ export interface FileRoutesById {
   '/games/timeline-chaos': typeof GamesTimelineChaosRoute
   '/games/trivia-quiz': typeof GamesTriviaQuizRoute
   '/games/typerace': typeof GamesTyperaceRoute
+  '/games/uno': typeof GamesUnoRoute
   '/games/word-scramble': typeof GamesWordScrambleRoute
   '/games/wordchain': typeof GamesWordchainRoute
   '/games/wordle': typeof GamesWordleRoute
@@ -208,6 +217,7 @@ export interface FileRouteTypes {
     | '/games/timeline-chaos'
     | '/games/trivia-quiz'
     | '/games/typerace'
+    | '/games/uno'
     | '/games/word-scramble'
     | '/games/wordchain'
     | '/games/wordle'
@@ -229,6 +239,7 @@ export interface FileRouteTypes {
     | '/games/timeline-chaos'
     | '/games/trivia-quiz'
     | '/games/typerace'
+    | '/games/uno'
     | '/games/word-scramble'
     | '/games/wordchain'
     | '/games/wordle'
@@ -250,6 +261,7 @@ export interface FileRouteTypes {
     | '/games/timeline-chaos'
     | '/games/trivia-quiz'
     | '/games/typerace'
+    | '/games/uno'
     | '/games/word-scramble'
     | '/games/wordchain'
     | '/games/wordle'
@@ -272,6 +284,7 @@ export interface RootRouteChildren {
   GamesTimelineChaosRoute: typeof GamesTimelineChaosRoute
   GamesTriviaQuizRoute: typeof GamesTriviaQuizRoute
   GamesTyperaceRoute: typeof GamesTyperaceRoute
+  GamesUnoRoute: typeof GamesUnoRoute
   GamesWordScrambleRoute: typeof GamesWordScrambleRoute
   GamesWordchainRoute: typeof GamesWordchainRoute
   GamesWordleRoute: typeof GamesWordleRoute
@@ -312,6 +325,13 @@ declare module '@tanstack/react-router' {
       path: '/games/word-scramble'
       fullPath: '/games/word-scramble'
       preLoaderRoute: typeof GamesWordScrambleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/games/uno': {
+      id: '/games/uno'
+      path: '/games/uno'
+      fullPath: '/games/uno'
+      preLoaderRoute: typeof GamesUnoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/games/typerace': {
@@ -432,6 +452,7 @@ const rootRouteChildren: RootRouteChildren = {
   GamesTimelineChaosRoute: GamesTimelineChaosRoute,
   GamesTriviaQuizRoute: GamesTriviaQuizRoute,
   GamesTyperaceRoute: GamesTyperaceRoute,
+  GamesUnoRoute: GamesUnoRoute,
   GamesWordScrambleRoute: GamesWordScrambleRoute,
   GamesWordchainRoute: GamesWordchainRoute,
   GamesWordleRoute: GamesWordleRoute,

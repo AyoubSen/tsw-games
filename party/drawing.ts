@@ -28,7 +28,11 @@ export interface Guess {
   timestamp: number
 }
 
-export type DrawingGameMode = "classic" | "telephone"
+export type DrawingGameMode =
+  | "classic"
+  | "league-of-legends"
+  | "valorant"
+  | "telephone"
 
 export type TelephoneEntry =
   | { type: "text"; authorId: string; authorName: string; text: string }
@@ -189,6 +193,38 @@ const DRAWING_WORDS = [
   "vampire", "ghost", "angel",
 ]
 
+const LEAGUE_CHAMPIONS = [
+  "Aatrox", "Ahri", "Akali", "Akshan", "Alistar", "Ambessa", "Amumu", "Anivia",
+  "Annie", "Aphelios", "Ashe", "Aurelion Sol", "Aurora", "Azir", "Bard", "Bel'Veth",
+  "Blitzcrank", "Brand", "Braum", "Briar", "Caitlyn", "Camille", "Cassiopeia",
+  "Cho'Gath", "Corki", "Darius", "Diana", "Dr. Mundo", "Draven", "Ekko", "Elise",
+  "Evelynn", "Ezreal", "Fiddlesticks", "Fiora", "Fizz", "Galio", "Gangplank", "Garen",
+  "Gnar", "Gragas", "Graves", "Gwen", "Hecarim", "Heimerdinger", "Hwei", "Illaoi",
+  "Irelia", "Ivern", "Janna", "Jarvan IV", "Jax", "Jayce", "Jhin", "Jinx", "K'Sante",
+  "Kai'Sa", "Kalista", "Karma", "Karthus", "Kassadin", "Katarina", "Kayle", "Kayn",
+  "Kennen", "Kha'Zix", "Kindred", "Kled", "Kog'Maw", "LeBlanc", "Lee Sin", "Leona",
+  "Lillia", "Lissandra", "Lucian", "Lulu", "Lux", "Malphite", "Malzahar", "Maokai",
+  "Master Yi", "Mel", "Milio", "Miss Fortune", "Mordekaiser", "Morgana", "Naafiri",
+  "Nami", "Nasus", "Nautilus", "Neeko", "Nidalee", "Nilah", "Nocturne",
+  "Nunu & Willump", "Olaf", "Orianna", "Ornn", "Pantheon", "Poppy", "Pyke", "Qiyana",
+  "Quinn", "Rakan", "Rammus", "Rek'Sai", "Rell", "Renata Glasc", "Renekton", "Rengar",
+  "Riven", "Rumble", "Ryze", "Samira", "Sejuani", "Senna", "Seraphine", "Sett",
+  "Shaco", "Shen", "Shyvana", "Singed", "Sion", "Sivir", "Skarner", "Smolder", "Sona",
+  "Soraka", "Swain", "Sylas", "Syndra", "Tahm Kench", "Taliyah", "Talon", "Taric",
+  "Teemo", "Thresh", "Tristana", "Trundle", "Tryndamere", "Twisted Fate", "Twitch",
+  "Udyr", "Urgot", "Varus", "Vayne", "Veigar", "Vel'Koz", "Vex", "Vi", "Viego",
+  "Viktor", "Vladimir", "Volibear", "Warwick", "Wukong", "Xayah", "Xerath", "Xin Zhao",
+  "Yasuo", "Yone", "Yorick", "Yunara", "Yuumi", "Zaahen", "Zac", "Zed", "Zeri",
+  "Ziggs", "Zilean", "Zoe", "Zyra",
+]
+
+const VALORANT_AGENTS = [
+  "Astra", "Breach", "Brimstone", "Chamber", "Clove", "Cypher", "Deadlock", "Fade",
+  "Gekko", "Harbor", "Iso", "Jett", "KAY/O", "Killjoy", "Neon", "Omen", "Phoenix",
+  "Raze", "Reyna", "Sage", "Skye", "Sova", "Tejo", "Veto", "Viper", "Vyse", "Waylay",
+  "Yoru",
+]
+
 const TELEPHONE_REACTIONS = new Set([
   "\u{1F602}",
   "\u{1F525}",
@@ -197,12 +233,27 @@ const TELEPHONE_REACTIONS = new Set([
   "\u{2764}\u{FE0F}",
 ])
 
-function getRandomWord(usedWords: string[]): string {
-  const available = DRAWING_WORDS.filter((word) => !usedWords.includes(word))
+function getWordPool(mode: DrawingGameMode): string[] {
+  if (mode === "league-of-legends") return LEAGUE_CHAMPIONS
+  if (mode === "valorant") return VALORANT_AGENTS
+  return DRAWING_WORDS
+}
+
+function getRandomWord(mode: DrawingGameMode, usedWords: string[]): string {
+  const words = getWordPool(mode)
+  const available = words.filter((word) => !usedWords.includes(word))
   if (available.length === 0) {
-    return DRAWING_WORDS[Math.floor(Math.random() * DRAWING_WORDS.length)]
+    return words[Math.floor(Math.random() * words.length)]
   }
   return available[Math.floor(Math.random() * available.length)]
+}
+
+function normalizeAnswer(value: string): string {
+  return value.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]/g, "")
+}
+
+function isDrawingAndGuessingMode(mode: DrawingGameMode): boolean {
+  return mode !== "telephone"
 }
 
 function sanitizeStrokes(value: unknown): Stroke[] {
@@ -332,7 +383,9 @@ class DrawingParty implements Party.Server {
       maxPlayers: this.state.maxPlayers,
       currentDrawerId: this.state.currentDrawerId,
       currentWord: showWord ? this.state.currentWord : null,
-      wordLength: this.state.currentWord?.length || 0,
+      wordLength: this.state.currentWord
+        ? normalizeAnswer(this.state.currentWord).length
+        : 0,
       roundNumber: this.state.roundNumber,
       totalRounds: this.state.totalRounds,
       roundStartedAt: this.state.roundStartedAt,
@@ -452,7 +505,7 @@ class DrawingParty implements Party.Server {
 
     // Reset round state
     this.state.currentDrawerId = drawer.id
-    this.state.currentWord = getRandomWord(this.state.usedWords)
+    this.state.currentWord = getRandomWord(this.state.mode, this.state.usedWords)
     this.state.usedWords.push(this.state.currentWord)
     this.state.roundNumber++
     this.state.roundStartedAt = Date.now()
@@ -475,7 +528,7 @@ class DrawingParty implements Party.Server {
         type: "round-started",
         drawerId: drawer.id,
         word: isDrawer ? this.state.currentWord : null,
-        wordLength: this.state.currentWord!.length,
+        wordLength: normalizeAnswer(this.state.currentWord!).length,
       })
     }
 
@@ -717,7 +770,13 @@ class DrawingParty implements Party.Server {
     if (gameNight.mode === "game-night") this.gameNightMembers.set(conn, gameNight.member)
     const roundTimeLimit = parseInt(url.searchParams.get("roundTimeLimit") || "60", 10)
     const roundsPerPlayer = parseInt(url.searchParams.get("roundsPerPlayer") || "1", 10)
-    const mode = url.searchParams.get("mode") === "telephone" ? "telephone" : "classic"
+    const requestedMode = url.searchParams.get("mode")
+    const mode: DrawingGameMode =
+      requestedMode === "telephone" ||
+      requestedMode === "league-of-legends" ||
+      requestedMode === "valorant"
+        ? requestedMode
+        : "classic"
     const playerToken = url.searchParams.get("playerToken") || ""
     if (playerToken) this.connectionTokens.set(conn, playerToken)
 
@@ -880,7 +939,7 @@ class DrawingParty implements Party.Server {
 
         case "draw": {
           if (
-            this.state.mode !== "classic" ||
+            !isDrawingAndGuessingMode(this.state.mode) ||
             this.state.status !== "playing" ||
             sender.id !== this.state.currentDrawerId
           ) {
@@ -897,7 +956,7 @@ class DrawingParty implements Party.Server {
 
         case "undo": {
           if (
-            this.state.mode !== "classic" ||
+            !isDrawingAndGuessingMode(this.state.mode) ||
             this.state.status !== "playing" ||
             sender.id !== this.state.currentDrawerId ||
             this.state.strokes.length === 0
@@ -922,7 +981,7 @@ class DrawingParty implements Party.Server {
 
         case "clear": {
           if (
-            this.state.mode !== "classic" ||
+            !isDrawingAndGuessingMode(this.state.mode) ||
             this.state.status !== "playing" ||
             sender.id !== this.state.currentDrawerId
           ) {
@@ -938,7 +997,7 @@ class DrawingParty implements Party.Server {
         }
 
         case "guess": {
-          if (this.state.mode !== "classic") return
+          if (!isDrawingAndGuessingMode(this.state.mode)) return
           if (this.state.status !== "playing") return
           if (sender.id === this.state.currentDrawerId) return // Drawer can't guess
 
@@ -956,8 +1015,10 @@ class DrawingParty implements Party.Server {
           // Update last guess timestamp
           player.lastGuessAt = now
 
-          const guessText = data.text.trim().toLowerCase()
-          const correctWord = this.state.currentWord?.toLowerCase()
+          const guessText = normalizeAnswer(data.text)
+          const correctWord = this.state.currentWord
+            ? normalizeAnswer(this.state.currentWord)
+            : undefined
           const isCorrect = guessText === correctWord
 
           const guess: Guess = {
@@ -1184,7 +1245,7 @@ class DrawingParty implements Party.Server {
 
           // If drawer leaves during a classic round, end the round
           if (
-            this.state.mode === "classic" &&
+            isDrawingAndGuessingMode(this.state.mode) &&
             this.state.status === "playing" &&
             sender.id === this.state.currentDrawerId
           ) {

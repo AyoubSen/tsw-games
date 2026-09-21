@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Clock, Palette, Phone, RotateCcw } from "lucide-react";
+import { Clock, Crosshair, Palette, Phone, RotateCcw, Swords } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge";
 import { MultiplayerGame } from "@/components/games/drawing/MultiplayerGame";
@@ -45,6 +45,47 @@ const ROUNDS_OPTIONS = [
 	{ value: 3, label: "3" },
 ];
 
+const MODE_OPTIONS = [
+	{
+		value: "classic",
+		label: "Classic",
+		shortDescription: "Draw and guess",
+		description: "One player draws while everyone else tries to guess the secret word.",
+		icon: Palette,
+	},
+	{
+		value: "league-of-legends",
+		label: "League of Legends",
+		shortDescription: "Guess the champion",
+		description: "Draw a League of Legends champion for the room to guess.",
+		icon: Swords,
+	},
+	{
+		value: "valorant",
+		label: "Valorant",
+		shortDescription: "Guess the agent",
+		description: "Draw a Valorant agent for the room to guess.",
+		icon: Crosshair,
+	},
+	{
+		value: "telephone",
+		label: "Telephone",
+		shortDescription: "Pass and transform",
+		description: "Pass secret prompts through alternating drawings and descriptions.",
+		icon: Phone,
+	},
+] satisfies Array<{
+	value: DrawingGameMode;
+	label: string;
+	shortDescription: string;
+	description: string;
+	icon: typeof Palette;
+}>;
+
+function getModeOption(mode: DrawingGameMode) {
+	return MODE_OPTIONS.find((option) => option.value === mode) ?? MODE_OPTIONS[0];
+}
+
 function DrawingPage() {
 	const { room: invitedRoomCode, night } = Route.useSearch();
 	const isGameNightMode = Boolean(night);
@@ -56,6 +97,7 @@ function DrawingPage() {
 	const [mode, setMode] = useState<DrawingGameMode>("classic");
 	const [message, setMessage] = useState<string | null>(null);
 	const [copiedRoomCode, setCopiedRoomCode] = useState(false);
+	const selectedMode = getModeOption(mode);
 
 	useEffect(() => {
 		if (invitedRoomCode) setJoinRoomCode(invitedRoomCode);
@@ -201,11 +243,7 @@ function DrawingPage() {
 				<div className="mx-auto grid max-w-5xl gap-6 px-4 py-8 md:grid-cols-[1.05fr_0.95fr]">
 					<MultiplayerSetupCard
 						title="Multiplayer"
-						description={
-							mode === "telephone"
-								? "Pass secret prompts through alternating drawings and descriptions."
-								: "One player draws while everyone else tries to guess the secret word."
-						}
+						description={selectedMode.description}
 						icon={<Palette className="h-5 w-5 text-primary" />}
 						playerName={playerName}
 						roomCode={joinRoomCode}
@@ -219,32 +257,27 @@ function DrawingPage() {
 						<div className="space-y-2">
 							<p className="text-sm font-medium">Game Mode</p>
 							<div className="grid grid-cols-2 gap-2">
-								<button
-									type="button"
-									onClick={() => setMode("classic")}
-									className={`rounded-xl border p-3 text-left transition-colors ${
-										mode === "classic"
-											? "border-primary bg-primary/10"
-											: "border-border hover:border-primary/50"
-									}`}
-								>
-									<Palette className="mb-2 h-4 w-4 text-primary" />
-									<span className="block text-sm font-semibold">Classic</span>
-									<span className="text-xs text-muted-foreground">Draw and guess</span>
-								</button>
-								<button
-									type="button"
-									onClick={() => setMode("telephone")}
-									className={`rounded-xl border p-3 text-left transition-colors ${
-										mode === "telephone"
-											? "border-primary bg-primary/10"
-											: "border-border hover:border-primary/50"
-									}`}
-								>
-									<Phone className="mb-2 h-4 w-4 text-primary" />
-									<span className="block text-sm font-semibold">Telephone</span>
-									<span className="text-xs text-muted-foreground">Pass and transform</span>
-								</button>
+								{MODE_OPTIONS.map((option) => {
+									const Icon = option.icon;
+									return (
+										<button
+											key={option.value}
+											type="button"
+											onClick={() => setMode(option.value)}
+											className={`rounded-xl border p-3 text-left transition-colors ${
+												mode === option.value
+													? "border-primary bg-primary/10"
+													: "border-border hover:border-primary/50"
+											}`}
+										>
+											<Icon className="mb-2 h-4 w-4 text-primary" />
+											<span className="block text-sm font-semibold">{option.label}</span>
+											<span className="text-xs text-muted-foreground">
+												{option.shortDescription}
+											</span>
+										</button>
+									);
+								})}
 							</div>
 						</div>
 
@@ -271,7 +304,7 @@ function DrawingPage() {
 							</div>
 						</div>
 
-						{mode === "classic" && <div className="space-y-2">
+						{mode !== "telephone" && <div className="space-y-2">
 							<p className="flex items-center gap-2 text-sm font-medium">
 								<RotateCcw className="h-4 w-4" />
 								Rounds per Player
@@ -305,7 +338,7 @@ function DrawingPage() {
 							<CardDescription>
 								{mode === "telephone"
 									? "Private prompts transform as they travel around the room."
-									: "Quick teamless drawing rounds with rotating drawers."}
+									: selectedMode.description}
 							</CardDescription>
 						</CardHeader>
 						<CardContent className="space-y-3 text-sm text-muted-foreground">
@@ -369,7 +402,7 @@ function DrawingPage() {
 						<p>
 							Mode:{" "}
 							<span className="font-medium capitalize text-foreground">
-								{multiplayer.gameState.mode}
+								{getModeOption(multiplayer.gameState.mode).label}
 							</span>
 						</p>
 						<p className="mt-1">
@@ -418,7 +451,7 @@ function DrawingPage() {
 					title={
 						multiplayer.gameState.mode === "telephone"
 							? "Drawing Telephone"
-							: "Drawing Game"
+							: `${getModeOption(multiplayer.gameState.mode).label} Drawing`
 					}
 					subtitle={`Room ${displayedRoomCode}`}
 					onBack={handleBackToSelect}

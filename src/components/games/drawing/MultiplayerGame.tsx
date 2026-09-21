@@ -59,6 +59,11 @@ export function MultiplayerGame({
   const isRoundEnd = gameState.status === "round-end"
   const isFinished = gameState.status === "finished"
   const hasGuessedCorrectly = gameState.correctGuessers.includes(playerId)
+  const promptSubject = gameState.mode === "league-of-legends"
+    ? "champion"
+    : gameState.mode === "valorant"
+      ? "agent"
+      : "word"
 
   const currentDrawer = gameState.currentDrawerId
     ? gameState.players[gameState.currentDrawerId]
@@ -128,6 +133,7 @@ export function MultiplayerGame({
         isDrawer={isDrawer}
         wordLength={gameState.wordLength}
         isRoundEnd={isRoundEnd}
+        subject={promptSubject}
       />
 
       {/* Main Game Area */}
@@ -208,6 +214,7 @@ export function MultiplayerGame({
                 isDrawer={false}
                 wordLength={gameState.wordLength}
                 isRoundEnd={true}
+                subject={promptSubject}
               />
               <p className="text-sm text-center text-muted-foreground">
                 Next round starting soon...

@@ -5,6 +5,7 @@ interface WordDisplayProps {
   isDrawer: boolean
   wordLength: number
   isRoundEnd?: boolean
+  subject?: string
 }
 
 export function WordDisplay({
@@ -12,12 +13,13 @@ export function WordDisplay({
   isDrawer,
   wordLength,
   isRoundEnd = false,
+  subject = "word",
 }: WordDisplayProps) {
   // Round ended - show the word to everyone
   if (isRoundEnd && word) {
     return (
       <div className="text-center py-2">
-        <p className="text-sm text-muted-foreground mb-1">The word was:</p>
+        <p className="text-sm text-muted-foreground mb-1">The {subject} was:</p>
         <p className="text-2xl font-bold tracking-wider uppercase text-primary">
           {word}
         </p>
@@ -31,7 +33,7 @@ export function WordDisplay({
       <div className="text-center py-2">
         <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground mb-1">
           <Pencil className="w-4 h-4" />
-          <span>Draw this word:</span>
+          <span>Draw this {subject}:</span>
         </div>
         <p className="text-2xl font-bold tracking-wider uppercase text-primary">
           {word}
@@ -43,7 +45,7 @@ export function WordDisplay({
   // Guessers see blanks
   return (
     <div className="text-center py-2">
-      <p className="text-sm text-muted-foreground mb-1">Guess the word:</p>
+      <p className="text-sm text-muted-foreground mb-1">Guess the {subject}:</p>
       <p className="text-2xl font-bold tracking-[0.3em]">
         {Array.from({ length: wordLength }, (_, i) => (
           <span

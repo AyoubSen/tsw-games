@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { withRoomCleanup } from "./shared/cleanup"
 import type { GameNightGameId } from "../src/lib/gameNight"
 import {
   canPlayUnoCard,
@@ -97,7 +98,7 @@ function parseAction(message: string): ClientAction | null {
   return { type: "play", cardId: data.cardId, ...(data.color ? { color: data.color } : {}) }
 }
 
-export default class UnoParty implements Party.Server {
+class UnoParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
   state: UnoGameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
@@ -276,7 +277,7 @@ export default class UnoParty implements Party.Server {
           this.state.disconnectedTurnPlayerId = null
           this.state.disconnectDeadline = null
           await this.room.storage.deleteAlarm()
-        } else if (this.state.status === "playing" && this.state.currentPlayerId && this.state.players[this.state.currentPlayerId]?.connected === false) {
+        } else if (this.state.status === "playing" && this.state.currentPlayerId && this.state.players[this.state.currentPlayerId]?.connected === false && (!this.state.disconnectDeadline || this.state.disconnectDeadline <= Date.now())) {
           this.state.currentPlayerId = sender.id
           this.state.drawnCardId = null
         }
@@ -432,3 +433,5 @@ export default class UnoParty implements Party.Server {
     await this.save(); this.broadcast()
   }
 }
+
+export default withRoomCleanup(UnoParty, "uno")

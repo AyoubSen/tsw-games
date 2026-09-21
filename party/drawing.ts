@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { withRoomCleanup } from "./shared/cleanup"
 import {
   markConnected,
   markDisconnected,
@@ -240,7 +241,7 @@ function sanitizeStrokes(value: unknown): Stroke[] {
   })
 }
 
-export default class DrawingParty implements Party.Server {
+class DrawingParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
@@ -1270,3 +1271,5 @@ export default class DrawingParty implements Party.Server {
     })
   }
 }
+
+export default withRoomCleanup(DrawingParty, "drawing")

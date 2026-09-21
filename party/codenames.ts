@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { withRoomCleanup } from "./shared/cleanup"
 import {
   markConnected,
   markDisconnected,
@@ -217,7 +218,7 @@ function generateBoard(startingTeam: Team): Card[] {
   }))
 }
 
-export default class CodenamesParty implements Party.Server {
+class CodenamesParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
@@ -969,3 +970,5 @@ export default class CodenamesParty implements Party.Server {
     }
   }
 }
+
+export default withRoomCleanup(CodenamesParty, "codenames")

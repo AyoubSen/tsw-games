@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { withRoomCleanup } from "./shared/cleanup"
 import {
   generateMemoryBoard,
   isMemoryBoardIndex,
@@ -96,7 +97,7 @@ export type ServerMessage =
 
 const DISCONNECTED_PLAYER_TTL_MS = 30 * 60 * 1000
 
-export default class MemoryMatchParty implements Party.Server {
+class MemoryMatchParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
@@ -552,3 +553,5 @@ export default class MemoryMatchParty implements Party.Server {
     this.broadcastState()
   }
 }
+
+export default withRoomCleanup(MemoryMatchParty, "memorymatch")

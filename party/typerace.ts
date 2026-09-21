@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { withRoomCleanup } from "./shared/cleanup"
 import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight"
 import {
   markConnected,
@@ -107,7 +108,7 @@ function getRandomPhrase(): string {
   return PHRASES[Math.floor(Math.random() * PHRASES.length)]
 }
 
-export default class TypeRaceParty implements Party.Server {
+class TypeRaceParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
@@ -457,3 +458,5 @@ export default class TypeRaceParty implements Party.Server {
     })
   }
 }
+
+export default withRoomCleanup(TypeRaceParty, "typerace")

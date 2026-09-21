@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server";
+import { withRoomCleanup } from "./shared/cleanup";
 import {
 	markConnected,
 	markDisconnected,
@@ -134,7 +135,7 @@ function parsePromptPack(value: string | null): PressurePromptPack {
 	return "mixed";
 }
 
-export default class PressureButtonParty implements Party.Server {
+class PressureButtonParty implements Party.Server {
 	constructor(readonly room: Party.Room) {}
 
 	state: PressureButtonGameState | null = null;
@@ -704,3 +705,5 @@ export default class PressureButtonParty implements Party.Server {
 		});
 	}
 }
+
+export default withRoomCleanup(PressureButtonParty, "pressurebutton");

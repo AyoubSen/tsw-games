@@ -2,7 +2,11 @@
   "$schema": "https://www.partykit.io/schema.json",
   "name": "tsw-games",
   "main": "party/wordle.ts",
+  "crons": {
+    "stale-room-cleanup": "0 * * * *"
+  },
   "parties": {
+    "cleanup": "party/cleanup.ts",
     "gamenight": "party/game-night.ts",
     "wordle": "party/wordle.ts",
     "typerace": "party/typerace.ts",

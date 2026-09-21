@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { withRoomCleanup } from "./shared/cleanup"
 import sudoku from "sudoku"
 import {
   canControlGame as canControlPresence,
@@ -269,7 +270,7 @@ function normalizeStoredState(value: unknown, roomCode: string): GameState | nul
   }
 }
 
-export default class SudokuParty implements Party.Server {
+class SudokuParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
@@ -699,3 +700,5 @@ export default class SudokuParty implements Party.Server {
     }
   }
 }
+
+export default withRoomCleanup(SudokuParty, "sudoku")

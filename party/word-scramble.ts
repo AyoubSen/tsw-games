@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server";
+import { withRoomCleanup } from "./shared/cleanup";
 import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight";
 import {
 	markConnected,
@@ -24,6 +25,16 @@ export interface Player {
 	connected?: boolean;
 }
 
+export type PublicPlayer = Omit<Player, "foundWords"> & {
+	foundCount: number;
+};
+
+export interface PublicWordScramblePuzzle {
+	scrambled: string;
+	answerCount: number;
+	solutions?: string[];
+}
+
 export type ScrambleDifficulty = "easy" | "normal" | "hard";
 export type ClaimVisibility = "hidden" | "public";
 
@@ -46,16 +57,19 @@ export interface GameState {
 	startedAt: number | null;
 	finishedAt: number | null;
 	settings: GameSettings;
+	playerTokens: Record<string, string>;
 }
 
 export interface PublicGameState {
 	roomCode: string;
 	hostId: string;
-	players: Record<string, Player>;
+	players: Record<string, PublicPlayer>;
 	status: "waiting" | "playing" | "finished";
 	maxPlayers: number;
-	puzzle: WordScramblePuzzle | null;
+	puzzle: PublicWordScramblePuzzle | null;
 	claimedWords: Record<string, string>;
+	claimedCount: number;
+	ownFoundWords: string[];
 	winnerId: string | null;
 	winnerIds: string[];
 	startedAt: number | null;
@@ -72,15 +86,16 @@ export type ClientMessage =
 
 export type ServerMessage =
 	| { type: "state"; state: PublicGameState }
-	| { type: "player-joined"; player: Player }
+	| { type: "player-joined"; player: PublicPlayer }
 	| { type: "player-left"; playerId: string }
-	| { type: "game-started"; puzzle: WordScramblePuzzle; startTime: number }
-	| { type: "word-claimed"; playerId: string; word: string; score: number }
+	| { type: "game-started"; puzzle: PublicWordScramblePuzzle; startTime: number }
+	| { type: "word-claimed"; playerId: string; word?: string; score: number; foundCount: number }
 	| {
 			type: "game-over";
 			winnerId: string | null;
 			winnerIds: string[];
 			claimedWords: Record<string, string>;
+			solutions: string[];
 	  }
 	| { type: "game-restarted" }
 	| { type: "error"; message: string };
@@ -161,15 +176,17 @@ function pickPuzzleForDifficulty(
 	return pickNextWordScramblePuzzle(eligible, previousSignature);
 }
 
-export default class WordScrambleParty implements Party.Server {
+class WordScrambleParty implements Party.Server {
 	constructor(readonly room: Party.Room) {}
 
 	state: GameState | null = null;
 	gameNightMembers = new Map<string, GameNightMember>();
+	connectionTokens = new WeakMap<Party.Connection, string>();
 
 	async onStart() {
 		const stored = await this.room.storage.get<GameState>("state");
 		if (stored) {
+			stored.playerTokens ??= {};
 			stored.winnerIds ??= stored.winnerId ? [stored.winnerId] : [];
 			stored.settings ??= {
 				roundTimeLimit: 60,
@@ -187,13 +204,34 @@ export default class WordScrambleParty implements Party.Server {
 		}
 	}
 
+	authenticated(connection: Party.Connection) {
+		const token = this.connectionTokens.get(connection);
+		return Boolean(this.state && token && this.state.playerTokens[connection.id] === token);
+	}
+
 	async saveState() {
 		if (this.state) {
 			await this.room.storage.put("state", this.state);
 		}
 	}
 
-	getPublicState(): PublicGameState {
+	getPublicPlayer(player: Player): PublicPlayer {
+		const { foundWords, ...publicPlayer } = player;
+		return { ...publicPlayer, foundCount: foundWords.length };
+	}
+
+	getPublicPuzzle(): PublicWordScramblePuzzle | null {
+		if (!this.state?.puzzle) return null;
+		return {
+			scrambled: this.state.puzzle.scrambled,
+			answerCount: this.state.puzzle.solutions.length,
+			...(this.state.status === "finished" && {
+				solutions: this.state.puzzle.solutions,
+			}),
+		};
+	}
+
+	getPublicState(viewerId: string): PublicGameState {
 		if (!this.state) {
 			throw new Error("No game state");
 		}
@@ -201,17 +239,39 @@ export default class WordScrambleParty implements Party.Server {
 		return {
 			roomCode: this.state.roomCode,
 			hostId: this.state.hostId,
-			players: this.state.players,
+			players: Object.fromEntries(
+				Object.entries(this.state.players).map(([id, player]) => [
+					id,
+					this.getPublicPlayer(player),
+				]),
+			),
 			status: this.state.status,
 			maxPlayers: this.state.maxPlayers,
-			puzzle: this.state.puzzle,
-			claimedWords: this.state.claimedWords,
+			puzzle: this.getPublicPuzzle(),
+			claimedWords:
+				this.state.status === "finished" ||
+				this.state.settings.claimVisibility === "public"
+					? this.state.claimedWords
+					: Object.fromEntries(
+							(this.state.players[viewerId]?.foundWords ?? []).map((word) => [
+								word,
+								viewerId,
+							]),
+						),
+			claimedCount: Object.keys(this.state.claimedWords).length,
+			ownFoundWords: this.state.players[viewerId]?.foundWords ?? [],
 			winnerId: this.state.winnerId,
 			winnerIds: this.state.winnerIds,
 			startedAt: this.state.startedAt,
 			finishedAt: this.state.finishedAt,
 			settings: this.state.settings,
 		};
+	}
+
+	broadcastState() {
+		for (const connection of this.room.getConnections()) {
+			this.send(connection, { type: "state", state: this.getPublicState(connection.id) });
+		}
 	}
 
 	broadcast(message: ServerMessage, exclude?: string) {
@@ -229,6 +289,8 @@ export default class WordScrambleParty implements Party.Server {
 
 	async onConnect(connection: Party.Connection, context: Party.ConnectionContext) {
 		const url = new URL(context.request.url);
+		const token = url.searchParams.get("playerToken") ?? "";
+		if (token) this.connectionTokens.set(connection, token);
 		const gameNight = await validateGameNightConnection(this.room, connection, context, "word-scramble");
 		if (gameNight.mode === "invalid") {
 			connection.close(1008, "Invalid Game Night connection");
@@ -271,6 +333,7 @@ export default class WordScrambleParty implements Party.Server {
 					difficulty,
 					claimVisibility,
 				},
+				playerTokens: {},
 			};
 			await this.saveState();
 		}
@@ -287,17 +350,33 @@ export default class WordScrambleParty implements Party.Server {
 
 		try {
 			const data: ClientMessage = JSON.parse(message);
+			if (data.type !== "join" && !this.authenticated(sender)) {
+				this.send(sender, { type: "error", message: "Invalid player session" });
+				return;
+			}
 
 			switch (data.type) {
 				case "join": {
+					const token = this.connectionTokens.get(sender);
+					if (!token) {
+						this.send(sender, { type: "error", message: "Invalid player session" });
+						return;
+					}
 					const name = this.gameNightMembers.get(sender.id)?.name ?? data.name;
 					const returning = markConnected(this.state.players, sender.id);
 					if (returning) {
+						const storedToken = this.state.playerTokens[sender.id];
+						if (storedToken && storedToken !== token) {
+							returning.connected = false;
+							this.send(sender, { type: "error", message: "Invalid player session" });
+							return;
+						}
+						this.state.playerTokens[sender.id] = token;
 						// A reconnect, not a new player - never rejected mid-game.
 						returning.name = name || returning.name;
 						await this.saveState();
-						this.broadcast({ type: "player-joined", player: returning });
-						this.broadcast({ type: "state", state: this.getPublicState() });
+						this.broadcast({ type: "player-joined", player: this.getPublicPlayer(returning) });
+						this.broadcastState();
 						break;
 					}
 
@@ -321,10 +400,11 @@ export default class WordScrambleParty implements Party.Server {
 					};
 
 					this.state.players[sender.id] = player;
+					this.state.playerTokens[sender.id] = token;
 					await this.saveState();
 
-					this.broadcast({ type: "player-joined", player });
-					this.broadcast({ type: "state", state: this.getPublicState() });
+					this.broadcast({ type: "player-joined", player: this.getPublicPlayer(player) });
+					this.broadcastState();
 					break;
 				}
 
@@ -375,13 +455,13 @@ export default class WordScrambleParty implements Party.Server {
 
 					this.broadcast({
 						type: "game-started",
-						puzzle: nextPuzzle,
+						puzzle: this.getPublicPuzzle()!,
 						startTime: this.state.startedAt,
 					});
 					this.room.storage.setAlarm(
 						Date.now() + this.state.settings.roundTimeLimit * 1000,
 					);
-					this.broadcast({ type: "state", state: this.getPublicState() });
+					this.broadcastState();
 					break;
 				}
 
@@ -432,12 +512,18 @@ export default class WordScrambleParty implements Party.Server {
 
 					await this.saveState();
 
-					this.broadcast({
-						type: "word-claimed",
+					const claimMessage = {
+						type: "word-claimed" as const,
 						playerId: sender.id,
-						word,
 						score: player.score,
-					});
+						foundCount: player.foundWords.length,
+					};
+					if (this.state.settings.claimVisibility === "public") {
+						this.broadcast({ ...claimMessage, word });
+					} else {
+						this.send(sender, { ...claimMessage, word });
+						this.broadcast(claimMessage, sender.id);
+					}
 
 					if (
 						Object.keys(this.state.claimedWords).length ===
@@ -455,15 +541,17 @@ export default class WordScrambleParty implements Party.Server {
 							winnerId: this.state.winnerId,
 							winnerIds: this.state.winnerIds,
 							claimedWords: this.state.claimedWords,
+							solutions: this.state.puzzle.solutions,
 						});
 					}
 
-					this.broadcast({ type: "state", state: this.getPublicState() });
+					this.broadcastState();
 					break;
 				}
 
 				case "leave": {
 					delete this.state.players[sender.id];
+					delete this.state.playerTokens[sender.id];
 					if (Object.keys(this.state.players).length === 0) {
 						this.state = null;
 						await this.room.storage.delete("state");
@@ -473,12 +561,15 @@ export default class WordScrambleParty implements Party.Server {
 
 					if (sender.id === this.state.hostId) {
 						const next = nextHost(this.state.players, sender.id);
-						if (next) this.state.hostId = next;
+						const fallback = Object.values(this.state.players).sort(
+							(left, right) => left.joinedAt - right.joinedAt,
+						)[0]?.id;
+						if (next ?? fallback) this.state.hostId = next ?? fallback!;
 					}
 
 					await this.saveState();
 					this.broadcast({ type: "player-left", playerId: sender.id });
-					this.broadcast({ type: "state", state: this.getPublicState() });
+					this.broadcastState();
 					break;
 				}
 
@@ -504,7 +595,7 @@ export default class WordScrambleParty implements Party.Server {
 
 					await this.saveState();
 					this.broadcast({ type: "game-restarted" });
-					this.broadcast({ type: "state", state: this.getPublicState() });
+					this.broadcastState();
 					break;
 				}
 			}
@@ -529,8 +620,9 @@ export default class WordScrambleParty implements Party.Server {
 			winnerId: this.state.winnerId,
 			winnerIds: this.state.winnerIds,
 			claimedWords: this.state.claimedWords,
+			solutions: this.state.puzzle?.solutions ?? [],
 		});
-		this.broadcast({ type: "state", state: this.getPublicState() });
+		this.broadcastState();
 	}
 
 	async onClose(connection: Party.Connection) {
@@ -548,7 +640,7 @@ export default class WordScrambleParty implements Party.Server {
 		await this.saveState();
 		// No "player-left" here: they may be back in a moment, and the client
 		// removes players on that message.
-		this.broadcast({ type: "state", state: this.getPublicState() });
+		this.broadcastState();
 	}
 
 	async onRequest(request: Party.Request) {
@@ -562,3 +654,5 @@ export default class WordScrambleParty implements Party.Server {
 		});
 	}
 }
+
+export default withRoomCleanup(WordScrambleParty, "wordscramble");

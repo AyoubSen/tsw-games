@@ -11,7 +11,7 @@ function getSignature(word: string): string {
 function shuffleUntilDifferent(
 	source: string,
 	blockedWords: Set<string>,
-): string {
+): string | null {
 	const letters = [...source];
 
 	for (let attempt = 0; attempt < 12; attempt += 1) {
@@ -25,7 +25,21 @@ function shuffleUntilDifferent(
 		}
 	}
 
-	return [...letters].reverse().join("").toUpperCase();
+	const permutations = (remaining: string[], prefix = ""): string | null => {
+		if (remaining.length === 0) {
+			return blockedWords.has(prefix.toLowerCase()) ? null : prefix.toUpperCase();
+		}
+		for (let index = 0; index < remaining.length; index += 1) {
+			const result = permutations(
+				remaining.filter((_, candidate) => candidate !== index),
+				prefix + remaining[index],
+			);
+			if (result) return result;
+		}
+		return null;
+	};
+
+	return permutations(letters);
 }
 
 export function buildWordScramblePuzzles(
@@ -47,16 +61,19 @@ export function buildWordScramblePuzzles(
 	return [...grouped.entries()]
 		.map(([signature, solutions]) => {
 			const sortedSolutions = [...solutions].sort();
+			const scrambled = shuffleUntilDifferent(
+				sortedSolutions[0],
+				new Set(sortedSolutions),
+			);
+			if (!scrambled) return null;
 
 			return {
 				signature,
-				scrambled: shuffleUntilDifferent(
-					sortedSolutions[0],
-					new Set(sortedSolutions),
-				),
+				scrambled,
 				solutions: sortedSolutions,
 			};
 		})
+		.filter((puzzle): puzzle is WordScramblePuzzle => puzzle !== null)
 		.filter(
 			(puzzle) => puzzle.solutions.length >= 2 && puzzle.solutions.length <= 5,
 		)
@@ -85,10 +102,10 @@ export function pickNextWordScramblePuzzle(
 		scrambled: shuffleUntilDifferent(
 			basePuzzle.solutions[0],
 			new Set(basePuzzle.solutions),
-		),
+		) ?? basePuzzle.scrambled,
 	};
 }
 
-export function usesPuzzleLetters(word: string, signature: string): boolean {
-	return getSignature(word.toLowerCase()) === signature;
+export function usesPuzzleLetters(word: string, letters: string): boolean {
+	return getSignature(word.toLowerCase()) === getSignature(letters.toLowerCase());
 }

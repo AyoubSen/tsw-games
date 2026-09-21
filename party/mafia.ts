@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { withRoomCleanup } from "./shared/cleanup"
 import {
   getGameNightResultMatch,
   validateGameNightConnection,
@@ -251,7 +252,7 @@ function generateId(): string {
 
 // ─── Server ─────────────────────────────────────────────────────────────────
 
-export default class MafiaParty implements Party.Server {
+class MafiaParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
@@ -1402,5 +1403,7 @@ export default class MafiaParty implements Party.Server {
     }
   }
 }
+
+export default withRoomCleanup(MafiaParty, "mafia")
 
 MafiaParty satisfies Party.Worker

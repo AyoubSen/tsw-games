@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, type LinkProps } from "@tanstack/react-router";
 import { ArrowLeft, Check, Copy, Crown, Play, Users } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,7 @@ interface GameTopBarProps {
 	title: string;
 	subtitle: string;
 	onBack?: () => void;
-	backTo?: string;
+	backTo?: LinkProps["to"];
 	rightAction?: ReactNode;
 }
 
@@ -46,21 +46,21 @@ export function GameTopBar({
 	);
 
 	return (
-		<div className="px-4 py-3 flex items-center justify-between border-b border-border">
+		<div className="grid grid-cols-[minmax(44px,1fr)_minmax(0,2fr)_minmax(44px,1fr)] items-center border-b border-border px-4 py-3">
 			{onBack ? (
-				<Button variant="ghost" size="sm" onClick={onBack}>
+				<Button className="h-11 justify-self-start sm:h-8" variant="ghost" size="sm" onClick={onBack}>
 					{backContent}
 				</Button>
 			) : (
-				<Button variant="ghost" size="sm" asChild>
+				<Button className="h-11 justify-self-start sm:h-8" variant="ghost" size="sm" asChild>
 					<Link to={backTo}>{backContent}</Link>
 				</Button>
 			)}
-			<div className="text-center">
+			<div className="min-w-0 px-2 text-center">
 				<h1 className="text-lg font-bold">{title}</h1>
-				<p className="text-xs text-muted-foreground">{subtitle}</p>
+				<p className="truncate text-xs text-muted-foreground" title={subtitle}>{subtitle}</p>
 			</div>
-			{rightAction ?? <div className="w-[60px]" />}
+			<div className="min-w-0 justify-self-end">{rightAction}</div>
 		</div>
 	);
 }

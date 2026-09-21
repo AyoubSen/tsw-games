@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { withRoomCleanup } from "./shared/cleanup"
 import {
   buildCountryChoices,
   getCountryByCode,
@@ -135,7 +136,7 @@ function winnerIds(players: Record<string, Player>): string[] {
     .map((player) => player.id)
 }
 
-export default class GuessTheCountryParty implements Party.Server {
+class GuessTheCountryParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
@@ -768,3 +769,5 @@ export default class GuessTheCountryParty implements Party.Server {
     this.broadcastState()
   }
 }
+
+export default withRoomCleanup(GuessTheCountryParty, "guessthecountry")

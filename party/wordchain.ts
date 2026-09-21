@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { withRoomCleanup } from "./shared/cleanup"
 import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight"
 import {
   markConnected,
@@ -174,7 +175,7 @@ async function isValidEnglishWord(word: string): Promise<boolean> {
   }
 }
 
-export default class WordChainParty implements Party.Server {
+class WordChainParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
@@ -705,3 +706,5 @@ export default class WordChainParty implements Party.Server {
     })
   }
 }
+
+export default withRoomCleanup(WordChainParty, "wordchain")

@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { withRoomCleanup } from "./shared/cleanup"
 import {
   CODE_LENGTH,
   evaluateCodeGuess,
@@ -81,7 +82,7 @@ export type ServerMessage =
 const DISCONNECTED_PLAYER_TTL_MS = 30 * 60 * 1000
 const RACE_RECONNECT_GRACE_MS = 30 * 1000
 
-export default class CodeBreakerParty implements Party.Server {
+class CodeBreakerParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
@@ -514,3 +515,5 @@ export default class CodeBreakerParty implements Party.Server {
     this.broadcastState()
   }
 }
+
+export default withRoomCleanup(CodeBreakerParty, "codebreaker")

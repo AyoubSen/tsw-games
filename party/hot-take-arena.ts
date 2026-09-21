@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server";
+import { withRoomCleanup } from "./shared/cleanup";
 import {
 	markConnected,
 	markDisconnected,
@@ -148,7 +149,7 @@ function buildVoteGroups(votes: Record<string, StoredVote>): VoteGroup[] {
 		.sort((left, right) => left.position - right.position);
 }
 
-export default class HotTakeArenaParty implements Party.Server {
+class HotTakeArenaParty implements Party.Server {
 	constructor(readonly room: Party.Room) {}
 
 	state: HotTakeGameState | null = null;
@@ -556,3 +557,5 @@ export default class HotTakeArenaParty implements Party.Server {
 		});
 	}
 }
+
+export default withRoomCleanup(HotTakeArenaParty, "hottakearena");

@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server";
+import { withRoomCleanup } from "./shared/cleanup";
 import {
 	markConnected,
 	markDisconnected,
@@ -160,7 +161,7 @@ function buildAnswerGroups(answers: Record<string, StoredAnswer>): AnswerGroup[]
 		});
 }
 
-export default class SyncUpParty implements Party.Server {
+class SyncUpParty implements Party.Server {
 	constructor(readonly room: Party.Room) {}
 
 	state: SyncUpGameState | null = null;
@@ -565,3 +566,5 @@ export default class SyncUpParty implements Party.Server {
 		});
 	}
 }
+
+export default withRoomCleanup(SyncUpParty, "syncup");

@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { withRoomCleanup } from "./shared/cleanup"
 import {
   createDeck,
   shuffleDeck,
@@ -187,7 +188,7 @@ function getHighestBet(state: GameState): number {
 
 // ─── Server ──────────────────────────────────────────────────────────────────
 
-export default class PokerParty implements Party.Server {
+class PokerParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
@@ -1238,3 +1239,5 @@ export default class PokerParty implements Party.Server {
     }
   }
 }
+
+export default withRoomCleanup(PokerParty, "poker")

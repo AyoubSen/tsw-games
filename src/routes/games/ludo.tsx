@@ -138,7 +138,10 @@ function LudoPage() {
   const seenRollId = useRef<number | null>(null)
   const previousPositions = useRef<number[][]>([])
   useEffect(() => {
-    if (!rollId) return
+    if (!rollId) {
+      seenRollId.current = null
+      return
+    }
     // Joining or reconnecting mid-game arrives with a roll already on the
     // table - show it settled rather than replaying someone else's throw.
     if (seenRollId.current === null) {
@@ -540,10 +543,10 @@ function LudoPage() {
                 </CardContent>
               </Card>
             )}
-            {/* Fixed height: the prompt fades in without shifting the board. */}
-            <div className="h-16">
+            {/* Reserve room for the prompt without clipping wrapped mobile text. */}
+            <div className="min-h-16">
               <div
-                className={`flex h-full items-center gap-3 rounded-2xl border-2 px-4 transition-opacity duration-300 ${
+                className={`flex min-h-16 items-center gap-3 rounded-2xl border-2 px-4 py-2 transition-opacity duration-300 ${
                   mustChooseToken
                     ? "border-amber-400 bg-amber-50 text-amber-900 opacity-100 dark:bg-amber-950/60 dark:text-amber-100"
                     : "border-transparent opacity-0"
@@ -556,16 +559,51 @@ function LudoPage() {
                 </p>
               </div>
             </div>
+            {canRoll && (
+              <Button
+                className="h-11 w-full lg:hidden"
+                disabled={multiplayer.connectionStatus !== "connected"}
+                onClick={() => multiplayer.rollDice(game.roundId)}
+              >
+                <Dices className="mr-2 h-4 w-4" />
+                Roll Dice
+              </Button>
+            )}
             <LudoBoard
               tokens={tokens}
               targets={targets}
               activeSeats={seatPlayers
                 .map((player, seat) => (player ? seat : -1))
                 .filter((seat) => seat !== -1)}
-              onSelectToken={(seat, tokenIndex) =>
-                multiplayer.moveToken(seat, tokenIndex, game.roundId)
-              }
+              onSelectToken={(seat, tokenIndex) => {
+                if (multiplayer.connectionStatus === "connected") multiplayer.moveToken(seat, tokenIndex, game.roundId)
+              }}
             />
+            {mustChooseToken && (
+              <div className="grid grid-cols-2 gap-2 lg:hidden">
+                {game.legalMoves.map((move) => (
+                  <Button
+                    key={`${move.seat}-${move.tokenIndex}`}
+                    className="h-11 min-w-0"
+                    variant="outline"
+                    disabled={multiplayer.connectionStatus !== "connected"}
+                    onClick={() =>
+                      multiplayer.moveToken(
+                        move.seat,
+                        move.tokenIndex,
+                        game.roundId,
+                      )
+                    }
+                  >
+                    <span className="truncate">
+                      {seatPlayers[move.seat]?.name ??
+                        LUDO_COLORS[move.seat].label}
+                      : token {move.tokenIndex + 1}
+                    </span>
+                  </Button>
+                ))}
+              </div>
+            )}
           </section>
 
           <aside className="space-y-4">
@@ -609,7 +647,7 @@ function LudoPage() {
                   </div>
                 </div>
                 <Button
-                  className="w-full"
+                  className="hidden w-full lg:inline-flex"
                   disabled={
                     !canRoll || multiplayer.connectionStatus !== "connected"
                   }

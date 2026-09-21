@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server";
+import { withRoomCleanup } from "./shared/cleanup";
 import {
 	getGameNightGame,
 	type GameNightClientMessage,
@@ -28,7 +29,7 @@ interface ValidationRequest {
 
 const MAX_PLAYERS = 12;
 
-export default class GameNightParty implements Party.Server {
+class GameNightParty implements Party.Server {
 	constructor(readonly room: Party.Room) {}
 	state: GameNightState | null = null;
 	connectionTokens = new WeakMap<Party.Connection, string>();
@@ -284,3 +285,5 @@ export default class GameNightParty implements Party.Server {
 		this.broadcast();
 	}
 }
+
+export default withRoomCleanup(GameNightParty, "gamenight");

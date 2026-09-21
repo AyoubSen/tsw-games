@@ -36,6 +36,56 @@ export const GAME_TAGS = [
 
 export type GameTag = (typeof GAME_TAGS)[number]["id"];
 
+export type GamePlayerRange = readonly [min: number, max: number];
+export type GameDurationRange = readonly [min: number, max: number];
+
+export const GAME_PLAYER_OPTIONS = [
+	{ value: 1, label: "1" },
+	{ value: 2, label: "2" },
+	{ value: 3, label: "3" },
+	{ value: 4, label: "4" },
+	{ value: 5, label: "5" },
+	{ value: 6, label: "6" },
+	{ value: 8, label: "8" },
+	{ value: 10, label: "10" },
+	{ value: 12, label: "12" },
+] as const;
+
+export const GAME_DURATION_OPTIONS = [
+	{ value: 10, label: "10 minutes" },
+	{ value: 20, label: "20 minutes" },
+	{ value: 30, label: "30 minutes" },
+	{ value: 60, label: "About an hour" },
+] as const;
+
+export const GAME_COMPLEXITIES = [
+	{ id: "light", label: "Light" },
+	{ id: "medium", label: "Medium" },
+	{ id: "deep", label: "Deep" },
+] as const;
+
+export type GameComplexity = (typeof GAME_COMPLEXITIES)[number]["id"];
+
+export const GAME_COMPLEXITY_LABELS: Record<GameComplexity, string> =
+	Object.fromEntries(
+		GAME_COMPLEXITIES.map((option) => [option.id, option.label]),
+	) as Record<GameComplexity, string>;
+
+export const GAME_MOODS = [
+	{ id: "chill", label: "Chill" },
+	{ id: "laughs", label: "Big laughs" },
+	{ id: "competitive", label: "Competitive" },
+	{ id: "brainy", label: "Brainy" },
+	{ id: "creative", label: "Creative" },
+	{ id: "spicy", label: "Spicy" },
+] as const;
+
+export type GameMood = (typeof GAME_MOODS)[number]["id"];
+
+export const GAME_MOOD_LABELS: Record<GameMood, string> = Object.fromEntries(
+	GAME_MOODS.map((option) => [option.id, option.label]),
+) as Record<GameMood, string>;
+
 export const GAME_TAG_LABELS: Record<GameTag, string> = Object.fromEntries(
 	GAME_TAGS.map((tag) => [tag.id, tag.label]),
 ) as Record<GameTag, string>;
@@ -48,6 +98,10 @@ interface GameCatalogBaseEntry {
 	players: string;
 	minPlayers: number;
 	maxPlayers: number;
+	idealPlayers: GamePlayerRange;
+	durationMinutes: GameDurationRange;
+	complexity: GameComplexity;
+	moods: GameMood[];
 	color: string;
 	category: "word" | "arcade" | "party" | "strategy" | "social";
 	tags: GameTag[];
@@ -75,6 +129,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "2-8 players",
 		minPlayers: 2,
 		maxPlayers: 8,
+		idealPlayers: [3, 6],
+		durationMinutes: [15, 30],
+		complexity: "light",
+		moods: ["laughs", "competitive"],
 		tags: ["multiplayer", "casual", "fun", "competitive"],
 		color: "from-red-600 via-yellow-500 to-blue-600",
 		status: "live",
@@ -91,6 +149,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "1-4 players",
 		minPlayers: 1,
 		maxPlayers: 4,
+		idealPlayers: [2, 4],
+		durationMinutes: [20, 45],
+		complexity: "medium",
+		moods: ["chill", "competitive"],
 		tags: ["solo", "multiplayer", "casual", "fun", "competitive"],
 		color: "from-emerald-500 to-sky-600",
 		status: "live",
@@ -107,6 +169,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "1-12 players",
 		minPlayers: 1,
 		maxPlayers: 12,
+		idealPlayers: [2, 8],
+		durationMinutes: [5, 15],
+		complexity: "light",
+		moods: ["brainy", "competitive"],
 		tags: ["solo", "multiplayer", "brainy", "quick", "competitive"],
 		color: "from-amber-500 to-rose-600",
 		status: "live",
@@ -123,6 +189,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "1-12 players",
 		minPlayers: 1,
 		maxPlayers: 12,
+		idealPlayers: [2, 8],
+		durationMinutes: [10, 25],
+		complexity: "light",
+		moods: ["brainy", "competitive"],
 		tags: ["solo", "multiplayer", "casual", "brainy", "quick", "competitive"],
 		color: "from-fuchsia-500 to-pink-600",
 		status: "live",
@@ -139,6 +209,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "1-8 players",
 		minPlayers: 1,
 		maxPlayers: 8,
+		idealPlayers: [1, 4],
+		durationMinutes: [5, 15],
+		complexity: "light",
+		moods: ["chill", "competitive"],
 		tags: ["solo", "multiplayer", "casual", "brainy", "competitive"],
 		color: "from-cyan-500 to-violet-600",
 		status: "live",
@@ -155,6 +229,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "1-8 players",
 		minPlayers: 1,
 		maxPlayers: 8,
+		idealPlayers: [1, 4],
+		durationMinutes: [10, 25],
+		complexity: "deep",
+		moods: ["brainy", "competitive"],
 		tags: ["solo", "multiplayer", "brainy", "competitive", "deduction"],
 		color: "from-violet-500 to-fuchsia-600",
 		status: "live",
@@ -171,6 +249,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "1-8 players",
 		minPlayers: 1,
 		maxPlayers: 8,
+		idealPlayers: [1, 6],
+		durationMinutes: [5, 15],
+		complexity: "light",
+		moods: ["brainy", "competitive"],
 		tags: ["solo", "multiplayer", "casual", "brainy", "quick", "competitive"],
 		color: "from-sky-500 to-indigo-600",
 		status: "live",
@@ -187,6 +269,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "1-8 players",
 		minPlayers: 1,
 		maxPlayers: 8,
+		idealPlayers: [1, 4],
+		durationMinutes: [5, 10],
+		complexity: "medium",
+		moods: ["chill", "brainy"],
 		tags: ["solo", "multiplayer", "casual", "chill", "brainy", "quick"],
 		color: "from-emerald-500 to-green-600",
 		status: "live",
@@ -202,6 +288,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "1-8 players",
 		minPlayers: 1,
 		maxPlayers: 8,
+		idealPlayers: [2, 6],
+		durationMinutes: [5, 15],
+		complexity: "light",
+		moods: ["competitive", "laughs"],
 		tags: ["solo", "multiplayer", "casual", "quick", "competitive"],
 		color: "from-blue-500 to-cyan-600",
 		status: "live",
@@ -217,6 +307,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "2-8 players",
 		minPlayers: 2,
 		maxPlayers: 8,
+		idealPlayers: [3, 8],
+		durationMinutes: [15, 30],
+		complexity: "light",
+		moods: ["creative", "laughs"],
 		tags: ["multiplayer", "fun", "casual", "creative"],
 		color: "from-purple-500 to-pink-600",
 		status: "live",
@@ -232,6 +326,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "2-8 players",
 		minPlayers: 2,
 		maxPlayers: 8,
+		idealPlayers: [2, 6],
+		durationMinutes: [10, 20],
+		complexity: "medium",
+		moods: ["brainy", "competitive"],
 		tags: ["multiplayer", "casual", "brainy", "quick"],
 		color: "from-yellow-500 to-orange-500",
 		status: "live",
@@ -248,6 +346,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "2-12 players",
 		minPlayers: 2,
 		maxPlayers: 12,
+		idealPlayers: [4, 10],
+		durationMinutes: [10, 25],
+		complexity: "light",
+		moods: ["chill", "laughs"],
 		tags: ["multiplayer", "fun", "casual", "chill"],
 		color: "from-cyan-500 to-amber-500",
 		status: "live",
@@ -264,6 +366,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "2-12 players",
 		minPlayers: 2,
 		maxPlayers: 12,
+		idealPlayers: [4, 10],
+		durationMinutes: [10, 25],
+		complexity: "light",
+		moods: ["spicy", "laughs"],
 		tags: ["multiplayer", "hot", "fun", "drinking"],
 		color: "from-rose-500 to-orange-500",
 		status: "live",
@@ -280,6 +386,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "2-10 players",
 		minPlayers: 2,
 		maxPlayers: 10,
+		idealPlayers: [4, 8],
+		durationMinutes: [10, 20],
+		complexity: "light",
+		moods: ["spicy", "laughs"],
 		tags: ["multiplayer", "hot", "fun", "drinking", "quick"],
 		color: "from-red-500 to-orange-600",
 		status: "live",
@@ -296,6 +406,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "2-8 players",
 		minPlayers: 2,
 		maxPlayers: 8,
+		idealPlayers: [2, 6],
+		durationMinutes: [10, 20],
+		complexity: "medium",
+		moods: ["brainy", "competitive"],
 		tags: ["multiplayer", "casual", "brainy", "quick"],
 		color: "from-orange-500 to-amber-600",
 		status: "live",
@@ -311,6 +425,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "4-8 players",
 		minPlayers: 4,
 		maxPlayers: 8,
+		idealPlayers: [4, 8],
+		durationMinutes: [20, 40],
+		complexity: "deep",
+		moods: ["brainy", "competitive"],
 		tags: ["multiplayer", "brainy", "competitive", "deduction"],
 		color: "from-rose-500 to-red-600",
 		status: "live",
@@ -326,6 +444,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "1-8 players",
 		minPlayers: 1,
 		maxPlayers: 8,
+		idealPlayers: [1, 3],
+		durationMinutes: [10, 30],
+		complexity: "deep",
+		moods: ["chill", "brainy"],
 		tags: ["solo", "multiplayer", "chill", "brainy"],
 		color: "from-indigo-500 to-violet-600",
 		status: "live",
@@ -342,6 +464,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "2-8 players",
 		minPlayers: 2,
 		maxPlayers: 8,
+		idealPlayers: [3, 6],
+		durationMinutes: [30, 60],
+		complexity: "deep",
+		moods: ["competitive", "brainy"],
 		tags: ["multiplayer", "competitive", "brainy", "drinking"],
 		color: "from-emerald-600 to-teal-700",
 		status: "live",
@@ -358,6 +484,10 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		players: "5-12 players",
 		minPlayers: 5,
 		maxPlayers: 12,
+		idealPlayers: [6, 10],
+		durationMinutes: [25, 60],
+		complexity: "medium",
+		moods: ["laughs", "competitive"],
 		tags: ["multiplayer", "deduction", "fun", "competitive"],
 		color: "from-slate-700 to-zinc-900",
 		status: "live",
@@ -376,6 +506,10 @@ export const plannedGames: PlannedGameCatalogEntry[] = [
 		players: "1-8 players",
 		minPlayers: 1,
 		maxPlayers: 8,
+		idealPlayers: [1, 6],
+		durationMinutes: [5, 15],
+		complexity: "light",
+		moods: ["brainy", "competitive"],
 		tags: ["solo", "multiplayer", "brainy", "quick"],
 		color: "from-lime-500 to-green-500",
 		status: "planned",
@@ -390,6 +524,10 @@ export const plannedGames: PlannedGameCatalogEntry[] = [
 		players: "3-20 players",
 		minPlayers: 3,
 		maxPlayers: 20,
+		idealPlayers: [4, 12],
+		durationMinutes: [10, 25],
+		complexity: "light",
+		moods: ["laughs", "spicy", "chill"],
 		tags: ["multiplayer", "fun", "hot", "drinking", "chill"],
 		color: "from-zinc-500 to-slate-600",
 		status: "planned",

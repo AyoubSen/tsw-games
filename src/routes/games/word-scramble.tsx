@@ -277,15 +277,17 @@ function WordScramblePage() {
 						Math.floor((now - multiplayer.gameState.startedAt) / 1000),
 				)
 			: 0;
-	const multiplayerRemainingSolutions = useMemo(() => {
-		if (!multiplayerPuzzle || !multiplayer.gameState) {
-			return [];
-		}
-
-		return multiplayerPuzzle.solutions.filter(
-			(word) => !multiplayer.gameState?.claimedWords[word],
-		);
-	}, [multiplayer.gameState, multiplayerPuzzle]);
+	const multiplayerRemainingCount = Math.max(
+		0,
+		(multiplayerPuzzle?.answerCount ?? 0) -
+			(multiplayer.gameState?.claimedCount ?? 0),
+	);
+	const revealedUnclaimedWords =
+		multiplayer.gameState?.status === "finished"
+			? (multiplayerPuzzle?.solutions ?? []).filter(
+					(word) => !multiplayer.gameState?.claimedWords[word],
+				)
+			: [];
 
 	const leaderboard = useMemo(
 		() =>
@@ -435,7 +437,7 @@ function WordScramblePage() {
 			return;
 		}
 
-		if (!usesPuzzleLetters(normalizedGuess, multiplayerPuzzle.signature)) {
+		if (!usesPuzzleLetters(normalizedGuess, multiplayerPuzzle.scrambled)) {
 			setMultiplayerMessage("That word does not match this letter set.");
 			return;
 		}
@@ -869,9 +871,7 @@ function WordScramblePage() {
 			multiplayer.gameState.settings.claimVisibility === "public";
 		const shouldRevealAllClaims =
 			claimsArePublic || multiplayer.gameState.status === "finished";
-		const lastClaimOwnerId = multiplayer.lastClaimedWord
-			? multiplayer.gameState.claimedWords[multiplayer.lastClaimedWord]
-			: null;
+		const lastClaimOwnerId = multiplayer.lastClaimedPlayerId;
 		const lastClaimOwner = lastClaimOwnerId
 			? multiplayer.gameState.players[lastClaimOwnerId]
 			: null;
@@ -913,7 +913,7 @@ function WordScramblePage() {
 									</CardDescription>
 								</div>
 								<div className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-									{multiplayerPuzzle.solutions.length} answers
+									{multiplayerPuzzle.answerCount} answers
 								</div>
 							</div>
 						</CardHeader>
@@ -1010,12 +1010,12 @@ function WordScramblePage() {
 								</div>
 							)}
 
-							{multiplayer.lastClaimedWord && (
+							{multiplayer.lastClaimedPlayerId && (
 								<div className="rounded-xl border border-dashed px-4 py-3 text-sm text-muted-foreground">
 									{shouldRevealAllClaims ||
 									lastClaimOwnerId === multiplayer.playerId ? (
 										<>
-											Last claimed: {multiplayer.lastClaimedWord.toUpperCase()}
+											Last claimed: {multiplayer.lastClaimedWord?.toUpperCase()}
 											{lastClaimOwner ? ` by ${lastClaimOwner.name}` : ""}
 										</>
 									) : (
@@ -1061,14 +1061,26 @@ function WordScramblePage() {
 										Remaining
 									</p>
 									<div className="mt-3 flex min-h-16 flex-wrap gap-2">
-										{multiplayerRemainingSolutions.map((word) => (
-											<span
-												key={word}
-												className="rounded-full bg-muted px-3 py-1 text-sm font-semibold text-muted-foreground"
-											>
-												?????
-											</span>
-										))}
+										{multiplayer.gameState.status === "finished"
+											? revealedUnclaimedWords.map((word) => (
+													<span
+														key={word}
+														className="rounded-full bg-muted px-3 py-1 text-sm font-semibold text-muted-foreground"
+													>
+														{word.toUpperCase()}
+													</span>
+												))
+											: Array.from(
+													{ length: multiplayerRemainingCount },
+													(_, index) => (
+														<span
+															key={index}
+															className="rounded-full bg-muted px-3 py-1 text-sm font-semibold text-muted-foreground"
+														>
+															?????
+														</span>
+													),
+												)}
 									</div>
 								</div>
 							</div>
@@ -1109,7 +1121,7 @@ function WordScramblePage() {
 										{currentPlayer?.score ?? 0}
 									</p>
 									<p className="mt-2 text-sm text-muted-foreground">
-										{currentPlayer?.foundWords.length ?? 0} words claimed
+										{currentPlayer?.foundCount ?? 0} words claimed
 									</p>
 								</div>
 							</CardContent>
@@ -1132,7 +1144,7 @@ function WordScramblePage() {
 											<div>
 												<p className="font-medium">{player.name}</p>
 												<p className="text-xs text-muted-foreground">
-													{player.foundWords.length} words
+											{player.foundCount} words
 												</p>
 											</div>
 										</div>

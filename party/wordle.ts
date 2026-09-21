@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { runCleanupCron, withRoomCleanup } from "./shared/cleanup"
 import { isPresent, markConnected, markDisconnected } from "./shared/presence"
 import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight"
 
@@ -412,8 +413,12 @@ function normalizeStoredState(value: unknown, roomCode: string): GameState | nul
   }
 }
 
-export default class WordleParty implements Party.Server {
+class WordleParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
+
+  static async onCron(cron: Party.Cron, lobby: Party.CronLobby) {
+    if (cron.name === "stale-room-cleanup") await runCleanupCron(lobby)
+  }
 
   state: GameState | null = null
   gameNightMembers = new Map<string, GameNightMember>()
@@ -1101,3 +1106,5 @@ export default class WordleParty implements Party.Server {
     this.broadcastState()
   }
 }
+
+export default withRoomCleanup(WordleParty, "wordle")

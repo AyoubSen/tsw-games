@@ -1,9 +1,18 @@
+import * as Dialog from "@radix-ui/react-dialog";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Search, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ArrowLeft, Search, Sparkles, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+	GAME_COMPLEXITIES,
+	GAME_COMPLEXITY_LABELS,
+	GAME_DURATION_OPTIONS,
+	GAME_MOODS,
+	GAME_MOOD_LABELS,
+	GAME_PLAYER_OPTIONS,
 	GAME_TAG_LABELS,
 	GAME_TAGS,
+	type GameComplexity,
+	type GameMood,
 	type GameTag,
 	type LiveGameCatalogEntry,
 	liveGames,
@@ -29,6 +38,9 @@ function matchesQuery(game: LiveGameCatalogEntry, query: string) {
 		game.description,
 		game.category,
 		game.players,
+		GAME_COMPLEXITY_LABELS[game.complexity],
+		`${game.durationMinutes[0]}-${game.durationMinutes[1]} minutes`,
+		...game.moods.map((mood) => GAME_MOOD_LABELS[mood]),
 		...game.tags.map((tag) => GAME_TAG_LABELS[tag]),
 	]
 		.join(" ")
@@ -97,10 +109,9 @@ function GameCard({ game }: { game: LiveGameCatalogEntry }) {
 			</p>
 
 			<p className="mt-auto truncate text-[11px] text-muted-foreground/70">
-				{game.tags
-					.slice(0, 3)
-					.map((tag) => GAME_TAG_LABELS[tag])
-					.join(" · ")}
+				{game.durationMinutes[0]}-{game.durationMinutes[1]} min ·{" "}
+				{GAME_COMPLEXITY_LABELS[game.complexity]} ·{" "}
+				{GAME_MOOD_LABELS[game.moods[0]]}
 			</p>
 		</Link>
 	);
@@ -151,6 +162,182 @@ function GameCollection({ games }: { games: LiveGameCatalogEntry[] }) {
 				</div>
 			</div>
 		</>
+	);
+}
+
+function RecommendationPicker() {
+	const [open, setOpen] = useState(false);
+	const [step, setStep] = useState(0);
+	const [players, setPlayers] = useState<number | null>(null);
+	const [minutes, setMinutes] = useState<number | null>(null);
+	const [complexity, setComplexity] = useState<GameComplexity | null>(null);
+	const [mood, setMood] = useState<GameMood | null>(null);
+	const titleRef = useRef<HTMLHeadingElement>(null);
+
+	useEffect(() => {
+		if (!open) return;
+		const frame = window.requestAnimationFrame(() => titleRef.current?.focus());
+		return () => window.cancelAnimationFrame(frame);
+	}, [open, step]);
+
+	const recommendations = useMemo(() => {
+		if (players === null || minutes === null || complexity === null || mood === null)
+			return [];
+
+		return liveGames
+			.map((game, order) => {
+				if (
+					players < game.minPlayers ||
+					players > game.maxPlayers ||
+					game.durationMinutes[1] > minutes ||
+					game.complexity !== complexity ||
+					!game.moods.includes(mood)
+				)
+					return null;
+
+				const ideal = players >= game.idealPlayers[0] && players <= game.idealPlayers[1];
+				const fitsComfortably = game.durationMinutes[1] <= minutes;
+				const score =
+					(ideal ? 5 : 0) +
+					(fitsComfortably ? 3 : 1);
+				const reasons = [
+					`Matches your ${GAME_MOOD_LABELS[mood].toLowerCase()} mood`,
+					`${GAME_COMPLEXITY_LABELS[complexity]} to learn`,
+					ideal ? `Great with ${players} ${players === 1 ? "player" : "players"}` : null,
+					fitsComfortably ? `Fits comfortably in ${minutes} minutes` : null,
+				].filter((reason): reason is string => reason !== null);
+
+				return { game, order, score, reasons };
+			})
+			.filter((result) => result !== null)
+			.sort((a, b) => b.score - a.score || a.order - b.order)
+			.slice(0, 3);
+	}, [players, minutes, complexity, mood]);
+
+	const choose = <T,>(value: T, setter: (value: T) => void) => {
+		setter(value);
+		setStep((current) => current + 1);
+	};
+
+	const restart = () => {
+		setStep(0);
+		setPlayers(null);
+		setMinutes(null);
+		setComplexity(null);
+		setMood(null);
+	};
+
+	const questions = [
+		{
+			title: "How many are playing?",
+			hint: "Include everyone joining this round.",
+			options: GAME_PLAYER_OPTIONS.map((option) => ({
+				id: String(option.value),
+				label: option.label,
+				onClick: () => choose(option.value, setPlayers),
+			})),
+		},
+		{
+			title: "How much time do you have?",
+			hint: "We'll only suggest games that fit inside your available time.",
+			options: GAME_DURATION_OPTIONS.map((option) => ({
+				id: String(option.value),
+				label: option.label,
+				onClick: () => choose(option.value, setMinutes),
+			})),
+		},
+		{
+			title: "How much thinking?",
+			hint: "Pick the rules and strategy level your group wants.",
+			options: GAME_COMPLEXITIES.map((option) => ({
+				id: option.id,
+				label: option.label,
+				onClick: () => choose(option.id, setComplexity),
+			})),
+		},
+		{
+			title: "What's the mood?",
+			hint: "Choose the energy you want from the room.",
+			options: GAME_MOODS.map((option) => ({
+				id: option.id,
+				label: option.label,
+				onClick: () => choose(option.id, setMood),
+			})),
+		},
+	];
+
+	return (
+		<Dialog.Root open={open} onOpenChange={setOpen}>
+			<Dialog.Trigger asChild>
+				<button
+					type="button"
+					className="inline-flex items-center gap-2 rounded-xl bg-foreground px-4 py-2.5 text-sm font-bold text-background transition hover:opacity-90"
+				>
+					<Sparkles className="h-4 w-4" />
+					Pick for us
+				</button>
+			</Dialog.Trigger>
+			<Dialog.Portal>
+				<Dialog.Overlay className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm" />
+				<Dialog.Content className="fixed inset-x-4 top-1/2 z-50 mx-auto max-h-[calc(100vh-2rem)] max-w-lg -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl outline-none sm:p-7">
+					<div className="flex items-start justify-between gap-4">
+						<div>
+							<Dialog.Title ref={titleRef} tabIndex={-1} className="text-xl font-bold tracking-tight outline-none">
+								{step < questions.length ? questions[step].title : "Tonight's pick"}
+							</Dialog.Title>
+							<Dialog.Description className="mt-1 text-sm text-muted-foreground">
+								{step < questions.length
+									? questions[step].hint
+									: "Ranked from the games that fit your group and schedule."}
+							</Dialog.Description>
+						</div>
+						<Dialog.Close asChild>
+							<button type="button" aria-label="Close picker" className="rounded-full p-2 text-muted-foreground hover:bg-muted hover:text-foreground">
+								<X className="h-4 w-4" />
+							</button>
+						</Dialog.Close>
+					</div>
+
+					{step < questions.length ? (
+						<>
+							<div className="mt-5 flex gap-1.5" aria-label={`Step ${step + 1} of ${questions.length}`}>
+								{questions.map((question, index) => (
+									<span key={question.title} className={`h-1.5 flex-1 rounded-full ${index <= step ? "bg-primary" : "bg-muted"}`} />
+								))}
+							</div>
+							<div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3">
+								{questions[step].options.map((option) => (
+									<button key={option.id} type="button" onClick={option.onClick} className="min-h-12 rounded-xl bg-muted/60 px-3 py-2 text-sm font-semibold ring-1 ring-border/60 transition hover:bg-primary hover:text-primary-foreground hover:ring-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+										{option.label}
+									</button>
+								))}
+							</div>
+							{step > 0 && (
+								<button type="button" onClick={() => setStep((current) => current - 1)} className="mt-5 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+									<ArrowLeft className="h-4 w-4" /> Back
+								</button>
+							)}
+						</>
+					) : (
+						<div className="mt-6 space-y-3">
+							{recommendations.map(({ game, reasons }, index) => (
+								<Link key={game.id} to={game.path} onClick={() => setOpen(false)} className={`group flex gap-3 rounded-xl p-3 ring-1 transition hover:ring-primary ${index === 0 ? "bg-primary/10 ring-primary/40" : "bg-muted/40 ring-border/60"}`}>
+									<div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${game.color} text-white`}><span className="scale-[0.6]">{game.icon}</span></div>
+									<div className="min-w-0">
+										<p className="font-semibold">{index === 0 ? "Best match: " : "Also try: "}{game.title}</p>
+										<p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{reasons.slice(0, 3).join(" · ")}</p>
+									</div>
+								</Link>
+							))}
+								{recommendations.length === 0 && <p className="rounded-xl bg-muted/50 p-4 text-sm text-muted-foreground">No game fits all four choices. Try more time, another mood, or a different complexity.</p>}
+							<button type="button" onClick={restart} className="mt-2 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+								<ArrowLeft className="h-4 w-4" /> Start over
+							</button>
+						</div>
+					)}
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog.Root>
 	);
 }
 
@@ -214,9 +401,12 @@ function HomePage() {
 						{liveGames.length} games ready to go. Grab a code, share the link,
 						start a round.
 					</p>
-					<Link to="/game-night" className="mt-5 inline-flex items-center rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground transition hover:bg-primary/90">
-						Start a Game Night
-					</Link>
+					<div className="mt-5 flex flex-wrap gap-2.5">
+						<RecommendationPicker />
+						<Link to="/game-night" className="inline-flex items-center rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground transition hover:bg-primary/90">
+							Start a Game Night
+						</Link>
+					</div>
 
 					<div className="relative mt-6">
 						<Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

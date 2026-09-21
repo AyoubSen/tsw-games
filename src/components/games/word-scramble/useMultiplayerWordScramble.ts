@@ -2,11 +2,13 @@ import PartySocket from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	clearPersistentPlayerId,
+	clearPersistentPlayerToken,
 	generateRoomCode,
 	getGameNightSocketQuery,
 	leavePartySocket,
 	PARTYKIT_HOST,
 	getPersistentPlayerId,
+	getPersistentPlayerToken,
 } from "@/lib/partykit";
 import type {
 	GameSettings,
@@ -27,6 +29,7 @@ export interface MultiplayerState {
 	error: string | null;
 	isHost: boolean;
 	lastClaimedWord: string | null;
+	lastClaimedPlayerId: string | null;
 }
 
 export function useMultiplayerWordScramble() {
@@ -37,6 +40,7 @@ export function useMultiplayerWordScramble() {
 		error: null,
 		isHost: false,
 		lastClaimedWord: null,
+		lastClaimedPlayerId: null,
 	});
 
 	const socketRef = useRef<PartySocket | null>(null);
@@ -105,11 +109,14 @@ export function useMultiplayerWordScramble() {
 					return {
 						...previous,
 						lastClaimedWord: null,
+						lastClaimedPlayerId: null,
 						gameState: {
 							...previous.gameState,
 							status: "playing",
 							puzzle: message.puzzle,
 							claimedWords: {},
+							claimedCount: 0,
+							ownFoundWords: [],
 							startedAt: message.startTime,
 							finishedAt: null,
 							winnerId: null,
@@ -121,7 +128,7 @@ export function useMultiplayerWordScramble() {
 										{
 											...player,
 											score: 0,
-											foundWords: [],
+											foundCount: 0,
 										},
 									],
 								),
@@ -142,21 +149,32 @@ export function useMultiplayerWordScramble() {
 						return previous;
 					}
 
-					return {
-						...previous,
-						lastClaimedWord: message.word,
-						gameState: {
-							...previous.gameState,
-							claimedWords: {
+					const claimedWords = message.word
+						? {
 								...previous.gameState.claimedWords,
 								[message.word]: message.playerId,
-							},
+							}
+						: previous.gameState.claimedWords;
+					const isOwnClaim = message.playerId === previous.playerId;
+
+					return {
+						...previous,
+						lastClaimedWord: message.word ?? null,
+						lastClaimedPlayerId: message.playerId,
+						gameState: {
+							...previous.gameState,
+							claimedWords,
+							claimedCount: previous.gameState.claimedCount + 1,
+							ownFoundWords:
+								isOwnClaim && message.word
+									? [...previous.gameState.ownFoundWords, message.word].sort()
+									: previous.gameState.ownFoundWords,
 							players: {
 								...previous.gameState.players,
 								[message.playerId]: {
 									...player,
 									score: message.score,
-									foundWords: [...player.foundWords, message.word].sort(),
+									foundCount: message.foundCount,
 								},
 							},
 						},
@@ -178,6 +196,13 @@ export function useMultiplayerWordScramble() {
 							winnerId: message.winnerId,
 							winnerIds: message.winnerIds,
 							claimedWords: message.claimedWords,
+							claimedCount: Object.keys(message.claimedWords).length,
+							puzzle: previous.gameState.puzzle
+								? {
+									...previous.gameState.puzzle,
+									solutions: message.solutions,
+								}
+								: null,
 						},
 					};
 				});
@@ -187,6 +212,7 @@ export function useMultiplayerWordScramble() {
 				setState((previous) => ({
 					...previous,
 					lastClaimedWord: null,
+					lastClaimedPlayerId: null,
 				}));
 				break;
 
@@ -222,6 +248,7 @@ export function useMultiplayerWordScramble() {
 				error: null,
 				playerId,
 				lastClaimedWord: null,
+				lastClaimedPlayerId: null,
 			}));
 
 			const socket = new PartySocket({
@@ -237,6 +264,7 @@ export function useMultiplayerWordScramble() {
 						claimVisibility: settings.claimVisibility,
 					}),
 					...gameNightQuery,
+					playerToken: getPersistentPlayerToken("word-scramble", normalizedRoomCode),
 				},
 				maxEnqueuedMessages: 0,
 			});
@@ -296,6 +324,7 @@ export function useMultiplayerWordScramble() {
 		if (socket) leavePartySocket(socket, { type: "leave" });
 		if (roomCodeRef.current) {
 			clearPersistentPlayerId("word-scramble", roomCodeRef.current);
+			clearPersistentPlayerToken("word-scramble", roomCodeRef.current);
 			roomCodeRef.current = "";
 		}
 
@@ -306,6 +335,7 @@ export function useMultiplayerWordScramble() {
 			error: null,
 			isHost: false,
 			lastClaimedWord: null,
+			lastClaimedPlayerId: null,
 		});
 	}, []);
 
@@ -321,6 +351,7 @@ export function useMultiplayerWordScramble() {
 			error: null,
 			isHost: false,
 			lastClaimedWord: null,
+			lastClaimedPlayerId: null,
 		});
 	}, []);
 

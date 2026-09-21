@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { withRoomCleanup } from "./shared/cleanup"
 import {
   getCorrectTimeline,
   isTimelinePack,
@@ -146,7 +147,7 @@ function winners(players: Record<string, TimelinePlayer>): string[] {
     .map((player) => player.id)
 }
 
-export default class TimelineChaosParty implements Party.Server {
+class TimelineChaosParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
   state: TimelineGameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
@@ -414,3 +415,5 @@ export default class TimelineChaosParty implements Party.Server {
     await this.save(); this.broadcast()
   }
 }
+
+export default withRoomCleanup(TimelineChaosParty, "timelinechaos")

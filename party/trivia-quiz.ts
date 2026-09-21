@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { withRoomCleanup } from "./shared/cleanup"
 import {
   isTriviaPack,
   pickTriviaQuestion,
@@ -166,7 +167,7 @@ function getWinnerIds(players: Record<string, TriviaPlayer>): string[] {
     .map((player) => player.id)
 }
 
-export default class TriviaQuizParty implements Party.Server {
+class TriviaQuizParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: TriviaGameState | null = null
@@ -645,3 +646,5 @@ export default class TriviaQuizParty implements Party.Server {
     this.broadcastState()
   }
 }
+
+export default withRoomCleanup(TriviaQuizParty, "triviaquiz")

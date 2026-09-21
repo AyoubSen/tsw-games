@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { withRoomCleanup } from "./shared/cleanup"
 import {
   chooseBestMove,
   getAllySeats,
@@ -130,7 +131,7 @@ function freshTokens(): number[] {
   return Array.from({ length: LUDO_TOKENS_PER_PLAYER }, () => LUDO_BASE)
 }
 
-export default class LudoParty implements Party.Server {
+class LudoParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
@@ -905,3 +906,5 @@ export default class LudoParty implements Party.Server {
     this.broadcastState()
   }
 }
+
+export default withRoomCleanup(LudoParty, "ludo")

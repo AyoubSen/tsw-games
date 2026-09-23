@@ -189,6 +189,7 @@ function RecommendationPicker() {
 				if (
 					players < game.minPlayers ||
 					players > game.maxPlayers ||
+					(game.supportedPlayerCounts && !game.supportedPlayerCounts.includes(players)) ||
 					game.durationMinutes[1] > minutes ||
 					game.complexity !== complexity ||
 					!game.moods.includes(mood)

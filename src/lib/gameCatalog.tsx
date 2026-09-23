@@ -1,5 +1,6 @@
 import {
 	Binary,
+	Bomb,
 	Brain,
 	Dices,
 	Flag,
@@ -75,6 +76,7 @@ export const GAME_MOODS = [
 	{ id: "chill", label: "Chill" },
 	{ id: "laughs", label: "Big laughs" },
 	{ id: "competitive", label: "Competitive" },
+	{ id: "cooperative", label: "Co-op" },
 	{ id: "brainy", label: "Brainy" },
 	{ id: "creative", label: "Creative" },
 	{ id: "spicy", label: "Spicy" },
@@ -98,6 +100,7 @@ interface GameCatalogBaseEntry {
 	players: string;
 	minPlayers: number;
 	maxPlayers: number;
+	supportedPlayerCounts?: readonly number[];
 	idealPlayers: GamePlayerRange;
 	durationMinutes: GameDurationRange;
 	complexity: GameComplexity;
@@ -120,6 +123,25 @@ export interface PlannedGameCatalogEntry extends GameCatalogBaseEntry {
 export type GameCatalogEntry = LiveGameCatalogEntry | PlannedGameCatalogEntry;
 
 export const liveGames: LiveGameCatalogEntry[] = [
+	{
+		id: "bomb-defusal",
+		title: "Bomb Defusal",
+		description: "One player operates the device. Teammates hold the manuals. Talk your way through wires, symbols, and switches before time runs out.",
+		icon: <Bomb className="w-10 h-10" />,
+		path: "/games/bomb-defusal",
+		players: "2-4 players",
+		minPlayers: 2,
+		maxPlayers: 4,
+		idealPlayers: [2, 4],
+		durationMinutes: [10, 25],
+		complexity: "medium",
+		moods: ["brainy", "laughs"],
+		tags: ["multiplayer", "cooperative", "brainy", "deduction"],
+		color: "from-blue-800 to-orange-500",
+		status: "live",
+		category: "party",
+		isNew: true,
+	},
 	{
 		id: "uno",
 		title: "Uno",
@@ -419,17 +441,18 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		id: "codenames",
 		title: "Codenames",
 		description:
-			"Give one-word clues and help your team uncover every secret agent before the other side does.",
+			"Compete in teams or play Duet: two partners, different private keys, and 15 agents to find together.",
 		icon: <Grid3X3 className="w-10 h-10" />,
 		path: "/games/codenames",
-		players: "4-8 players",
-		minPlayers: 4,
+		players: "2 (Duet) or 4-8 players",
+		minPlayers: 2,
 		maxPlayers: 8,
-		idealPlayers: [4, 8],
+		supportedPlayerCounts: [2, 4, 5, 6, 7, 8],
+		idealPlayers: [2, 8],
 		durationMinutes: [20, 40],
 		complexity: "deep",
-		moods: ["brainy", "competitive"],
-		tags: ["multiplayer", "brainy", "competitive", "deduction"],
+		moods: ["brainy", "competitive", "chill"],
+		tags: ["multiplayer", "brainy", "competitive", "cooperative", "deduction"],
 		color: "from-rose-500 to-red-600",
 		status: "live",
 		category: "strategy",

@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Clock, Crosshair, Palette, Phone, RotateCcw, Swords } from "lucide-react";
+import { Clock, Crosshair, Palette, Phone, RotateCcw, Swords, Vote } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge";
 import { MultiplayerGame } from "@/components/games/drawing/MultiplayerGame";
 import { TelephoneGame } from "@/components/games/drawing/TelephoneGame";
+import { DrawVoteGame } from "@/components/games/drawing/DrawVoteGame";
 import type {
 	DrawingGameMode,
 	GameSettings,
@@ -52,6 +53,13 @@ const MODE_OPTIONS = [
 		shortDescription: "Draw and guess",
 		description: "One player draws while everyone else tries to guess the secret word.",
 		icon: Palette,
+	},
+	{
+		value: "draw-vote",
+		label: "Draw & Vote",
+		shortDescription: "One prompt, every artist",
+		description: "Everyone draws the same prompt, votes anonymously, then reveals the artists. 3–8 players.",
+		icon: Vote,
 	},
 	{
 		value: "league-of-legends",
@@ -237,7 +245,7 @@ function DrawingPage() {
 			<div className="min-h-[calc(100vh-73px)] bg-background">
 				<GameTopBar
 					title="Drawing Game"
-					subtitle="Draw, guess, and rotate who gets the canvas"
+					subtitle="Draw, guess, vote, and reveal"
 				/>
 
 				<div className="mx-auto grid max-w-5xl gap-6 px-4 py-8 md:grid-cols-[1.05fr_0.95fr]">
@@ -264,6 +272,7 @@ function DrawingPage() {
 											key={option.value}
 											type="button"
 											onClick={() => setMode(option.value)}
+											aria-pressed={mode === option.value}
 											className={`rounded-xl border p-3 text-left transition-colors ${
 												mode === option.value
 													? "border-primary bg-primary/10"
@@ -284,7 +293,7 @@ function DrawingPage() {
 						<div className="space-y-2">
 							<p className="flex items-center gap-2 text-sm font-medium">
 								<Clock className="h-4 w-4" />
-								Time per Round
+								{mode === "draw-vote" ? "Drawing Time" : "Time per Round"}
 							</p>
 							<div className="grid grid-cols-4 gap-2">
 								{TIME_OPTIONS.map((option) => (
@@ -307,7 +316,7 @@ function DrawingPage() {
 						{mode !== "telephone" && <div className="space-y-2">
 							<p className="flex items-center gap-2 text-sm font-medium">
 								<RotateCcw className="h-4 w-4" />
-								Rounds per Player
+								{mode === "draw-vote" ? "Rounds" : "Rounds per Player"}
 							</p>
 							<div className="grid grid-cols-3 gap-2">
 								{ROUNDS_OPTIONS.map((option) => (
@@ -326,8 +335,7 @@ function DrawingPage() {
 								))}
 							</div>
 							<p className="text-xs text-muted-foreground">
-								Each player draws {roundsPerPlayer} time
-								{roundsPerPlayer > 1 ? "s" : ""}.
+								{mode === "draw-vote" ? `${roundsPerPlayer} shared prompt${roundsPerPlayer > 1 ? "s" : ""}. Voting lasts 30 seconds per round.` : `Each player draws ${roundsPerPlayer} time${roundsPerPlayer > 1 ? "s" : ""}.`}
 							</p>
 						</div>}
 					</MultiplayerSetupCard>
@@ -344,30 +352,30 @@ function DrawingPage() {
 						<CardContent className="space-y-3 text-sm text-muted-foreground">
 							<div className="rounded-2xl border p-4">
 								<p className="font-semibold text-foreground">
-									{mode === "telephone" ? "1. Write a prompt" : "1. One player draws"}
+									{mode === "draw-vote" ? "1. Everyone draws" : mode === "telephone" ? "1. Write a prompt" : "1. One player draws"}
 								</p>
 								<p className="mt-1">
-									{mode === "telephone"
+									{mode === "draw-vote" ? "Get the same prompt and draw on your own private canvas. Finished strokes are submitted when time runs out." : mode === "telephone"
 										? "Everyone secretly starts a new chain with an original idea."
 										: "The active drawer sees the word and sketches it live."}
 								</p>
 							</div>
 							<div className="rounded-2xl border p-4">
 								<p className="font-semibold text-foreground">
-									{mode === "telephone" ? "2. Draw and describe" : "2. Others guess"}
+									{mode === "draw-vote" ? "2. Vote anonymously" : mode === "telephone" ? "2. Draw and describe" : "2. Others guess"}
 								</p>
 								<p className="mt-1">
-									{mode === "telephone"
+									{mode === "draw-vote" ? "Browse the shuffled gallery and lock in one vote for another artist. Names and vote totals stay hidden." : mode === "telephone"
 										? "Chains rotate privately while turns alternate between pictures and words."
 										: "Guesses stream in as chat while the timer keeps everyone moving."}
 								</p>
 							</div>
 							<div className="rounded-2xl border p-4">
 								<p className="font-semibold text-foreground">
-									{mode === "telephone" ? "3. Reveal every chain" : "3. Rotate roles"}
+									{mode === "draw-vote" ? "3. Reveal the artists" : mode === "telephone" ? "3. Reveal every chain" : "3. Rotate roles"}
 								</p>
 								<p className="mt-1">
-									{mode === "telephone"
+									{mode === "draw-vote" ? "Every vote earns one point. See who drew what, then the host starts the next round. Highest total wins; ties share the win." : mode === "telephone"
 										? "See the original prompts and every hilarious transformation."
 										: "Everyone gets turns on the canvas, then scores decide the winner."}
 								</p>
@@ -393,7 +401,9 @@ function DrawingPage() {
 				hostId={multiplayer.gameState.hostId}
 				currentPlayerId={multiplayer.playerId}
 				playerDescription={
-					multiplayer.gameState.mode === "telephone"
+					multiplayer.gameState.mode === "draw-vote"
+						? "Need at least 3 players. Everyone draws, then votes for another artist."
+						: multiplayer.gameState.mode === "telephone"
 						? "Need at least 3 players. Everyone contributes once to every chain."
 						: "Need at least 2 players. Everyone will rotate through drawing turns."
 				}
@@ -432,7 +442,7 @@ function DrawingPage() {
 				onLeave={handleLeaveMultiplayer}
 				canStart={
 					connectedPlayerCount >=
-					(multiplayer.gameState.mode === "telephone" ? 3 : 2)
+					(multiplayer.gameState.mode === "telephone" || multiplayer.gameState.mode === "draw-vote" ? 3 : 2)
 				}
 				isHost={multiplayer.isHost}
 				message={message}
@@ -451,7 +461,7 @@ function DrawingPage() {
 					title={
 						multiplayer.gameState.mode === "telephone"
 							? "Drawing Telephone"
-							: `${getModeOption(multiplayer.gameState.mode).label} Drawing`
+							: multiplayer.gameState.mode === "draw-vote" ? "Draw & Vote" : `${getModeOption(multiplayer.gameState.mode).label} Drawing`
 					}
 					subtitle={`Room ${displayedRoomCode}`}
 					onBack={handleBackToSelect}
@@ -472,7 +482,22 @@ function DrawingPage() {
 						</Button>
 					}
 				/>
-				{multiplayer.gameState.mode === "telephone" ? (
+				{multiplayer.gameState.mode === "draw-vote" ? (
+					<DrawVoteGame
+						gameState={multiplayer.gameState}
+						playerId={multiplayer.playerId}
+						isHost={multiplayer.isHost}
+						connected={multiplayer.connectionStatus === "connected"}
+						onStroke={(stroke) => multiplayer.sendDrawVoteAction({ type: "draw-vote-edit", action: "stroke", stroke })}
+						onUndo={() => multiplayer.sendDrawVoteAction({ type: "draw-vote-edit", action: "undo" })}
+						onClear={() => multiplayer.sendDrawVoteAction({ type: "draw-vote-edit", action: "clear" })}
+						onSubmit={() => multiplayer.sendDrawVoteAction({ type: "draw-vote-submit" })}
+						onVote={(entryId) => multiplayer.sendDrawVoteAction({ type: "draw-vote-vote", entryId })}
+						onNext={() => multiplayer.sendDrawVoteAction({ type: "draw-vote-next" })}
+						onRestart={multiplayer.restartGame}
+						onLeave={handleLeaveMultiplayer}
+					/>
+				) : multiplayer.gameState.mode === "telephone" ? (
 					<TelephoneGame
 						gameState={multiplayer.gameState}
 						playerId={multiplayer.playerId}

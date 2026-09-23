@@ -11,6 +11,8 @@ interface MultiplayerLobbyProps {
   isHost: boolean
   onProceedToTeamSelection: () => void
   onLeave: () => void
+  connected?: boolean
+  error?: string | null
 }
 
 export function MultiplayerLobby({
@@ -19,12 +21,16 @@ export function MultiplayerLobby({
   isHost,
   onProceedToTeamSelection,
   onLeave,
+  connected = true,
+  error,
 }: MultiplayerLobbyProps) {
   const [copied, setCopied] = useState(false)
 
   const players = Object.values(gameState.players)
   const connectedPlayers = players.filter((player) => player.connected !== false)
-  const canProceed = isHost && connectedPlayers.length >= 4
+  const isDuet = gameState.settings.gameMode === "duet"
+  const minimumPlayers = isDuet ? 2 : 4
+  const canProceed = connected && isHost && connectedPlayers.length >= minimumPlayers
 
   const copyCode = async () => {
     try {
@@ -73,7 +79,7 @@ export function MultiplayerLobby({
           <CardHeader className="pb-2">
             <CardTitle className="text-lg flex items-center gap-2">
               <Users className="w-5 h-5" />
-              Players ({players.length}/8)
+              Players ({players.length}/{isDuet ? 2 : 8})
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -106,7 +112,7 @@ export function MultiplayerLobby({
               ))}
 
               {/* Empty slots */}
-              {Array.from({ length: Math.max(0, 4 - connectedPlayers.length) }).map((_, i) => (
+              {Array.from({ length: Math.max(0, minimumPlayers - connectedPlayers.length) }).map((_, i) => (
                 <div
                   key={`empty-${i}`}
                   className="flex items-center p-3 rounded-lg border-2 border-dashed border-muted"
@@ -121,6 +127,11 @@ export function MultiplayerLobby({
         </Card>
 
         {/* Actions */}
+        {isDuet && <div className="rounded-xl border bg-primary/5 p-4 text-sm">
+          <p className="font-semibold">Duet · One shared mission</p>
+          <p className="mt-2 text-muted-foreground">15 agents · 9 turns · no countdown. Both players give clues and guess. Your keys are different—keep them private.</p>
+        </div>}
+        {error && <p role="alert" className="text-center text-sm text-destructive">{error}</p>}
         <div className="space-y-2">
           {isHost ? (
             <Button
@@ -130,7 +141,7 @@ export function MultiplayerLobby({
               size="lg"
             >
               <ArrowRight className="w-4 h-4 mr-2" />
-              {canProceed ? "Select Teams" : `Need ${4 - connectedPlayers.length} more player(s)`}
+              {!connected ? "Reconnecting…" : canProceed ? isDuet ? "Start Duet" : "Select Teams" : `Need ${minimumPlayers - connectedPlayers.length} more player(s)`}
             </Button>
           ) : (
             <div className="text-center p-4 bg-muted/50 rounded-lg">
@@ -147,7 +158,7 @@ export function MultiplayerLobby({
         </div>
 
         <p className="text-xs text-muted-foreground text-center">
-          Need at least 4 players to start (2 per team)
+          {isDuet ? "Exactly 2 players. The first clue giver is chosen at random." : "Need at least 4 players to start (2 per team)"}
         </p>
       </div>
     </div>

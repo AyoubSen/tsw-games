@@ -32,7 +32,45 @@ export type DrawingGameMode =
   | "classic"
   | "league-of-legends"
   | "valorant"
+  | "draw-vote"
   | "telephone"
+
+interface DrawVoteEntry {
+  id: string
+  authorId: string
+  authorName: string
+  strokes: Stroke[]
+  revision: number
+  submitted: boolean
+}
+
+interface DrawVoteState {
+  phase: "drawing" | "voting" | "results"
+  deadline: number | null
+  participantIds: string[]
+  entries: DrawVoteEntry[]
+  votes: Record<string, string>
+}
+
+export interface PublicDrawVoteState {
+  phase: DrawVoteState["phase"]
+  deadline: number | null
+  participantCount: number
+  submittedCount: number
+  votedCount: number
+  draft: Stroke[]
+  draftRevision: number
+  submitted: boolean
+  selectedEntryId: string | null
+  canVote: boolean
+  entries: {
+    id: string
+    strokes: Stroke[]
+    isOwn: boolean
+    authorName: string | null
+    votes: number | null
+  }[]
+}
 
 export type TelephoneEntry =
   | { type: "text"; authorId: string; authorName: string; text: string }
@@ -98,6 +136,7 @@ export interface GameState {
   telephoneRevealComplete: boolean
   telephoneReactions: Record<string, TelephoneReaction[]>
   playerTokens: Record<string, string>
+  drawVote: DrawVoteState | null
 }
 
 // Public state (sent to clients - hides word from non-drawers)
@@ -128,6 +167,7 @@ export interface PublicGameState {
   telephoneRevealEntryIndex: number
   telephoneRevealComplete: boolean
   telephoneReactions: TelephoneReaction[]
+  drawVote: PublicDrawVoteState | null
 }
 
 // Message types from client
@@ -138,6 +178,10 @@ export type ClientMessage =
   | { type: "undo"; requestId: string }
   | { type: "clear" }
   | { type: "guess"; text: string }
+  | { type: "draw-vote-edit"; round: number; action: "stroke" | "undo" | "clear"; stroke?: Stroke }
+  | { type: "draw-vote-submit"; round: number }
+  | { type: "draw-vote-vote"; round: number; entryId: string }
+  | { type: "draw-vote-next"; round: number }
   | { type: "telephone-submit"; stage: number; text?: string; strokes?: Stroke[] }
   | {
       type: "telephone-reveal-next"
@@ -253,7 +297,7 @@ function normalizeAnswer(value: string): string {
 }
 
 function isDrawingAndGuessingMode(mode: DrawingGameMode): boolean {
-  return mode !== "telephone"
+  return mode !== "telephone" && mode !== "draw-vote"
 }
 
 function sanitizeStrokes(value: unknown): Stroke[] {
@@ -317,13 +361,16 @@ class DrawingParty implements Party.Server {
           (stored.mode === "telephone" && stored.status === "finished"),
         telephoneReactions: stored.telephoneReactions ?? {},
         playerTokens: stored.playerTokens ?? {},
+        drawVote: stored.drawVote ?? null,
       }
 		for (const player of Object.values(this.state.players)) {
 			player.connected = false
 		}
 		await this.saveState()
       // Resume round timer if game was in progress
-      if (this.state.status === "playing" && this.state.roundStartedAt) {
+      if (this.state.mode === "draw-vote" && this.state.drawVote?.deadline) {
+        this.startRoundTimer(Math.max(0, this.state.drawVote.deadline - Date.now()))
+      } else if (this.state.status === "playing" && this.state.roundStartedAt) {
         const elapsed = (Date.now() - this.state.roundStartedAt) / 1000
         const remaining = this.state.roundTimeLimit - elapsed
         if (remaining > 0) {
@@ -354,7 +401,7 @@ class DrawingParty implements Party.Server {
 
     const isDrawer = forPlayerId === this.state.currentDrawerId
     // Show word to everyone during round-end, or to drawer during playing
-    const showWord = this.state.status === "round-end" || isDrawer
+    const showWord = this.state.status === "round-end" || isDrawer || this.state.mode === "draw-vote"
     const telephoneChains = this.state.telephonePlayerOrder
       .map((id) => this.state!.telephoneChains[id])
       .filter((chain): chain is TelephoneChain => Boolean(chain))
@@ -407,7 +454,111 @@ class DrawingParty implements Party.Server {
       telephoneRevealEntryIndex: this.state.telephoneRevealEntryIndex,
       telephoneRevealComplete: this.state.telephoneRevealComplete,
       telephoneReactions: this.state.telephoneReactions[reactionKey] ?? [],
+      drawVote: this.getPublicDrawVoteState(forPlayerId),
     }
+  }
+
+  getPublicDrawVoteState(playerId?: string): PublicDrawVoteState | null {
+    const round = this.state?.drawVote
+    if (this.state?.mode !== "draw-vote" || !round) return null
+    const own = round.entries.find((entry) => entry.authorId === playerId)
+    const revealed = round.phase === "results"
+    return {
+      phase: round.phase,
+      deadline: round.deadline,
+      participantCount: round.participantIds.length,
+      submittedCount: round.entries.filter((entry) => entry.submitted).length,
+      votedCount: Object.keys(round.votes).length,
+      draft: own?.strokes ?? [],
+      draftRevision: own?.revision ?? 0,
+      submitted: own?.submitted ?? false,
+      selectedEntryId: playerId ? round.votes[playerId] ?? null : null,
+      canVote: Boolean(playerId && round.phase === "voting" &&
+        round.participantIds.includes(playerId) && !round.votes[playerId] &&
+        round.entries.some((entry) => entry.authorId !== playerId && entry.strokes.length > 0)),
+      entries: round.phase === "drawing" ? [] : round.entries
+        .filter((entry) => entry.strokes.length > 0)
+        .map((entry) => ({
+          id: entry.id,
+          strokes: entry.strokes,
+          isOwn: entry.authorId === playerId,
+          authorName: revealed ? entry.authorName : null,
+          votes: revealed ? Object.values(round.votes).filter((id) => id === entry.id).length : null,
+        })),
+    }
+  }
+
+  async startDrawVoteRound() {
+    if (!this.state || this.state.mode !== "draw-vote") return
+    const players = Object.values(this.state.players)
+    if (players.length < 3 || this.state.roundNumber >= this.state.totalRounds) {
+      await this.endGame()
+      return
+    }
+    this.state.roundNumber++
+    this.state.currentWord = getRandomWord("classic", this.state.usedWords)
+    this.state.usedWords.push(this.state.currentWord)
+    this.state.status = "playing"
+    this.state.roundStartedAt = Date.now()
+    this.state.drawVote = {
+      phase: "drawing",
+      deadline: Date.now() + this.state.roundTimeLimit * 1000,
+      participantIds: players.map((player) => player.id),
+      entries: players.map((player) => ({
+        id: crypto.randomUUID(), authorId: player.id, authorName: player.name,
+        strokes: [], revision: 0, submitted: false,
+      })),
+      votes: {},
+    }
+    this.startRoundTimer(this.state.roundTimeLimit * 1000)
+    await this.saveState()
+    this.broadcastState()
+  }
+
+  async advanceDrawVotePhase() {
+    const round = this.state?.drawVote
+    if (!this.state || this.state.mode !== "draw-vote" || !round || round.phase === "results") return
+    if (this.roundTimer) clearTimeout(this.roundTimer)
+    this.roundTimer = null
+    if (round.phase === "drawing") {
+      round.phase = "voting"
+      for (const entry of round.entries) entry.submitted = true
+      // Shuffle once, so anonymous labels stay stable for the whole room.
+      for (let i = round.entries.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[round.entries[i], round.entries[j]] = [round.entries[j], round.entries[i]]
+      }
+      this.state.roundStartedAt = Date.now()
+      round.deadline = Date.now() + 30000
+      if (this.drawVoteBallotsComplete()) {
+        await this.advanceDrawVotePhase()
+        return
+      }
+      this.startRoundTimer(30000)
+    } else {
+      round.phase = "results"
+      round.deadline = null
+      this.state.roundStartedAt = null
+      this.state.status = "round-end"
+      for (const entryId of Object.values(round.votes)) {
+        const entry = round.entries.find((candidate) => candidate.id === entryId)
+        const player = entry && this.state.players[entry.authorId]
+        if (player) player.score++
+      }
+      if (this.state.roundNumber >= this.state.totalRounds || Object.keys(this.state.players).length < 3) {
+        await this.endGame()
+        return
+      }
+    }
+    await this.saveState()
+    this.broadcastState()
+  }
+
+  drawVoteBallotsComplete(): boolean {
+    const round = this.state?.drawVote
+    if (!round) return false
+    return round.participantIds.every((id) => Boolean(round.votes[id]) ||
+      !round.entries.some((entry) => entry.authorId !== id && entry.strokes.length > 0))
   }
 
   getTelephoneAssignment(playerId: string): TelephoneAssignment | null {
@@ -474,8 +625,9 @@ class DrawingParty implements Party.Server {
       clearTimeout(this.roundTimer)
     }
     const roundStartedAt = this.state?.roundStartedAt
+    const drawVotePhase = this.state?.drawVote?.phase
     this.roundTimer = setTimeout(async () => {
-      if (this.state?.roundStartedAt !== roundStartedAt) return
+      if (this.state?.roundStartedAt !== roundStartedAt || this.state?.drawVote?.phase !== drawVotePhase) return
       await this.endRound()
     }, duration)
   }
@@ -698,6 +850,11 @@ class DrawingParty implements Party.Server {
   async endRound() {
     if (!this.state || this.state.status !== "playing") return
 
+    if (this.state.mode === "draw-vote") {
+      await this.advanceDrawVotePhase()
+      return
+    }
+
     if (this.state.mode === "telephone") {
       await this.advanceTelephoneStage()
       return
@@ -773,6 +930,7 @@ class DrawingParty implements Party.Server {
     const requestedMode = url.searchParams.get("mode")
     const mode: DrawingGameMode =
       requestedMode === "telephone" ||
+      requestedMode === "draw-vote" ||
       requestedMode === "league-of-legends" ||
       requestedMode === "valorant"
         ? requestedMode
@@ -795,9 +953,9 @@ class DrawingParty implements Party.Server {
         currentWord: null,
         roundNumber: 0,
         totalRounds: 0, // Will be calculated when game starts
-        roundsPerPlayer: roundsPerPlayer,
+        roundsPerPlayer: mode === "draw-vote" ? ([1, 2, 3].includes(roundsPerPlayer) ? roundsPerPlayer : 1) : roundsPerPlayer,
         roundStartedAt: null,
-        roundTimeLimit: roundTimeLimit,
+        roundTimeLimit: mode === "draw-vote" ? ([30, 60, 90, 120].includes(roundTimeLimit) ? roundTimeLimit : 60) : roundTimeLimit,
         strokes: [],
         guesses: [],
         usedWords: [],
@@ -811,6 +969,7 @@ class DrawingParty implements Party.Server {
         telephoneRevealComplete: false,
         telephoneReactions: {},
         playerTokens: {},
+        drawVote: null,
       }
       await this.saveState()
     }
@@ -886,7 +1045,7 @@ class DrawingParty implements Party.Server {
           this.state.playerTokens[sender.id] = playerToken
           // Total rounds = number of players * rounds per player
           this.state.totalRounds =
-            this.state.mode === "telephone"
+            this.state.mode === "draw-vote" ? this.state.roundsPerPlayer : this.state.mode === "telephone"
               ? Object.keys(this.state.players).length
               : Object.keys(this.state.players).length * this.state.roundsPerPlayer
           await this.saveState()
@@ -910,7 +1069,7 @@ class DrawingParty implements Party.Server {
           const availablePlayers = Object.values(this.state.players).filter(
             (player) => player.connected !== false
           )
-          const minimumPlayers = this.state.mode === "telephone" ? 3 : 2
+          const minimumPlayers = this.state.mode === "telephone" || this.state.mode === "draw-vote" ? 3 : 2
           if (availablePlayers.length < minimumPlayers) {
             this.send(sender, {
               type: "error",
@@ -928,6 +1087,9 @@ class DrawingParty implements Party.Server {
 
           if (this.state.mode === "telephone") {
             await this.startTelephoneGame()
+          } else if (this.state.mode === "draw-vote") {
+            this.state.totalRounds = this.state.roundsPerPlayer
+            await this.startDrawVoteRound()
           } else {
             // Total rounds = number of players * rounds per player
             this.state.totalRounds = Object.keys(this.state.players).length * this.state.roundsPerPlayer
@@ -1077,6 +1239,60 @@ class DrawingParty implements Party.Server {
           break
         }
 
+        case "draw-vote-edit":
+        case "draw-vote-submit":
+        case "draw-vote-vote":
+        case "draw-vote-next": {
+          const round = this.state.drawVote
+          if (this.state.mode !== "draw-vote" || !round || data.round !== this.state.roundNumber ||
+            !this.state.players[sender.id]) return
+          if (round.deadline && Date.now() >= round.deadline) {
+            await this.advanceDrawVotePhase()
+            return
+          }
+          if (data.type === "draw-vote-next") {
+            if (round.phase !== "results" || this.state.status !== "round-end" ||
+              !canControlGame(this.state.players, this.state.hostId, sender.id)) return
+            await this.startDrawVoteRound()
+            return
+          }
+          if (this.state.status !== "playing" || !round.participantIds.includes(sender.id)) return
+          if (data.type === "draw-vote-vote") {
+            const entry = round.entries.find((candidate) => candidate.id === data.entryId)
+            if (round.phase !== "voting" || round.votes[sender.id] || !entry ||
+              entry.authorId === sender.id || entry.strokes.length === 0) return
+            round.votes[sender.id] = entry.id
+            if (this.drawVoteBallotsComplete()) {
+              await this.advanceDrawVotePhase()
+              return
+            }
+          } else {
+            const entry = round.entries.find((candidate) => candidate.authorId === sender.id)
+            if (round.phase !== "drawing" || !entry || entry.submitted) return
+            if (data.type === "draw-vote-edit") {
+              if (data.action === "stroke") {
+                const stroke = sanitizeStrokes([data.stroke])[0]
+                if (!stroke || entry.strokes.length >= 1000) return
+                entry.strokes.push(stroke)
+              } else if (data.action === "undo") entry.strokes.pop()
+              else if (data.action === "clear") entry.strokes = []
+              else return
+              entry.revision++
+              await this.saveState()
+              this.send(sender, { type: "state", state: this.getPublicState(sender.id) })
+              return
+            }
+            entry.submitted = true
+            if (round.entries.every((candidate) => candidate.submitted)) {
+              await this.advanceDrawVotePhase()
+              return
+            }
+          }
+          await this.saveState()
+          this.broadcastState()
+          break
+        }
+
         case "telephone-submit": {
           await this.submitTelephoneEntry(sender.id, data)
           break
@@ -1206,6 +1422,7 @@ class DrawingParty implements Party.Server {
           this.state.telephoneRevealEntryIndex = 0
           this.state.telephoneRevealComplete = false
           this.state.telephoneReactions = {}
+          this.state.drawVote = null
 
           // Reset player states
           for (const player of Object.values(this.state.players)) {
@@ -1218,7 +1435,7 @@ class DrawingParty implements Party.Server {
 
           // Recalculate total rounds
           this.state.totalRounds =
-            this.state.mode === "telephone"
+            this.state.mode === "draw-vote" ? this.state.roundsPerPlayer : this.state.mode === "telephone"
               ? Object.keys(this.state.players).length
               : Object.keys(this.state.players).length * this.state.roundsPerPlayer
 
@@ -1233,6 +1450,8 @@ class DrawingParty implements Party.Server {
           delete this.state.playerTokens[sender.id]
 
 			  if (Object.keys(this.state.players).length === 0) {
+				if (this.roundTimer) clearTimeout(this.roundTimer)
+				this.roundTimer = null
 				this.state = null
 				await this.room.storage.delete("state")
 				return
@@ -1241,6 +1460,18 @@ class DrawingParty implements Party.Server {
           if (sender.id === this.state.hostId) {
             const next = nextHost(this.state.players, sender.id)
             if (next) this.state.hostId = next
+          }
+
+          if (this.state.mode === "draw-vote" && this.state.drawVote) {
+            const round = this.state.drawVote
+            round.participantIds = round.participantIds.filter((id) => id !== sender.id)
+            if (round.phase === "drawing") {
+              round.entries = round.entries.filter((entry) => entry.authorId !== sender.id)
+              if (round.entries.every((entry) => entry.submitted)) await this.advanceDrawVotePhase()
+            } else if (round.phase === "voting" && this.drawVoteBallotsComplete()) {
+              await this.advanceDrawVotePhase()
+            }
+            if (this.state.status !== "finished" && Object.keys(this.state.players).length < 3 && round.phase === "results") await this.endGame()
           }
 
           // If drawer leaves during a classic round, end the round
@@ -1323,6 +1554,9 @@ class DrawingParty implements Party.Server {
     }
     const players = Object.values(this.state.players)
     const highestScore = Math.max(...players.map((player) => player.score), 0)
+    if (this.state.mode === "draw-vote" && highestScore === 0) {
+      return Response.json({ finished: true, scored: true, winnerIds: [] })
+    }
     return Response.json({
       finished: true,
       scored: true,

@@ -56,8 +56,8 @@ export function GameModeSelector({
     if (!playerName.trim()) return
     onCreateMultiplayer(playerName.trim(), {
       gameMode,
-      clueTimeLimit,
-      guessTimeLimit,
+      clueTimeLimit: gameMode === "duet" ? 0 : clueTimeLimit,
+      guessTimeLimit: gameMode === "duet" ? 0 : guessTimeLimit,
     })
   }
 
@@ -66,7 +66,7 @@ export function GameModeSelector({
     onJoinMultiplayer(roomCode.trim(), playerName.trim())
   }
 
-  const hasTimers = clueTimeLimit > 0 || guessTimeLimit > 0
+  const hasTimers = gameMode !== "duet" && (clueTimeLimit > 0 || guessTimeLimit > 0)
 
   // Step 1: Choose create or join
   if (step === "mode") {
@@ -113,9 +113,9 @@ export function GameModeSelector({
         </div>
 
         <p className="text-xs text-muted-foreground text-center mt-2">
-          Teams compete to find their secret agents using one-word clues.
+          Compete in teams or work together in two-player Duet.
           <br />
-          Requires 4+ players (2 per team minimum).
+          Duet: exactly 2 players. Classic / Hardcore: 4–8 players.
         </p>
       </div>
     )
@@ -158,6 +158,16 @@ export function GameModeSelector({
               <label className="text-sm font-medium">Game Mode</label>
               <div className="grid grid-cols-2 gap-2">
                 <button
+                  type="button"
+                  onClick={() => setGameMode("duet")}
+                  disabled={isConnecting}
+                  aria-pressed={gameMode === "duet"}
+                  className={cn("col-span-2 flex items-center gap-3 rounded-lg border p-3 text-left transition-colors", gameMode === "duet" ? "border-primary bg-primary/10 text-primary" : "border-border hover:border-primary/50")}
+                >
+                  <Users className="h-6 w-6" />
+                  <span><span className="block text-sm font-semibold">Duet · 2-player co-op</span><span className="text-xs text-muted-foreground">Two private keys. Fifteen agents. One shared mission.</span></span>
+                </button>
+                <button
                   onClick={() => setGameMode("classic")}
                   disabled={isConnecting}
                   className={cn(
@@ -189,6 +199,7 @@ export function GameModeSelector({
             </div>
 
             {/* Speed Mode - Clue Timer */}
+            {gameMode !== "duet" && <>
             <div className="space-y-2">
               <label className="text-sm font-medium flex items-center gap-2">
                 <Clock className="w-4 h-4" />
@@ -239,6 +250,10 @@ export function GameModeSelector({
             </div>
 
             {/* Settings Summary */}
+            </>}
+            {gameMode === "duet" && <div className="rounded-lg border bg-primary/5 p-3 text-sm leading-relaxed text-muted-foreground">
+              Take turns giving one-word clues. Your partner guesses against your secret key, which differs from theirs. Find all 15 agents in 9 shared turns; avoid assassins. No countdown. After turn 9, finish with old clues in sudden death—any mistake loses.
+            </div>}
             <div className="flex flex-wrap gap-2 pt-2">
               {gameMode === "hardcore" && (
                 <span className="px-2 py-1 bg-destructive/10 text-destructive text-xs rounded-full flex items-center gap-1">

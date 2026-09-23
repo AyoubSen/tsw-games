@@ -11,6 +11,7 @@ import {
 	PARTYKIT_HOST,
 } from "@/lib/partykit";
 import type {
+	ClientMessage,
 	Guess,
 	PublicGameState,
 	ServerMessage,
@@ -545,6 +546,20 @@ export function useMultiplayerDrawing() {
 		}
 	}, [state.isHost]);
 
+	const drawVoteRoundNumber = state.gameState?.roundNumber;
+	const sendDrawVoteAction = useCallback((
+		action:
+			| { type: "draw-vote-edit"; action: "stroke" | "undo" | "clear"; stroke?: Stroke }
+			| { type: "draw-vote-submit" }
+			| { type: "draw-vote-vote"; entryId: string }
+			| { type: "draw-vote-next" },
+	) => {
+		if (socketRef.current?.readyState === WebSocket.OPEN && drawVoteRoundNumber !== undefined) {
+			const message: ClientMessage = { ...action, round: drawVoteRoundNumber };
+			socketRef.current.send(JSON.stringify(message));
+		}
+	}, [drawVoteRoundNumber]);
+
 	useEffect(() => {
 		return () => {
 			if (socketRef.current) {
@@ -566,6 +581,7 @@ export function useMultiplayerDrawing() {
 		advanceTelephoneReveal,
 		sendTelephoneReaction,
 		restartGame,
+		sendDrawVoteAction,
 		disconnect,
 		abandonReconnect,
 	};

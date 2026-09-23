@@ -10,6 +10,7 @@ import { GameModeSelector } from '@/components/games/codenames/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/codenames/MultiplayerLobby'
 import { TeamSelector } from '@/components/games/codenames/TeamSelector'
 import { MultiplayerGame } from '@/components/games/codenames/MultiplayerGame'
+import { DuetGame } from '@/components/games/codenames/DuetGame'
 import { useMultiplayerCodenames, type GameSettings } from '@/components/games/codenames/useMultiplayerCodenames'
 import type { Team, PlayerRole } from '../../../party/codenames'
 
@@ -49,7 +50,10 @@ function CodenamesPage() {
     hasGameState,
     finished: multiplayer.gameState?.status === 'finished',
     connectHost: (roomId, playerName) => {
-      if (gameNightConnection) multiplayer.createGame(playerName, { gameMode: 'classic', clueTimeLimit: 0, guessTimeLimit: 0 }, roomId)
+      if (gameNightConnection) multiplayer.createGame(playerName, {
+        gameMode: Object.keys(gameNight.state?.players ?? {}).length === 2 ? 'duet' : 'classic',
+        clueTimeLimit: 0, guessTimeLimit: 0,
+      }, roomId)
     },
     connectPlayer: (roomId, playerName) => {
       if (gameNightConnection) multiplayer.joinGame(roomId, playerName)
@@ -104,7 +108,8 @@ function CodenamesPage() {
 
   // Handle proceed from lobby to team selection
   const handleProceedToTeamSelection = () => {
-    multiplayer.proceedToTeamSelection()
+    if (multiplayer.gameState?.settings.gameMode === 'duet') multiplayer.startGame()
+    else multiplayer.proceedToTeamSelection()
   }
 
   // Mode selection view
@@ -168,6 +173,8 @@ function CodenamesPage() {
           isHost={multiplayer.isHost}
           onProceedToTeamSelection={handleProceedToTeamSelection}
           onLeave={handleLeaveMultiplayer}
+          connected={multiplayer.connectionStatus === 'connected'}
+          error={multiplayer.error}
         />
         </div>
       </div>
@@ -211,7 +218,18 @@ function CodenamesPage() {
           <h1 className="text-lg font-bold">Codenames</h1>
           <div className="w-[60px]" />
         </div>
-        <MultiplayerGame
+        {multiplayer.gameState.settings.gameMode === 'duet' ? <DuetGame
+          gameState={multiplayer.gameState}
+          playerId={multiplayer.playerId}
+          isHost={multiplayer.isHost}
+          connected={multiplayer.connectionStatus === 'connected'}
+          error={multiplayer.error}
+          onClue={(word, count) => multiplayer.sendDuet({ type: 'duet-clue', word, count })}
+          onGuess={(cardIndex) => multiplayer.sendDuet({ type: 'duet-guess', cardIndex })}
+          onPass={() => multiplayer.sendDuet({ type: 'duet-pass' })}
+          onRestart={multiplayer.restart}
+          onLeave={handleLeaveMultiplayer}
+        /> : <MultiplayerGame
           gameState={multiplayer.gameState}
           playerId={multiplayer.playerId}
           isSpymaster={multiplayer.isSpymaster}
@@ -222,7 +240,7 @@ function CodenamesPage() {
           onRestart={multiplayer.restart}
           onLeave={handleLeaveMultiplayer}
           error={multiplayer.error}
-        />
+        />}
       </div>
     )
   }

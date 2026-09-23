@@ -125,6 +125,9 @@ class GameNightParty implements Party.Server {
 		if (!game) return this.send(sender, { type: "error", message: "That game is not available" });
 		const players = Object.values(this.state.players);
 		const connectedCount = players.filter((player) => player.connected !== false).length;
+		if (gameId === "codenames" && players.length > 2 && connectedCount < 4) {
+			return this.send(sender, { type: "error", message: "Codenames needs a two-player roster for Duet, or at least 4 connected players for teams" });
+		}
 		if (connectedCount < game.minPlayers) {
 			return this.send(sender, { type: "error", message: `Need at least ${game.minPlayers} connected players` });
 		}

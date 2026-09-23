@@ -30,6 +30,7 @@ import { Route as GamesGuessTheCountryRouteImport } from './routes/games/guess-t
 import { Route as GamesDrawingRouteImport } from './routes/games/drawing'
 import { Route as GamesCodenamesRouteImport } from './routes/games/codenames'
 import { Route as GamesCodeBreakerRouteImport } from './routes/games/code-breaker'
+import { Route as GamesBombDefusalRouteImport } from './routes/games/bomb-defusal'
 
 const GameNightRoute = GameNightRouteImport.update({
   id: '/game-night',
@@ -136,10 +137,16 @@ const GamesCodeBreakerRoute = GamesCodeBreakerRouteImport.update({
   path: '/games/code-breaker',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GamesBombDefusalRoute = GamesBombDefusalRouteImport.update({
+  id: '/games/bomb-defusal',
+  path: '/games/bomb-defusal',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/game-night': typeof GameNightRoute
+  '/games/bomb-defusal': typeof GamesBombDefusalRoute
   '/games/code-breaker': typeof GamesCodeBreakerRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
@@ -163,6 +170,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/game-night': typeof GameNightRoute
+  '/games/bomb-defusal': typeof GamesBombDefusalRoute
   '/games/code-breaker': typeof GamesCodeBreakerRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
@@ -187,6 +195,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/game-night': typeof GameNightRoute
+  '/games/bomb-defusal': typeof GamesBombDefusalRoute
   '/games/code-breaker': typeof GamesCodeBreakerRoute
   '/games/codenames': typeof GamesCodenamesRoute
   '/games/drawing': typeof GamesDrawingRoute
@@ -212,6 +221,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/game-night'
+    | '/games/bomb-defusal'
     | '/games/code-breaker'
     | '/games/codenames'
     | '/games/drawing'
@@ -235,6 +245,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/game-night'
+    | '/games/bomb-defusal'
     | '/games/code-breaker'
     | '/games/codenames'
     | '/games/drawing'
@@ -258,6 +269,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/game-night'
+    | '/games/bomb-defusal'
     | '/games/code-breaker'
     | '/games/codenames'
     | '/games/drawing'
@@ -282,6 +294,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   GameNightRoute: typeof GameNightRoute
+  GamesBombDefusalRoute: typeof GamesBombDefusalRoute
   GamesCodeBreakerRoute: typeof GamesCodeBreakerRoute
   GamesCodenamesRoute: typeof GamesCodenamesRoute
   GamesDrawingRoute: typeof GamesDrawingRoute
@@ -452,12 +465,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GamesCodeBreakerRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/games/bomb-defusal': {
+      id: '/games/bomb-defusal'
+      path: '/games/bomb-defusal'
+      fullPath: '/games/bomb-defusal'
+      preLoaderRoute: typeof GamesBombDefusalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   GameNightRoute: GameNightRoute,
+  GamesBombDefusalRoute: GamesBombDefusalRoute,
   GamesCodeBreakerRoute: GamesCodeBreakerRoute,
   GamesCodenamesRoute: GamesCodenamesRoute,
   GamesDrawingRoute: GamesDrawingRoute,

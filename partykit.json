@@ -6,6 +6,7 @@
     "stale-room-cleanup": "0 * * * *"
   },
   "parties": {
+    "bombdefusal": "party/bomb-defusal.ts",
     "cleanup": "party/cleanup.ts",
     "gamenight": "party/game-night.ts",
     "wordle": "party/wordle.ts",

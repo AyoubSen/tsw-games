@@ -300,7 +300,7 @@ export function useMultiplayerCodenames() {
   }, [connect])
 
   const joinGame = useCallback((roomCode: string, playerName: string) => {
-    connect(roomCode.toUpperCase(), false, playerName)
+    connect(roomCode, false, playerName)
   }, [connect])
 
   const proceedToTeamSelection = useCallback(() => {
@@ -331,6 +331,16 @@ export function useMultiplayerCodenames() {
     if (state.isHost) sendNow({ type: "restart" })
   }, [sendNow, state.isHost])
 
+  const duet = state.gameState?.duet
+  const sendDuet = useCallback((action:
+    | { type: "duet-clue"; word: string; count: number }
+    | { type: "duet-guess"; cardIndex: number }
+    | { type: "duet-pass" }
+  ) => {
+    if (!duet) return false
+    return sendNow({ ...action, turnId: duet.turnId, revision: duet.revision })
+  }, [duet, sendNow])
+
   useEffect(() => {
     return () => {
       if (socketRef.current) {
@@ -350,6 +360,7 @@ export function useMultiplayerCodenames() {
     guess,
     endGuessing,
     restart,
+    sendDuet,
     disconnect,
     abandonReconnect,
   }

@@ -1,4 +1,5 @@
 export const GAME_NIGHT_GAMES = [
+	{ id: "bomb-defusal", title: "Bomb Defusal", path: "/games/bomb-defusal", party: "bombdefusal", minPlayers: 2, maxPlayers: 4 },
 	{ id: "uno", title: "Uno", path: "/games/uno", party: "uno", minPlayers: 2, maxPlayers: 8 },
 	{ id: "timeline-chaos", title: "Timeline Chaos", path: "/games/timeline-chaos", party: "timelinechaos", minPlayers: 2, maxPlayers: 12 },
 	{ id: "trivia-quiz", title: "Trivia Quiz", path: "/games/trivia-quiz", party: "triviaquiz", minPlayers: 2, maxPlayers: 12 },
@@ -14,7 +15,7 @@ export const GAME_NIGHT_GAMES = [
 	{ id: "hot-take-arena", title: "Hot Take Arena", path: "/games/hot-take-arena", party: "hottakearena", minPlayers: 2, maxPlayers: 12 },
 	{ id: "pressure-button", title: "Pressure Button", path: "/games/pressure-button", party: "pressurebutton", minPlayers: 2, maxPlayers: 10 },
 	{ id: "wordchain", title: "Word Chain", path: "/games/wordchain", party: "wordchain", minPlayers: 2, maxPlayers: 8 },
-	{ id: "codenames", title: "Codenames", path: "/games/codenames", party: "codenames", minPlayers: 4, maxPlayers: 8 },
+	{ id: "codenames", title: "Codenames", path: "/games/codenames", party: "codenames", minPlayers: 2, maxPlayers: 8 },
 	{ id: "sudoku", title: "Sudoku", path: "/games/sudoku", party: "sudoku", minPlayers: 2, maxPlayers: 8 },
 	{ id: "poker", title: "Texas Hold'em", path: "/games/poker", party: "poker", minPlayers: 2, maxPlayers: 8 },
 	{ id: "mafia", title: "Mafia", path: "/games/mafia", party: "mafia", minPlayers: 5, maxPlayers: 12 },

@@ -99,9 +99,9 @@ function GameNightPage() {
 						<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
 							{GAME_NIGHT_GAMES.map((game) => {
 								const catalog = liveGames.find((entry) => entry.id === game.id);
-								const unavailable = players.length > game.maxPlayers || connectedCount < game.minPlayers;
+								const unavailable = players.length > game.maxPlayers || connectedCount < game.minPlayers || (game.id === "codenames" && players.length > 2 && connectedCount < 4);
 								const selected = active?.gameId === game.id && active.status !== "finished";
-								return <button key={game.id} type="button" disabled={!canChoose || unavailable} onClick={() => gameNight.selectGame(game.id)} className={`rounded-2xl border p-4 text-left transition ${selected ? "border-primary bg-primary/10" : "bg-card hover:border-primary/50"} disabled:cursor-not-allowed disabled:opacity-45`}><div className={`mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br text-white ${catalog?.color ?? "from-slate-500 to-slate-700"}`}>{catalog?.icon}</div><h3 className="font-bold">{game.title}</h3><p className="mt-1 text-xs text-muted-foreground">{game.minPlayers}-{game.maxPlayers} players</p>{unavailable && <p className="mt-2 text-xs font-semibold text-destructive">Does not fit this roster</p>}</button>;
+								return <button key={game.id} type="button" disabled={!canChoose || unavailable} onClick={() => gameNight.selectGame(game.id)} className={`rounded-2xl border p-4 text-left transition ${selected ? "border-primary bg-primary/10" : "bg-card hover:border-primary/50"} disabled:cursor-not-allowed disabled:opacity-45`}><div className={`mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br text-white ${catalog?.color ?? "from-slate-500 to-slate-700"}`}>{catalog?.icon}</div><h3 className="font-bold">{game.title}</h3><p className="mt-1 text-xs text-muted-foreground">{game.id === "codenames" ? "2 (Duet) or 4–8 players" : `${game.minPlayers}-${game.maxPlayers} players`}</p>{unavailable && <p className="mt-2 text-xs font-semibold text-destructive">Does not fit this roster</p>}</button>;
 							})}
 						</div>
 						{message && <p className="mt-4 rounded-xl border bg-muted p-3 text-sm">{message}</p>}

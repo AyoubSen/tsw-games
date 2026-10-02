@@ -35,6 +35,33 @@ export interface PublicUnoPlayer {
   connected?: boolean
 }
 
+/** What happened, in order, so clients can replay and explain it. Drawn cards are private to the drawer. */
+export type UnoAction =
+  | { id: number; type: "deal"; playerId: string; name: string; card: UnoCard }
+  | {
+      id: number
+      type: "play"
+      playerId: string
+      name: string
+      card: UnoCard
+      color: UnoColor
+      cardsLeft: number
+      victimId?: string
+      victimName?: string
+      drawCount?: number
+      skippedId?: string
+      skippedName?: string
+      reversed?: boolean
+    }
+  | { id: number; type: "draw"; playerId: string; name: string; card?: UnoCard; playable: boolean }
+  | { id: number; type: "pass"; playerId: string; name: string }
+  | { id: number; type: "timeout"; playerId: string; name: string }
+  | { id: number; type: "leave"; playerId: string; name: string }
+
+type NewUnoAction = UnoAction extends infer A ? A extends UnoAction ? Omit<A, "id"> : never : never
+
+const LOG_LIMIT = 20
+
 export interface UnoGameState {
   roomCode: string
   hostId: string
@@ -54,6 +81,8 @@ export interface UnoGameState {
   finishedAt: number | null
   disconnectedTurnPlayerId?: string | null
   disconnectDeadline?: number | null
+  actionSeq: number
+  log: UnoAction[]
 }
 
 export interface PublicUnoGameState {
@@ -73,6 +102,7 @@ export interface PublicUnoGameState {
   startedAt: number | null
   finishedAt: number | null
   deckCount: number
+  log: UnoAction[]
 }
 
 type ClientAction =
@@ -107,6 +137,8 @@ class UnoParty implements Party.Server {
   async onStart() {
     this.state = await this.room.storage.get<UnoGameState>("state") ?? null
     if (!this.state) return
+    this.state.actionSeq ??= 0
+    this.state.log ??= []
     for (const player of Object.values(this.state.players)) {
       player.connected = false
       player.disconnectedAt ??= Date.now()
@@ -150,6 +182,11 @@ class UnoParty implements Party.Server {
       startedAt: this.state.startedAt,
       finishedAt: this.state.finishedAt,
       deckCount: this.state.deck.length,
+      log: this.state.log.map((action) => {
+        if (action.type !== "draw" || action.playerId === playerId || !action.card) return { ...action }
+        const { card: _hidden, ...rest } = action
+        return rest
+      }),
     }
   }
 
@@ -177,6 +214,12 @@ class UnoParty implements Party.Server {
       }
     }
     return fromId
+  }
+
+  record(action: NewUnoAction) {
+    if (!this.state) return
+    this.state.actionSeq += 1
+    this.state.log = [...this.state.log, { ...action, id: this.state.actionSeq } as UnoAction].slice(-LOG_LIMIT)
   }
 
   advance(steps = 1) {
@@ -224,6 +267,9 @@ class UnoParty implements Party.Server {
     this.state.currentPlayerId = this.state.seatOrder[0] ?? null
     this.state.status = "playing"
     this.state.startedAt = Date.now()
+    this.state.log = []
+    const first = this.state.currentPlayerId ? this.state.players[this.state.currentPlayerId] : null
+    if (first) this.record({ type: "deal", playerId: first.id, name: first.name, card: initial })
   }
 
   finish(winnerId: string) {
@@ -250,7 +296,7 @@ class UnoParty implements Party.Server {
       this.state = {
         roomCode: this.room.id, hostId: connection.id, players: {}, playerTokens: {}, seatOrder: [], maxPlayers: 8,
         status: "waiting", deck: [], discardPile: [], activeColor: null, currentPlayerId: null, direction: 1,
-        drawnCardId: null, winnerId: null, startedAt: null, finishedAt: null,
+        drawnCardId: null, winnerId: null, startedAt: null, finishedAt: null, actionSeq: 0, log: [],
       }
       await this.save()
     }
@@ -318,13 +364,17 @@ class UnoParty implements Party.Server {
       const player = this.state.players[sender.id]!
       const card = this.drawCards(player, 1)[0]
       const top = this.state.discardPile.at(-1)!
-      if (card && canPlayUnoCard(card, top, this.state.activeColor!, player.hand)) this.state.drawnCardId = card.id
+      const playable = Boolean(card && canPlayUnoCard(card, top, this.state.activeColor!, player.hand))
+      this.record({ type: "draw", playerId: player.id, name: player.name, ...(card && { card }), playable })
+      if (card && playable) this.state.drawnCardId = card.id
       else this.advance()
       await this.save(); this.broadcast(); return
     }
 
     if (action.type === "pass") {
       if (this.state.status !== "playing" || this.state.currentPlayerId !== sender.id || !this.state.drawnCardId) return this.error(sender, "Cannot pass now")
+      const player = this.state.players[sender.id]!
+      this.record({ type: "pass", playerId: player.id, name: player.name })
       this.advance(); await this.save(); this.broadcast(); return
     }
 
@@ -342,16 +392,29 @@ class UnoParty implements Party.Server {
       this.state.discardPile.push(card)
       this.state.activeColor = card.color ?? action.color!
       this.state.drawnCardId = null
-      if (player.hand.length === 0) this.finish(player.id)
+      const played: Extract<NewUnoAction, { type: "play" }> = { type: "play", playerId: player.id, name: player.name, card, color: card.color ?? action.color!, cardsLeft: player.hand.length }
+      if (player.hand.length === 0) { this.record(played); this.finish(player.id) }
       else if (card.value === "reverse") {
-        if (this.state.seatOrder.length === 2) this.advance(2)
-        else { this.state.direction = this.state.direction === 1 ? -1 : 1; this.advance() }
-      } else if (card.value === "skip") this.advance(2)
-      else if (card.value === "draw-two" || card.value === "wild-draw-four") {
-        const victimId = this.nextPlayer(player.id)
-        if (victimId) this.drawCards(this.state.players[victimId]!, card.value === "draw-two" ? 2 : 4)
+        if (this.state.seatOrder.length === 2) {
+          const skipped = this.state.players[this.nextPlayer(player.id) ?? ""]
+          this.record({ ...played, ...(skipped && skipped.id !== player.id && { skippedId: skipped.id, skippedName: skipped.name }) })
+          this.advance(2)
+        } else {
+          this.state.direction = this.state.direction === 1 ? -1 : 1
+          this.record({ ...played, reversed: true })
+          this.advance()
+        }
+      } else if (card.value === "skip") {
+        const skipped = this.state.players[this.nextPlayer(player.id) ?? ""]
+        this.record({ ...played, ...(skipped && skipped.id !== player.id && { skippedId: skipped.id, skippedName: skipped.name }) })
         this.advance(2)
-      } else this.advance()
+      } else if (card.value === "draw-two" || card.value === "wild-draw-four") {
+        const victimId = this.nextPlayer(player.id)
+        const victim = victimId ? this.state.players[victimId] : undefined
+        const drawn = victim ? this.drawCards(victim, card.value === "draw-two" ? 2 : 4).length : 0
+        this.record({ ...played, ...(victim && { victimId: victim.id, victimName: victim.name, drawCount: drawn }) })
+        this.advance(2)
+      } else { this.record(played); this.advance() }
       await this.save(); this.broadcast(); return
     }
 
@@ -363,7 +426,7 @@ class UnoParty implements Party.Server {
           this.state.seatOrder = this.state.seatOrder.filter((id) => id !== player.id)
         } else player.hand = []
       }
-      Object.assign(this.state, { status: "waiting", deck: [], discardPile: [], activeColor: null, currentPlayerId: null, direction: 1, drawnCardId: null, winnerId: null, startedAt: null, finishedAt: null })
+      Object.assign(this.state, { status: "waiting", deck: [], discardPile: [], activeColor: null, currentPlayerId: null, direction: 1, drawnCardId: null, winnerId: null, startedAt: null, finishedAt: null, log: [] })
       await this.save(); this.broadcast(); return
     }
 
@@ -372,6 +435,7 @@ class UnoParty implements Party.Server {
       const leavingIndex = this.state.seatOrder.indexOf(sender.id)
       const leaving = this.state.players[sender.id]
       if (leaving) this.state.deck = shuffleUnoCards([...this.state.deck, ...leaving.hand])
+      if (leaving && this.state.status === "playing") this.record({ type: "leave", playerId: leaving.id, name: leaving.name })
       delete this.state.players[sender.id]; delete this.state.playerTokens[sender.id]
       this.state.seatOrder = this.state.seatOrder.filter((id) => id !== sender.id)
       if (this.state.disconnectedTurnPlayerId === sender.id) {
@@ -428,7 +492,10 @@ class UnoParty implements Party.Server {
     this.state.disconnectDeadline = null
     if (playerId && this.state.status === "playing" && this.state.currentPlayerId === playerId && this.state.players[playerId]?.connected === false) {
       const hasConnectedPlayer = this.state.seatOrder.some((id) => this.state!.players[id]?.connected !== false)
-      if (hasConnectedPlayer) this.advance()
+      if (hasConnectedPlayer) {
+        this.record({ type: "timeout", playerId, name: this.state.players[playerId]!.name })
+        this.advance()
+      }
     }
     await this.save(); this.broadcast()
   }

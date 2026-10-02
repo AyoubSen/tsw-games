@@ -153,70 +153,76 @@ html[data-home-layout="cards"] .home-layout-grid {
 }
 
 /* Uno table motion */
-@keyframes uno-card-deal {
-  0% { opacity: 0; transform: translate(180px, -220px) rotate(28deg) scale(0.7); }
-  65% { opacity: 1; transform: translate(-4px, 8px) rotate(-3deg) scale(1.03); }
-  100% { opacity: 1; transform: translate(0) rotate(0) scale(1); }
+@keyframes uno-deal-in {
+  0% { opacity: 0; transform: translateY(-140px) rotate(-18deg) scale(0.6); }
+  70% { opacity: 1; transform: translateY(6px) rotate(2deg) scale(1.02); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes uno-fresh {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(253 230 138 / 0); }
+  50% { box-shadow: 0 0 0 4px rgb(253 230 138 / 0.95), 0 0 26px rgb(253 230 138 / 0.8); }
+}
+@keyframes uno-stamp {
+  0% { opacity: 0; transform: scale(1.9) rotate(-14deg); }
+  16% { opacity: 1; transform: scale(0.92) rotate(-7deg); }
+  24% { transform: scale(1.04) rotate(-8deg); }
+  32%, 86% { opacity: 1; transform: scale(1) rotate(-8deg); }
+  100% { opacity: 0; transform: scale(0.96) rotate(-8deg); }
+}
+@keyframes uno-spin { to { transform: rotate(360deg); } }
+@keyframes uno-shock {
+  0% { opacity: 0.9; transform: scale(0.6); }
+  100% { opacity: 0; transform: scale(2.6); }
+}
+@keyframes uno-rise {
+  0% { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes uno-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+@keyframes uno-tag {
+  0% { opacity: 0; transform: translateY(6px) scale(0.7); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes uno-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes uno-pop {
+  0% { opacity: 0; transform: translateY(24px) scale(0.9); }
+  70% { transform: translateY(-3px) scale(1.02); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes uno-confetti {
+  0% { transform: translate3d(0, -10vh, 0) rotate(0); }
+  100% { transform: translate3d(var(--drift, 0), 110vh, 0) rotate(var(--spin, 360deg)); }
 }
 
-@keyframes uno-card-play {
-  0% { transform: translateY(0) scale(1); }
-  45% { transform: translateY(-28px) scale(1.08) rotate(-2deg); }
-  100% { transform: translate(70px, -180px) scale(0.72) rotate(12deg); opacity: 0; }
-}
-
-@keyframes uno-discard-land {
-  0% { opacity: 0; transform: translate(-75px, 90px) rotate(-18deg) scale(1.18); }
-  70% { opacity: 1; transform: translate(3px, -4px) rotate(6deg) scale(0.98); }
-  100% { transform: rotate(3deg) scale(1); }
-}
-
-@keyframes uno-deck-draw {
-  0%, 100% { transform: translate(0) rotate(0); }
-  40% { transform: translate(12px, -10px) rotate(4deg); }
-}
-
-@keyframes uno-turn-change {
-  0% { opacity: 0; transform: translateY(-10px) scale(0.9); }
-  70% { transform: translateY(2px) scale(1.04); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@keyframes uno-seat-change {
-  0% { transform: scale(0.94); filter: brightness(1.7); }
-  100% { transform: scale(1); filter: brightness(1); }
-}
-
-@keyframes uno-dialog-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes uno-dialog-card-in {
-  0% { opacity: 0; transform: translateY(28px) rotate(-3deg) scale(0.9); }
-  70% { transform: translateY(-4px) rotate(1deg) scale(1.02); }
-  100% { opacity: 1; transform: translateY(0) rotate(0) scale(1); }
-}
-
-.uno-card-deal { animation: uno-card-deal 520ms cubic-bezier(.2,.8,.2,1) var(--deal-delay, 0ms) backwards; }
-.uno-card-play { animation: uno-card-play 240ms cubic-bezier(.4,0,.8,.4) both !important; }
-.uno-discard-land { animation: uno-discard-land 360ms cubic-bezier(.2,.8,.2,1) both; }
-.uno-deck-draw { animation: uno-deck-draw 360ms ease-out; }
-.uno-turn-change { animation: uno-turn-change 280ms cubic-bezier(.2,.8,.2,1) both; }
-.uno-seat-change { animation: uno-seat-change 260ms ease-out; }
-.uno-dialog-backdrop { animation: uno-dialog-in 180ms ease-out both; }
-.uno-dialog-card, .uno-winner-card { animation: uno-dialog-card-in 380ms cubic-bezier(.2,.8,.2,1) both; }
+.uno-deal-in { animation: uno-deal-in 520ms cubic-bezier(.2,.8,.2,1) var(--deal-delay, 0ms) backwards; }
+.uno-fresh { animation: uno-fresh 850ms ease-in-out 2; }
+.uno-stamp { animation: uno-stamp 1600ms cubic-bezier(.2,.8,.2,1) both; }
+.uno-spin { animation: uno-spin 28s linear infinite; }
+.uno-turn-ring { animation: uno-spin 2.2s linear infinite; }
+.uno-shock { animation: uno-shock 900ms ease-out both; }
+.uno-rise { animation: uno-rise 260ms cubic-bezier(.2,.8,.2,1) both; }
+.uno-bob { animation: uno-bob 1.4s ease-in-out infinite; }
+.uno-tag { animation: uno-tag 260ms cubic-bezier(.2,.8,.2,1) both; }
+.uno-fade-in { animation: uno-fade-in 300ms ease-out both; }
+.uno-pop { animation: uno-pop 480ms cubic-bezier(.2,.8,.2,1) both; }
+.uno-confetti { animation: uno-confetti var(--fall, 3s) linear var(--delay, 0s) infinite backwards; }
 
 @media (prefers-reduced-motion: reduce) {
-  .uno-card-deal,
-  .uno-card-play,
-  .uno-discard-land,
-  .uno-deck-draw,
-  .uno-turn-change,
-  .uno-seat-change,
-  .uno-dialog-backdrop,
-  .uno-dialog-card,
-  .uno-winner-card { animation: none !important; }
+  .uno-deal-in,
+  .uno-fresh,
+  .uno-stamp,
+  .uno-spin,
+  .uno-turn-ring,
+  .uno-shock,
+  .uno-rise,
+  .uno-bob,
+  .uno-tag,
+  .uno-fade-in,
+  .uno-pop,
+  .uno-confetti { animation: none !important; }
 }
 
 /* Wordle animations */

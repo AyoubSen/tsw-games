@@ -1,183 +1,934 @@
-import { ArrowLeft, ArrowRight, Crown, RotateCcw, WifiOff } from "lucide-react"
-import { useEffect, useRef, useState, type CSSProperties } from "react"
-import { Button } from "@/components/ui/button"
-import { canPlayUnoCard, type UnoCard as UnoCardData, type UnoColor } from "@/lib/uno"
+import { ArrowLeft, Crown, Layers, RotateCcw, Trophy, WifiOff, X } from "lucide-react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
+import {
+  canPlayUnoCard,
+  UNO_COLORED_VALUES,
+  UNO_COLORS,
+  UNO_WILD_VALUES,
+  type UnoCard,
+  type UnoColor,
+} from "@/lib/uno"
 import { cn } from "@/lib/utils"
-import type { PublicUnoGameState } from "../../../../party/uno"
-
-const COLOR_STYLES: Record<UnoColor | "wild", string> = {
-  red: "bg-[#e84534] text-[#fff8e8]",
-  yellow: "bg-[#f4c84b] text-[#171512]",
-  green: "bg-[#26a269] text-[#fff8e8]",
-  blue: "bg-[#3478d4] text-[#fff8e8]",
-  wild: "bg-[conic-gradient(from_35deg,#3478d4_0_25%,#26a269_0_50%,#f4c84b_0_75%,#e84534_0)] text-[#fff8e8]",
-}
-const COLOR_LABELS: Record<UnoColor | "wild", string> = { red: "Red", yellow: "Yellow", green: "Green", blue: "Blue", wild: "Wild" }
-const COLOR_MARKS: Record<UnoColor | "wild", string> = { red: "R", yellow: "Y", green: "G", blue: "B", wild: "W" }
-
-function cardSymbol(value: string) {
-  if (value === "skip") return "X"
-  if (value === "reverse") return "REV"
-  if (value === "draw-two") return "+2"
-  if (value === "wild-draw-four") return "+4"
-  if (value === "wild") return "W"
-  return value
-}
-
-function cardName(card: UnoCardData) {
-  return `${COLOR_LABELS[card.color ?? "wild"]} ${card.value.replaceAll("-", " ")}`
-}
-
-function UnoCard({ card, disabled, onClick, className }: { card: UnoCardData; disabled?: boolean; onClick?: () => void; className?: string }) {
-  const color = card.color ?? "wild"
-  const content = <>
-    <span className="absolute left-1.5 top-1.5 grid size-6 place-items-center rounded-full border-2 border-current bg-[#fff8e8]/90 text-[10px] font-black text-[#171512]">{COLOR_MARKS[color]}</span>
-    <span className="absolute -left-5 top-1/2 h-16 w-28 -translate-y-1/2 -rotate-[28deg] rounded-[50%] bg-[#fff8e8] shadow-inner sm:h-20 sm:w-36" />
-    <span className="relative z-10 text-[1.7rem] font-black italic tracking-[-0.12em] text-[#171512] sm:text-4xl">{cardSymbol(card.value)}</span>
-    <span className="absolute bottom-1.5 right-2 rotate-180 text-xs font-black">{cardSymbol(card.value)}</span>
-  </>
-  const classes = cn(
-    "relative flex h-28 w-20 shrink-0 items-center justify-center overflow-hidden rounded-[0.85rem] border-[5px] border-[#fff8e8] shadow-[0_7px_0_#090807,0_14px_22px_rgb(0_0_0/.35)] sm:h-36 sm:w-24",
-    COLOR_STYLES[color], className,
-    onClick && "transition-[filter,transform] duration-150 hover:-translate-y-3 focus-visible:-translate-y-3 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#f4c84b] motion-reduce:transform-none motion-reduce:transition-none",
-    disabled && "cursor-not-allowed saturate-50 brightness-50 hover:translate-y-0",
-  )
-  return onClick
-    ? <button type="button" className={classes} disabled={disabled} onClick={onClick} aria-label={`Play ${cardName(card)}`}>{content}</button>
-    : <div className={classes} role="img" aria-label={cardName(card)}>{content}</div>
-}
-
-function CardBack({ className }: { className?: string }) {
-  return <div className={cn("grid h-28 w-20 place-items-center overflow-hidden rounded-[0.85rem] border-[5px] border-[#fff8e8] bg-[#171512] shadow-[0_7px_0_#090807,0_14px_22px_rgb(0_0_0/.35)] sm:h-36 sm:w-24", className)}>
-    <div className="grid size-14 -rotate-12 place-items-center rounded-full bg-[conic-gradient(#3478d4_0_25%,#26a269_0_50%,#f4c84b_0_75%,#e84534_0)] text-sm font-black italic text-white ring-4 ring-[#fff8e8] sm:size-16">PLAY</div>
-  </div>
-}
+import type { PublicUnoGameState, UnoAction } from "../../../../party/uno"
+import { cardLabel, COLOR_HEX, COLOR_NAME, UnoCardDefs, UnoCardView, valueLabel } from "./UnoCardArt"
 
 export interface UnoGameProps {
   state: PublicUnoGameState
   playerId: string
   isHost: boolean
+  roomLabel: string
+  message: string | null
+  connected: boolean
   onPlayCard: (cardId: string, color?: UnoColor) => void
   onDrawCard: () => void
   onPass: () => void
   onRestart: () => void
+  onLeave: () => void
 }
 
-export function UnoGame({ state, playerId, isHost, onPlayCard, onDrawCard, onPass, onRestart }: UnoGameProps) {
-  const [wildCard, setWildCard] = useState<UnoCardData | null>(null)
-  const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
-  const [isDrawing, setIsDrawing] = useState(false)
-  const colorDialogRef = useRef<HTMLDivElement>(null)
-  const playTimeoutRef = useRef<number | null>(null)
-  const selectionResetRef = useRef<number | null>(null)
-  const previousHandIdsRef = useRef(new Set<string>())
-  const opponents = state.seatOrder.filter((id) => id !== playerId).map((id) => state.players[id]).filter(Boolean)
-  const currentPlayer = state.currentPlayerId ? state.players[state.currentPlayerId] : null
-  const winner = state.winnerId ? state.players[state.winnerId] : null
-  const myTurn = state.currentPlayerId === playerId
-  const playable = (card: UnoCardData) => Boolean(!selectedCardId && myTurn && state.status === "playing" && state.topCard && state.activeColor && (!state.drawnCardId || state.drawnCardId === card.id) && canPlayUnoCard(card, state.topCard, state.activeColor, state.myHand))
-  const play = (card: UnoCardData) => {
-    if (selectedCardId) return
-    setSelectedCardId(card.id)
-    const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 260
-    playTimeoutRef.current = window.setTimeout(() => {
-      if (card.color === null) setWildCard(card)
-      else {
-        onPlayCard(card.id)
-        selectionResetRef.current = window.setTimeout(() => setSelectedCardId(null), 2_000)
+type Phase = "flying" | "landed" | "settled"
+interface Reveal { action: UnoAction; snapshot: PublicUnoGameState; phase: Phase }
+interface Spot { x: number; y: number; w: number; h: number }
+interface Pose { x: number; y: number; rot: number; scale: number }
+interface Flight { id: string; card: UnoCard | null; flip: boolean; fade: boolean; from: Pose; to: Pose; w: number; h: number; delay: number; duration: number }
+interface Story { line: string; stamp?: string; sub?: string; tone?: UnoColor }
+
+const TURN_GOLD = "#fde68a"
+const GLASS = "pointer-events-auto rounded-2xl border border-white/10 bg-black/45 shadow-2xl backdrop-blur-md"
+const COLOR_RANK: Record<string, number> = { red: 0, yellow: 1, green: 2, blue: 3, wild: 4 }
+const VALUE_RANK: string[] = [...UNO_COLORED_VALUES, ...UNO_WILD_VALUES]
+
+function sortHand(hand: readonly UnoCard[]) {
+  return [...hand].sort((a, b) =>
+    COLOR_RANK[a.color ?? "wild"]! - COLOR_RANK[b.color ?? "wild"]! ||
+    VALUE_RANK.indexOf(a.value) - VALUE_RANK.indexOf(b.value) ||
+    a.id.localeCompare(b.id))
+}
+
+function hash(text: string) {
+  let value = 7
+  for (const char of text) value = (value * 31 + char.charCodeAt(0)) | 0
+  return Math.abs(value)
+}
+const pileTilt = (id: string) => (hash(id) % 25) - 12
+const pileShift = (id: string) => ({ x: (hash(`${id}x`) % 13) - 6, y: (hash(`${id}y`) % 11) - 5 })
+
+/** When a revealed action lands, settles (penalty cards delivered) and hands play on. */
+function timeline(action: UnoAction, me: string, reduced: boolean) {
+  const motion = reduced ? 0 : 1
+  if (action.type === "play") {
+    const land = 540 * motion
+    const draws = action.drawCount ?? 0
+    const settle = draws ? land + (300 + (draws - 1) * 150 + 520) * motion + 150 : land
+    const loud = action.card.color === null || action.card.value === "skip" || action.card.value === "reverse" || action.card.value === "draw-two" || action.cardsLeft <= 1
+    return { land, settle, release: settle + (loud ? 1500 : 900) }
+  }
+  if (action.type === "draw") {
+    const land = 580 * motion
+    const mine = action.playerId === me
+    return { land, settle: land, release: land + (mine ? (action.playable ? 250 : 1500) : action.playable ? 400 : 800) }
+  }
+  if (action.type === "pass") return { land: 0, settle: 0, release: 900 }
+  if (action.type === "deal") return { land: 0, settle: 0, release: 600 }
+  return { land: 0, settle: 0, release: 1400 }
+}
+
+function storyOf(action: UnoAction, me: string): Story {
+  const you = action.playerId === me
+  const actor = you ? "You" : action.name
+  const verb = (subject: string, plain: string, third: string) => `${subject} ${subject === "You" ? plain : third}`
+  switch (action.type) {
+    case "deal":
+      return { line: `Cards dealt · ${you ? "you go" : `${action.name} goes`} first` }
+    case "play": {
+      const wild = action.card.color === null
+      const line = `${actor} played ${cardLabel(action.card)}${wild ? ` · ${COLOR_NAME[action.color]}` : ""}`
+      const base = { line, tone: action.color }
+      const victim = action.victimId === me ? "You" : action.victimName
+      const skipped = action.skippedId === me ? "You" : action.skippedName
+      const colorNote = wild ? ` · color is ${COLOR_NAME[action.color]}` : ""
+      if (action.cardsLeft === 0) return { ...base, stamp: "Out!", sub: `${actor} played ${you ? "your" : "their"} last card` }
+      const unoNote = action.cardsLeft === 1 ? ` · ${verb(actor, "have", "has")} UNO!` : ""
+      switch (action.card.value) {
+        case "draw-two":
+        case "wild-draw-four":
+          return { ...base, stamp: action.card.value === "draw-two" ? "+2" : "+4", sub: victim ? `${verb(victim, "draw", "draws")} ${action.drawCount ?? 0} and ${victim === "You" ? "miss" : "misses"} a turn${colorNote}${unoNote}` : undefined }
+        case "skip":
+          return { ...base, stamp: "Skip", sub: skipped ? `${verb(skipped, "miss", "misses")} a turn${unoNote}` : undefined }
+        case "reverse":
+          return { ...base, stamp: "Reverse", sub: action.reversed ? `Play changes direction${unoNote}` : skipped ? `${verb(skipped, "miss", "misses")} a turn${unoNote}` : undefined }
+        case "wild":
+          return { ...base, stamp: "Wild", sub: `Color is now ${COLOR_NAME[action.color]}${unoNote}` }
+        default:
+          return action.cardsLeft === 1 ? { ...base, stamp: "UNO!", sub: `${verb(actor, "have", "has")} one card left` } : base
       }
-      playTimeoutRef.current = null
-    }, delay)
-  }
-  const draw = () => {
-    if (isDrawing) return
-    setIsDrawing(true)
-    onDrawCard()
-    const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 420
-    window.setTimeout(() => setIsDrawing(false), delay)
-  }
-
-  useEffect(() => {
-    if (!wildCard) return
-    colorDialogRef.current?.querySelector<HTMLButtonElement>("button")?.focus()
-    const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { setWildCard(null); setSelectedCardId(null) }
     }
-    window.addEventListener("keydown", close)
-    return () => window.removeEventListener("keydown", close)
-  }, [wildCard])
+    case "draw":
+      if (you && action.card) return { line: `You drew ${cardLabel(action.card)}`, sub: action.playable ? "It matches · play it or keep it" : "No match · your turn passes" }
+      return { line: `${actor} drew a card${action.playable ? "" : " and passed"}` }
+    case "pass":
+      return { line: `${actor} kept the drawn card` }
+    case "timeout":
+      return { line: `${actor} ran out of time` }
+    case "leave":
+      return { line: `${action.name} left the table` }
+  }
+}
+
+function useElementSize<T extends HTMLElement>() {
+  const ref = useRef<T>(null)
+  const [size, setSize] = useState({ w: 0, h: 0 })
+  useEffect(() => {
+    const element = ref.current
+    if (!element) return
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setSize({ w: entry.contentRect.width, h: entry.contentRect.height })
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+  return [ref, size] as const
+}
+
+function useReducedMotion() {
+  const [reduced, setReduced] = useState(false)
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)")
+    setReduced(query.matches)
+    const update = () => setReduced(query.matches)
+    query.addEventListener("change", update)
+    return () => query.removeEventListener("change", update)
+  }, [])
+  return reduced
+}
+
+export function UnoGame({ state, playerId, isHost, roomLabel, message, connected, onPlayCard, onDrawCard, onPass, onRestart, onLeave }: UnoGameProps) {
+  const reduced = useReducedMotion()
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [tableRef, table] = useElementSize<HTMLDivElement>()
+  const [handRef, handArea] = useElementSize<HTMLDivElement>()
+  const deckRef = useRef<HTMLDivElement>(null)
+  const discardRef = useRef<HTMLDivElement>(null)
+  const seatRefs = useRef(new Map<string, HTMLDivElement>())
+  const cardRefs = useRef(new Map<string, HTMLButtonElement>())
+  const playedFrom = useRef<{ id: string; spot: Spot } | null>(null)
+
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [pending, setPending] = useState<{ cardId: string | null } | null>(null)
+  const [flights, setFlights] = useState<Flight[]>([])
+  const [dealing, setDealing] = useState(true)
+  const [freshIds, setFreshIds] = useState<Set<string>>(new Set())
+  const [under, setUnder] = useState<UnoCard[]>([])
+  const [rootWidth, setRootWidth] = useState(1024)
+  const [toast, setToast] = useState<string | null>(null)
 
   useEffect(() => {
-    previousHandIdsRef.current = new Set(state.myHand.map((card) => card.id))
-  }, [state.myHand])
+    setToast(message)
+    if (!message) return
+    const timer = window.setTimeout(() => setToast(null), 3500)
+    return () => window.clearTimeout(timer)
+  }, [message])
+
+  // ---- Reveal: hold the previous view while the newest action plays out ----
+  const latest = state.log.at(-1) ?? null
+  const [reveal, setReveal] = useState<Reveal | null>(null)
+  const seenId = useRef<number | null>(null)
+  const previousState = useRef(state)
+  const compact = rootWidth < 640
+  const handCardW = compact ? 64 : 92
+
+  const spotOf = (element: Element | null | undefined): Spot | null => {
+    const root = rootRef.current
+    if (!element || !root) return null
+    const rect = element.getBoundingClientRect()
+    const origin = root.getBoundingClientRect()
+    return { x: rect.left - origin.left + rect.width / 2, y: rect.top - origin.top + rect.height / 2, w: rect.width, h: rect.height }
+  }
 
   useEffect(() => {
-    if (!selectedCardId) return
-    const stillInHand = state.myHand.some((card) => card.id === selectedCardId)
-    if (stillInHand && myTurn && state.status === "playing") return
-    if (playTimeoutRef.current) window.clearTimeout(playTimeoutRef.current)
-    if (selectionResetRef.current) window.clearTimeout(selectionResetRef.current)
-    playTimeoutRef.current = null
-    selectionResetRef.current = null
-    setSelectedCardId(null)
-    setWildCard(null)
-  }, [myTurn, selectedCardId, state.myHand, state.status])
+    if (!latest) {
+      seenId.current = null
+      setReveal(null)
+      return
+    }
+    // Joining or reconnecting shows the table as it is, without replaying.
+    if (seenId.current === null) {
+      seenId.current = latest.id
+      return
+    }
+    if (seenId.current === latest.id) return
+    seenId.current = latest.id
+    const action = latest
+    const snapshot = previousState.current
+    const times = timeline(action, playerId, reduced)
+    setReveal({ action, snapshot, phase: "flying" })
+    if (!reduced) launchFlights(action, times.land)
+    const advance = (phase: Phase) => setReveal((current) => current?.action.id === action.id ? { ...current, phase } : current)
+    const timers = [
+      window.setTimeout(() => advance("landed"), times.land),
+      window.setTimeout(() => advance("settled"), times.settle),
+      window.setTimeout(() => setReveal((current) => current?.action.id === action.id ? null : current), times.release),
+    ]
+    return () => timers.forEach((timer) => window.clearTimeout(timer))
+    // biome-ignore lint/correctness/useExhaustiveDependencies: replays once per new action
+  }, [latest?.id])
 
-  useEffect(() => () => {
-    if (playTimeoutRef.current) window.clearTimeout(playTimeoutRef.current)
-    if (selectionResetRef.current) window.clearTimeout(selectionResetRef.current)
+  // Declared after the reveal effect so it still holds the pre-action state when one arrives.
+  useEffect(() => {
+    previousState.current = state
+  }, [state])
+
+  function launchFlights(action: UnoAction, land: number) {
+    const discard = spotOf(discardRef.current)
+    const deck = spotOf(deckRef.current)
+    if (!discard || !deck) return
+    const w = discard.w
+    const h = discard.h
+    const handSpot = spotOf(handRef.current)
+    const handPose = (spot: Spot | null): Pose | null => spot ? { x: spot.x, y: spot.y + spot.h * 0.12, rot: 0, scale: handCardW / w } : null
+    const seatPose = (id: string): Pose | null => {
+      if (id === playerId) return handPose(handSpot)
+      const spot = spotOf(seatRefs.current.get(id))
+      return spot ? { x: spot.x, y: spot.y, rot: 0, scale: 0.3 } : null
+    }
+    const deckPose: Pose = { x: deck.x, y: deck.y, rot: 0, scale: 1 }
+    const added: Flight[] = []
+    if (action.type === "play") {
+      const fromMe = action.playerId === playerId
+      const stored = playedFrom.current?.id === action.card.id ? playedFrom.current.spot : null
+      const from = fromMe && stored ? { x: stored.x, y: stored.y, rot: 0, scale: stored.w / w } : seatPose(action.playerId)
+      if (from) added.push({ id: `p${action.id}`, card: action.card, flip: false, fade: false, from, to: { x: discard.x, y: discard.y, rot: pileTilt(action.card.id), scale: 1 }, w, h, delay: 0, duration: land })
+      const victimPose = action.victimId ? seatPose(action.victimId) : null
+      for (let index = 0; victimPose && index < (action.drawCount ?? 0); index++) {
+        added.push({ id: `v${action.id}-${index}`, card: null, flip: false, fade: true, from: deckPose, to: victimPose, w, h, delay: land + 300 + index * 150, duration: 520 })
+      }
+    } else if (action.type === "draw") {
+      const to = seatPose(action.playerId)
+      if (to) added.push({ id: `d${action.id}`, card: action.card ?? null, flip: Boolean(action.card), fade: true, from: deckPose, to, w, h, delay: 0, duration: land })
+    }
+    if (added.length) setFlights((current) => [...current, ...added])
+  }
+
+  const arriving = latest !== null && seenId.current !== null && seenId.current !== latest.id
+  const active: Reveal | null = arriving && latest ? { action: latest, snapshot: previousState.current, phase: "flying" } : reveal
+  const action = active?.action ?? null
+  const snapshot = active?.snapshot ?? null
+  const beforeLanding = active?.phase === "flying"
+
+  const view = {
+    topCard: beforeLanding ? snapshot!.topCard : state.topCard,
+    activeColor: beforeLanding ? snapshot!.activeColor : state.activeColor,
+    direction: beforeLanding ? snapshot!.direction : state.direction,
+    currentPlayerId: snapshot ? snapshot.currentPlayerId : state.currentPlayerId,
+    status: snapshot ? snapshot.status : state.status,
+    drawnCardId: snapshot ? snapshot.drawnCardId : state.drawnCardId,
+    deckCount: beforeLanding ? snapshot!.deckCount : state.deckCount,
+  }
+  const victimId = action?.type === "play" ? action.victimId : undefined
+  const countOf = (id: string) => {
+    const live = state.players[id]?.cardCount ?? 0
+    if (!snapshot) return live
+    const before = snapshot.players[id]?.cardCount ?? live
+    if (beforeLanding) return before
+    if (id === victimId && active?.phase !== "settled") return before
+    return live
+  }
+  const holdHand = snapshot && ((beforeLanding && action?.type === "draw" && action.playerId === playerId) || (victimId === playerId && active?.phase !== "settled"))
+  const rawHand = holdHand ? snapshot.myHand : state.myHand
+  const hand = useMemo(() => sortHand(rawHand.filter((card) => card.id !== pending?.cardId)), [rawHand, pending?.cardId])
+
+  // ---- Side effects tied to what is shown ----
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDealing(false), 1600)
+    return () => window.clearTimeout(timer)
   }, [])
 
-  return <section className="relative min-h-[calc(100svh-122px)] overflow-hidden bg-[#171512] text-[#fff8e8] sm:rounded-[2rem] sm:ring-1 sm:ring-white/10">
-    <div className="pointer-events-none absolute -left-28 -top-28 size-72 rotate-12 bg-[#e84534]/20" />
-    <div className="pointer-events-none absolute -right-24 -top-20 size-64 -rotate-12 bg-[#f4c84b]/15" />
-    <div className="pointer-events-none absolute -bottom-32 -left-16 size-72 -rotate-12 bg-[#3478d4]/20" />
-    <div className="pointer-events-none absolute -bottom-24 -right-24 size-72 rotate-12 bg-[#26a269]/20" />
-    <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,#39352f_0,#25221e_42%,#141310_78%)] opacity-90" />
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    const observer = new ResizeObserver(([entry]) => entry && setRootWidth(entry.contentRect.width))
+    observer.observe(root)
+    return () => observer.disconnect()
+  }, [])
 
-    <div className="relative flex min-h-[calc(100svh-122px)] flex-col px-3 py-4 sm:px-6">
-      <div className="flex snap-x gap-2 overflow-x-auto pb-3 md:justify-center">
-        {opponents.map((player, index) => {
-          const isCurrent = state.currentPlayerId === player.id
-          return <div key={`${player.id}:${player.cardCount}`} aria-current={isCurrent ? "true" : undefined} className={cn("uno-seat-change relative min-w-36 snap-center overflow-hidden border-l-4 bg-[#24211d]/95 px-3 py-2 shadow-lg", isCurrent ? "border-[#f4c84b] ring-1 ring-[#f4c84b]/50" : "border-white/20", player.connected === false && "opacity-55")}>
-            <span className="absolute right-2 top-1 text-[9px] font-black tracking-[0.2em] text-white/25">SEAT {index + 1}</span>
-            <div className="mt-2 flex items-center gap-2"><span className="grid size-7 place-items-center rounded-full bg-[#fff8e8] text-xs font-black text-[#171512]">{player.cardCount}</span><div className="min-w-0"><p className="flex items-center gap-1 truncate text-sm font-black">{player.name}{player.id === state.hostId && <Crown className="size-3 text-[#f4c84b]" />}</p><p className="text-[10px] font-bold uppercase tracking-wider text-white/50">{player.connected === false ? "Reconnecting" : isCurrent ? "Turn" : `${player.cardCount} cards`}</p></div>{player.connected === false && <WifiOff className="ml-auto size-3.5" />}</div>
-          </div>
-        })}
-      </div>
+  const shownHandIds = hand.map((card) => card.id).join(",")
+  const knownHand = useRef<Set<string> | null>(null)
+  useEffect(() => {
+    const ids = new Set(hand.map((card) => card.id))
+    const known = knownHand.current
+    knownHand.current = ids
+    if (!known) return
+    const added = [...ids].filter((id) => !known.has(id))
+    if (!added.length) return
+    setFreshIds(new Set(added))
+    const timer = window.setTimeout(() => setFreshIds(new Set()), 1800)
+    return () => window.clearTimeout(timer)
+    // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the shown ids
+  }, [shownHandIds])
 
-      <div className="flex flex-1 flex-col items-center justify-center py-3">
-        <div key={state.currentPlayerId ?? state.status} aria-live="polite" className={cn("uno-turn-change mb-5 max-w-full break-words rounded-full border px-5 py-2 text-center text-xs font-black uppercase tracking-[0.16em] shadow-lg backdrop-blur", myTurn ? "border-[#f4c84b] bg-[#f4c84b] text-[#171512]" : "border-white/15 bg-black/55 text-[#fff8e8]")}>{state.status === "finished" ? `${winner?.name ?? "Player"} wins` : myTurn ? "Your move" : `${currentPlayer?.name ?? "Player"} is playing`}</div>
+  const shownTop = view.topCard
+  const lastTop = useRef<UnoCard | null>(null)
+  useEffect(() => {
+    const last = lastTop.current
+    lastTop.current = shownTop
+    if (last && shownTop && last.id !== shownTop.id) setUnder((pile) => [...pile.filter((card) => card.id !== shownTop.id), last].slice(-3))
+  }, [shownTop])
 
-        <div className="relative grid w-full max-w-xl place-items-center rounded-[50%] border border-dashed border-white/20 bg-black/10 px-8 py-9 shadow-[inset_0_0_80px_rgb(0_0_0/.4)] sm:py-12">
-          <div className="absolute left-4 top-1/2 hidden -translate-y-1/2 text-center sm:left-8 sm:block"><p className="text-[9px] font-black uppercase tracking-[0.24em] text-white/35">Direction</p><div className="mx-auto mt-1 grid size-9 place-items-center rounded-full border border-white/20 bg-black/35">{state.direction === -1 ? <ArrowLeft className="size-4" /> : <ArrowRight className="size-4" />}</div></div>
-          <div className="absolute right-4 top-1/2 hidden -translate-y-1/2 text-center sm:right-8 sm:block"><p className="text-[9px] font-black uppercase tracking-[0.24em] text-white/35">Color</p><div className={cn("mx-auto mt-1 grid size-9 place-items-center rounded-full border-2 border-[#fff8e8] text-[10px] font-black", state.activeColor ? COLOR_STYLES[state.activeColor] : "bg-zinc-700")}>{state.activeColor?.slice(0, 1).toUpperCase() ?? "-"}</div></div>
-          <div className="flex items-end justify-center gap-5 sm:gap-10">
-            <div className="relative text-center"><CardBack className="pointer-events-none absolute -left-2 -top-2 rotate-[-4deg] opacity-35" /><button type="button" disabled={!myTurn || Boolean(state.drawnCardId) || state.status !== "playing" || isDrawing} onClick={draw} className={cn("relative disabled:cursor-not-allowed disabled:brightness-50", isDrawing && "uno-deck-draw")} aria-label={`Draw a card. ${state.deckCount} cards remain`}><CardBack /></button><p className="mt-3 text-[10px] font-black uppercase tracking-[0.2em] text-white/60">Draw - {state.deckCount}</p></div>
-            <div className="text-center"><div className="grid h-28 w-20 place-items-center rounded-[0.85rem] border-2 border-dashed border-white/15 sm:h-36 sm:w-24">{state.topCard && <UnoCard key={state.topCard.id} card={state.topCard} className="uno-discard-land rotate-[3deg]" />}</div><p className="mt-3 text-[10px] font-black uppercase tracking-[0.2em] text-white/60">Discard</p></div>
-          </div>
+  useEffect(() => {
+    setPending(null)
+  }, [latest?.id, message])
+  useEffect(() => {
+    if (!pending) return
+    const timer = window.setTimeout(() => setPending(null), 2500)
+    return () => window.clearTimeout(timer)
+  }, [pending])
+
+  // ---- Turn and options ----
+  const myTurn = view.currentPlayerId === playerId && view.status === "playing"
+  const canAct = myTurn && !active && connected && !pending
+  const isPlayable = (card: UnoCard) => Boolean(
+    canAct && view.topCard && view.activeColor &&
+    (!view.drawnCardId || view.drawnCardId === card.id) &&
+    canPlayUnoCard(card, view.topCard, view.activeColor, state.myHand),
+  )
+  const hasPlayable = hand.some(isPlayable)
+  const canDraw = canAct && !view.drawnCardId
+  const selected = canAct ? hand.find((card) => card.id === (view.drawnCardId ?? selectedId)) ?? null : null
+  const selectedPlayable = selected ? isPlayable(selected) : false
+
+  useEffect(() => {
+    if (!canAct) setSelectedId(null)
+  }, [canAct])
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedId(null)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
+  const play = (card: UnoCard, color?: UnoColor) => {
+    if (!isPlayable(card)) return
+    const spot = spotOf(cardRefs.current.get(card.id))
+    playedFrom.current = spot ? { id: card.id, spot } : null
+    setPending({ cardId: card.id })
+    setSelectedId(null)
+    onPlayCard(card.id, color)
+  }
+  const draw = () => {
+    if (!canDraw) return
+    setPending({ cardId: null })
+    onDrawCard()
+  }
+  const keep = () => {
+    if (!canAct || !view.drawnCardId) return
+    setPending({ cardId: null })
+    onPass()
+  }
+  const pick = (card: UnoCard) => {
+    if (!canAct || view.drawnCardId) return
+    setSelectedId((current) => (current === card.id ? null : card.id))
+  }
+
+  // ---- Table geometry ----
+  const order = state.seatOrder
+  const myIndex = order.indexOf(playerId)
+  const opponents = (myIndex < 0 ? order : [...order.slice(myIndex + 1), ...order.slice(0, myIndex)]).filter((id) => state.players[id])
+  const centerX = table.w / 2
+  const centerY = table.h * (compact ? 0.54 : 0.52)
+  const seatSpots = new Map<string, { x: number; y: number }>()
+  const span = opponents.length <= 1 ? 0 : Math.min(220, 70 * (opponents.length - 1))
+  opponents.forEach((id, index) => {
+    const degrees = opponents.length <= 1 ? 90 : 90 + span / 2 - (span * index) / (opponents.length - 1)
+    const radians = (degrees * Math.PI) / 180
+    const margin = compact ? 44 : 80
+    const x = Math.min(table.w - margin, Math.max(margin, centerX + table.w * 0.44 * Math.cos(radians)))
+    const y = Math.max(compact ? 52 : 70, centerY - table.h * (compact ? 0.4 : 0.42) * Math.sin(radians))
+    seatSpots.set(id, { x, y })
+  })
+  const turnTarget = view.currentPlayerId === playerId ? { x: centerX, y: table.h + 120 } : view.currentPlayerId ? seatSpots.get(view.currentPlayerId) : undefined
+  const rawAngle = turnTarget ? (Math.atan2(turnTarget.y - centerY, turnTarget.x - centerX) * 180) / Math.PI : 90
+  const lastAngle = useRef<number | null>(null)
+  const pointerAngle = lastAngle.current === null ? rawAngle : lastAngle.current + ((((rawAngle - lastAngle.current) % 360) + 540) % 360) - 180
+  useEffect(() => {
+    lastAngle.current = pointerAngle
+  })
+
+  // ---- Words ----
+  const nameOf = (id: string | null) => (id === playerId ? "You" : id ? state.players[id]?.name ?? snapshot?.players[id]?.name ?? "Player" : "Player")
+  const story = action ? storyOf(action, playerId) : null
+  const lastStory = latest ? storyOf(latest, playerId) : null
+  const winner = state.winnerId
+  const finished = view.status === "finished"
+  const matchText = view.topCard && view.activeColor
+    ? view.topCard.color === null ? `${COLOR_NAME[view.activeColor]}` : `${COLOR_NAME[view.activeColor]} or ${valueLabel(view.topCard.value)}`
+    : ""
+  const statusText = finished
+    ? winner === playerId ? "You won the hand!" : `${nameOf(winner)} wins the hand`
+    : story
+      ? story.line
+      : myTurn
+        ? view.drawnCardId ? "Play the card you drew, or keep it" : hasPlayable ? "Your turn · pick a card" : "Your turn · nothing matches, draw a card"
+        : `${nameOf(view.currentPlayerId)}'s turn`
+  const turnHex = myTurn ? TURN_GOLD : view.activeColor ? COLOR_HEX[view.activeColor].base : "#94a3b8"
+  const seatTag = (id: string) => {
+    if (!action || action.type !== "play" || beforeLanding) return null
+    if (action.victimId === id) return `+${action.drawCount ?? 0}`
+    if (action.skippedId === id) return "Skipped"
+    return null
+  }
+  const logEntries = state.log
+    .filter((entry) => !(active && beforeLanding && entry.id === action?.id))
+    .slice(-8)
+    .reverse()
+
+  // ---- Hand fan ----
+  const handCardH = handCardW * 1.5
+  const count = hand.length
+  const fanSpacing = count > 1 ? Math.min(handCardW * 0.62, (handArea.w - 24 - handCardW) / (count - 1)) : 0
+  const crowded = count > 1 && fanSpacing < (compact ? 20 : 26)
+  const middle = (count - 1) / 2
+  const rotStep = Math.min(5, 36 / Math.max(count, 1))
+  const dropK = 14 / Math.max(middle * middle, 1)
+
+  const handCard = (card: UnoCard, index: number) => {
+    const playable = isPlayable(card)
+    const isSelected = selected?.id === card.id
+    const lift = isSelected ? 38 : playable ? 12 : 0
+    const offset = index - middle
+    const fresh = freshIds.has(card.id)
+    const style = crowded
+      ? ({ "--lift": `${lift}px`, marginLeft: index === 0 ? 0 : -(handCardW - (compact ? 30 : 40)), zIndex: isSelected ? 100 : index } as CSSProperties)
+      : ({
+          "--lift": `${lift}px`,
+          "--drop": `${offset * offset * dropK}px`,
+          "--rot": `${offset * rotStep}deg`,
+          left: handArea.w / 2 + offset * fanSpacing - handCardW / 2,
+          zIndex: isSelected ? 100 : index,
+        } as CSSProperties)
+    return (
+      <button
+        key={card.id}
+        ref={(element) => {
+          if (element) cardRefs.current.set(card.id, element)
+          else cardRefs.current.delete(card.id)
+        }}
+        type="button"
+        style={{ ...style, width: handCardW, height: handCardH }}
+        onClick={() => pick(card)}
+        onDoubleClick={() => card.color && play(card)}
+        aria-pressed={isSelected}
+        aria-label={`${cardLabel(card)}${playable ? ", playable" : ""}`}
+        className={cn(
+          "group shrink-0 rounded-[10%/6.667%] outline-none transition-transform duration-200 ease-out focus-visible:ring-4 focus-visible:ring-amber-200 motion-reduce:transition-none",
+          crowded
+            ? "relative [transform:translateY(calc(0px_-_var(--lift)_-_var(--hover,0px)))]"
+            : "absolute bottom-3 origin-[50%_130%] [transform:translateY(calc(var(--drop)_-_var(--lift)_-_var(--hover,0px)))_rotate(var(--rot))]",
+          canAct ? "hover:[--hover:16px]" : "cursor-default hover:[--hover:6px]",
+        )}
+      >
+        <div
+          className={cn("size-full rounded-[10%/6.667%] transition-[filter,box-shadow] duration-200", dealing && "uno-deal-in", fresh && !dealing && "uno-fresh")}
+          style={{ "--deal-delay": `${Math.min(index, 12) * 70}ms` } as CSSProperties}
+        >
+          <UnoCardView
+            card={card}
+            className={cn(
+              "size-full transition-[filter,box-shadow] duration-200",
+              canAct && !playable && "brightness-[.55] saturate-[.6]",
+              playable && !isSelected && "shadow-[0_0_0_2px_#fde68a,0_0_18px_#fde68aaa]",
+              isSelected && "shadow-[0_0_0_3px_#fff,0_0_28px_#fde68a]",
+            )}
+          />
         </div>
-        <div className="mt-3 flex items-center gap-4 text-[10px] font-black uppercase tracking-wider text-white/55 sm:hidden"><span>{state.direction === -1 ? "Counter-clockwise" : "Clockwise"}</span><span className={cn("rounded-full border border-white/60 px-2 py-1", state.activeColor ? COLOR_STYLES[state.activeColor] : "bg-zinc-700")}>{state.activeColor ?? "No color"}</span></div>
-        {myTurn && state.drawnCardId && <div className="mt-4 flex max-w-full flex-wrap items-center justify-center gap-2 rounded-2xl bg-[#fff8e8] px-4 py-2 text-center text-xs font-bold text-[#171512] sm:rounded-full"><span>Play the drawn card or pass.</span><Button size="sm" onClick={onPass} className="h-11 rounded-full bg-[#171512] text-[#fff8e8] hover:bg-black sm:h-8">Pass turn</Button></div>}
+      </button>
+    )
+  }
+
+  // ---- Option tray (only for the card that was picked) ----
+  let tray: ReactNode = null
+  if (finished || !canAct) tray = null
+  else if (selected && view.drawnCardId) {
+    tray = selected.color === null
+      ? <ColorPicker label="You drew a wild · pick a color" onPick={(color) => play(selected, color)} extra={<TrayButton tone="ghost" onClick={keep}>Keep it</TrayButton>} />
+      : <div className="flex items-center gap-2"><span className="px-1 text-sm font-semibold">You drew {cardLabel(selected)}</span><TrayButton onClick={() => play(selected)}>Play it</TrayButton><TrayButton tone="ghost" onClick={keep}>Keep it</TrayButton></div>
+  } else if (selected && selectedPlayable && selected.color === null) {
+    tray = <ColorPicker label={selected.value === "wild-draw-four" ? "Wild +4 · pick a color" : "Wild · pick a color"} onPick={(color) => play(selected, color)} extra={<IconButton label="Cancel" onClick={() => setSelectedId(null)} />} />
+  } else if (selected && selectedPlayable) {
+    tray = <div className="flex items-center gap-2"><span className="px-1 text-sm font-semibold">{cardLabel(selected)}</span><TrayButton onClick={() => play(selected)}>Play card</TrayButton><IconButton label="Cancel" onClick={() => setSelectedId(null)} /></div>
+  } else if (selected) {
+    const why = selected.value === "wild-draw-four" && view.activeColor
+      ? `Wild +4 only works with no ${COLOR_NAME[view.activeColor]} cards in hand`
+      : `${cardLabel(selected)} doesn't match · needs ${matchText}`
+    tray = <div className="flex items-center gap-2"><span className="px-1 text-sm font-semibold text-white/80">{why}</span><IconButton label="Close" onClick={() => setSelectedId(null)} /></div>
+  } else {
+    tray = <div className="flex items-center gap-2">
+      <span className="px-1 text-sm font-semibold">{hasPlayable ? "Pick a glowing card" : "Nothing matches"}</span>
+      <TrayButton tone={hasPlayable ? "ghost" : "solid"} onClick={draw}><Layers className="size-4" />Draw</TrayButton>
+    </div>
+  }
+
+  const ringSize = compact ? 196 : 300
+  const pileW = compact ? 70 : 100
+  const pileH = pileW * 1.5
+  const pileGap = compact ? 16 : 28
+  const handHeight = crowded ? handCardH + 70 : handCardH + 58
+  const bottomReserve = handHeight + 64
+
+  return (
+    <div
+      ref={rootRef}
+      className="relative h-[calc(100dvh-73px)] min-h-[560px] w-full select-none overflow-hidden text-white"
+      style={{ background: "radial-gradient(120% 95% at 50% 45%, #22364d 0%, #132133 46%, #060b13 100%)" }}
+    >
+      <UnoCardDefs />
+      {/* Felt grain and the active-color glow. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-40 mix-blend-overlay" style={{ backgroundImage: "repeating-radial-gradient(circle at 30% 20%, rgba(255,255,255,0.05) 0 1px, transparent 1px 3px)" }} />
+      {UNO_COLORS.map((color) => (
+        <div
+          key={color}
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 transition-opacity duration-700"
+          style={{ opacity: view.activeColor === color ? 1 : 0, background: `radial-gradient(48% 46% at 50% 46%, ${COLOR_HEX[color].base}40, transparent 72%)` }}
+        />
+      ))}
+      <div aria-hidden="true" className={cn("pointer-events-none absolute inset-x-0 bottom-0 h-72 transition-opacity duration-500", myTurn ? "opacity-100" : "opacity-0")} style={{ background: "radial-gradient(60% 100% at 50% 100%, #fde68a33, transparent 70%)" }} />
+
+      {/* Table: opponents around the piles. */}
+      <div ref={tableRef} className="absolute inset-x-0 top-20" style={{ bottom: bottomReserve }}>
+        <div aria-hidden="true" className="pointer-events-none absolute inset-x-[4%] inset-y-[2%] rounded-[50%] border border-white/[0.06] shadow-[inset_0_0_120px_rgb(0_0_0/.35)]" />
+        {table.w > 0 && opponents.map((id) => {
+          const player = state.players[id]!
+          const spot = seatSpots.get(id)!
+          const cards = countOf(id)
+          return (
+            <Seat
+              key={id}
+              refCallback={(element) => {
+                if (element) seatRefs.current.set(id, element)
+                else seatRefs.current.delete(id)
+              }}
+              name={player.name}
+              x={spot.x}
+              y={spot.y}
+              count={cards}
+              compact={compact}
+              isTurn={!finished && view.currentPlayerId === id}
+              isHost={id === state.hostId}
+              offline={player.connected === false}
+              tag={seatTag(id)}
+            />
+          )
+        })}
+
+        {table.w > 0 && (
+          <div className="absolute" style={{ left: centerX, top: centerY }}>
+            {/* Direction ring with a pointer at whoever plays next. */}
+            <div className="absolute -translate-x-1/2 -translate-y-1/2" style={{ width: ringSize, height: ringSize }}>
+              <svg viewBox="0 0 100 100" className={cn("absolute inset-0 size-full uno-spin", view.direction === -1 && "[animation-direction:reverse]")} aria-hidden="true">
+                <circle cx="50" cy="50" r="46" fill="none" stroke={turnHex} strokeOpacity="0.28" strokeWidth="0.8" strokeDasharray="1.5 3" />
+                {[0, 90, 180, 270].map((degrees) => {
+                  const radians = (degrees * Math.PI) / 180
+                  return <path key={degrees} d="M-2.2,-3 L1.8,0 L-2.2,3" fill="none" stroke={turnHex} strokeOpacity="0.7" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" transform={`translate(${50 + 46 * Math.cos(radians)} ${50 + 46 * Math.sin(radians)}) rotate(${degrees + (view.direction === -1 ? -90 : 90)})`} />
+                })}
+              </svg>
+              {!finished && (
+                <div className="absolute inset-0 transition-transform duration-700 ease-out motion-reduce:transition-none" style={{ transform: `rotate(${pointerAngle}deg)` }}>
+                  <svg viewBox="0 0 20 20" className="absolute -right-3 top-1/2 size-6 -translate-y-1/2 drop-shadow-[0_0_8px_rgba(253,230,138,.9)]" aria-hidden="true">
+                    <path d="M4,3 L17,10 L4,17 Z" fill={myTurn ? TURN_GOLD : "#fff"} />
+                  </svg>
+                </div>
+              )}
+            </div>
+
+            {/* Draw pile and discard pile. */}
+            <div className="absolute flex -translate-x-1/2 -translate-y-1/2 items-center" style={{ gap: pileGap }}>
+              <div className="relative" style={{ width: pileW, height: pileH }}>
+                {[3, 2, 1].filter((depth) => depth < view.deckCount).map((depth) => (
+                  <div key={depth} className="absolute inset-0" style={{ transform: `translate(${depth * 1.5}px, ${depth * 2.5}px)` }}>
+                    <UnoCardView card={null} className="size-full brightness-[.6]" />
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={draw}
+                  disabled={!canDraw}
+                  aria-label={`Draw a card, ${view.deckCount} left`}
+                  className={cn(
+                    "absolute inset-0 rounded-[10%/6.667%] outline-none transition-transform duration-200 focus-visible:ring-4 focus-visible:ring-amber-200",
+                    canDraw && "cursor-pointer hover:-translate-y-2",
+                    canDraw && !hasPlayable && "uno-bob shadow-[0_0_0_3px_#fde68a,0_0_30px_#fde68a]",
+                  )}
+                >
+                  <div ref={deckRef} className="size-full"><UnoCardView card={null} className="size-full" /></div>
+                </button>
+                <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.18em] text-white/55">Deck · {view.deckCount}</span>
+              </div>
+
+              <div ref={discardRef} className="relative" style={{ width: pileW, height: pileH }}>
+                {under.map((card) => {
+                  const shift = pileShift(card.id)
+                  return <div key={`u${card.id}`} className="absolute inset-0" style={{ transform: `translate(${shift.x}px, ${shift.y}px) rotate(${pileTilt(card.id)}deg)` }}><UnoCardView card={card} className="size-full brightness-[.7]" /></div>
+                })}
+                {view.activeColor && <div aria-hidden="true" className="absolute -inset-3 rounded-[18px] transition-[box-shadow] duration-500" style={{ boxShadow: `0 0 0 3px ${COLOR_HEX[view.activeColor].base}, 0 0 36px ${COLOR_HEX[view.activeColor].base}` }} />}
+                {shownTop && (
+                  <div className="absolute inset-0" style={{ transform: `rotate(${pileTilt(shownTop.id)}deg)` }}>
+                    <UnoCardView card={shownTop} className="size-full" />
+                  </div>
+                )}
+                {shownTop?.color === null && view.activeColor && !reduced && (
+                  <div key={shownTop.id} aria-hidden="true" className="uno-shock pointer-events-none absolute inset-0 rounded-full border-4" style={{ borderColor: COLOR_HEX[view.activeColor].base }} />
+                )}
+              </div>
+            </div>
+
+            {/* What to match, plus the reveal caption. */}
+            <div className="absolute left-0 flex -translate-x-1/2 flex-col items-center gap-2" style={{ top: ringSize / 2 + (compact ? 4 : 10) }}>
+              {view.activeColor && !finished && (
+                <div className="flex items-center gap-2 whitespace-nowrap rounded-full border border-white/10 bg-black/50 py-1 pl-1.5 pr-3 text-xs font-bold backdrop-blur">
+                  <span className="size-4 rounded-full ring-2 ring-white/80 transition-colors duration-500" style={{ background: COLOR_HEX[view.activeColor].base }} />
+                  <span className="text-white/60">Match</span>
+                  <span>{matchText}</span>
+                </div>
+              )}
+            </div>
+            {story?.stamp && !beforeLanding && (
+              <div key={action!.id} className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-1/2" style={{ left: pileGap / 2 + pileW * 0.85, top: -pileH * 0.48 }}>
+                <div className="uno-stamp whitespace-nowrap rounded-xl border-[3px] border-white px-3 py-1 text-2xl font-black italic uppercase tracking-tight shadow-[0_10px_30px_rgb(0_0_0/.5)] sm:text-4xl" style={{ background: story.tone ? COLOR_HEX[story.tone].base : "#111", color: story.tone === "yellow" ? "#141416" : "#fff" }}>
+                  {story.stamp}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      <div className="relative mt-auto border-t border-white/10 pt-3">
-        <p className="text-center text-[10px] font-black uppercase tracking-[0.28em] text-white/45">Your hand - {state.myHand.length} cards</p>
-        <div className="flex min-h-36 items-end overflow-x-auto overflow-y-hidden px-[calc(50%-2.5rem)] pb-4 pt-7 md:justify-center md:overflow-visible md:px-10">
-          {state.myHand.map((card, index) => {
-            const center = (state.myHand.length - 1) / 2
-            const distance = index - center
-            const isNewCard = !previousHandIdsRef.current.has(card.id)
-            const delay = previousHandIdsRef.current.size === 0 ? Math.min(index, 7) * 70 : 0
-            const style = { "--fan-rotation": `${Math.max(-10, Math.min(10, distance * 2.2))}deg`, "--fan-lift": `${Math.abs(distance) * 1.2}px`, "--deal-delay": `${delay}ms` } as CSSProperties
-            return <div key={card.id} style={style} className={cn("-ml-5 first:ml-0 origin-bottom snap-center md:-ml-7 md:[transform:rotate(var(--fan-rotation))_translateY(var(--fan-lift))] md:hover:z-20 md:hover:[transform:rotate(var(--fan-rotation))_translateY(-14px)]", selectedCardId === card.id && "z-30")}><UnoCard card={card} disabled={selectedCardId === card.id ? false : !playable(card)} onClick={() => play(card)} className={cn(isNewCard && "uno-card-deal", selectedCardId === card.id && "uno-card-play")} /></div>
-          })}
+      {/* Top bar. */}
+      <div className="pointer-events-none absolute inset-x-3 top-3 flex items-start gap-2 lg:inset-x-6 lg:top-5">
+        <button type="button" onClick={onLeave} className={cn(GLASS, "flex h-11 shrink-0 items-center gap-1.5 px-3 text-sm font-semibold transition hover:bg-black/60")}>
+          <ArrowLeft className="size-4" />
+          <span className="hidden sm:inline">Leave</span>
+        </button>
+        <div className="hidden pl-2 lg:block">
+          <p className="text-lg font-black italic leading-none tracking-tight">UNO</p>
+          <p className="text-xs text-white/60">Room {roomLabel}</p>
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col items-stretch gap-1 lg:absolute lg:left-1/2 lg:w-[min(560px,48vw)] lg:-translate-x-1/2">
+          <div
+            aria-live="polite"
+            className={cn(GLASS, "flex h-11 min-w-0 items-center gap-3 px-4 transition-colors duration-500", myTurn && !active && "border-amber-200/70 bg-amber-400/20")}
+          >
+            <span aria-hidden="true" className={cn("size-3 shrink-0 rounded-full", !finished && "animate-pulse")} style={{ background: turnHex, boxShadow: `0 0 14px ${turnHex}` }} />
+            <p className="min-w-0 flex-1 truncate text-sm font-semibold">{statusText}</p>
+            {!connected && <span className="flex shrink-0 items-center gap-1 text-xs text-amber-200"><WifiOff className="size-3.5" />Reconnecting</span>}
+          </div>
+          {story?.sub && !beforeLanding ? (
+            <p key={action!.id} className="uno-rise self-center truncate rounded-full bg-black/55 px-3 py-1 text-xs font-semibold text-white/90 backdrop-blur">{story.sub}</p>
+          ) : !active && lastStory && !finished ? (
+            <p className="self-center truncate px-3 text-[11px] text-white/50 xl:hidden">Last: {lastStory.line}</p>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Recent actions (wide screens). */}
+      {logEntries.length > 0 && (
+        <div className={cn(GLASS, "absolute right-6 top-24 hidden w-64 p-3 xl:block")}>
+          <p className="px-1 pb-2 text-xs font-semibold uppercase tracking-wider text-white/50">Recent</p>
+          <ol className="space-y-1.5">
+            {logEntries.map((entry, index) => (
+              <li key={entry.id} className={cn("flex items-center gap-2 px-1 text-xs", index === 0 ? "text-white" : "text-white/55")}>
+                {entry.type === "play" ? (
+                  <span className="h-[21px] w-[14px] shrink-0"><UnoCardView card={entry.card} className="size-full shadow-none" /></span>
+                ) : (
+                  <span className="grid h-[21px] w-[14px] shrink-0 place-items-center rounded-sm bg-white/10 text-[9px]">·</span>
+                )}
+                <span className="min-w-0 truncate">{storyOf(entry, playerId).line}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {/* My hand and the option tray. */}
+      <div className="absolute inset-x-0 bottom-0 flex flex-col items-center">
+        <div className="pointer-events-none flex min-h-12 w-full items-center justify-center gap-2 px-3">
+          <div className={cn("items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold", tray ? "hidden sm:flex" : "flex", myTurn ? "border-amber-200/80 bg-amber-300 text-[#1a1406]" : "border-white/10 bg-black/45 text-white/80 backdrop-blur")}>
+            <span>{myTurn ? "Your turn" : "You"}</span>
+            <span className={cn("rounded-full px-1.5", myTurn ? "bg-black/15" : "bg-white/10")}>{rawHand.length}</span>
+            {rawHand.length === 1 && <span className="rounded bg-[#ef3b33] px-1 italic text-[#ffd23f]">UNO!</span>}
+          </div>
+          {tray && (
+            <div className={cn(GLASS, "uno-rise flex min-h-11 max-w-[calc(100vw-24px)] items-center overflow-x-auto px-2 py-1.5 sm:max-w-[calc(100vw-180px)]")}>{tray}</div>
+          )}
+        </div>
+        <div
+          ref={handRef}
+          className={cn("relative w-full max-w-5xl", crowded && "flex items-end overflow-x-auto overflow-y-hidden px-4 pb-3 pt-12")}
+          style={{ height: handHeight }}
+        >
+          {handArea.w > 0 && hand.map(handCard)}
+        </div>
+      </div>
+
+      {toast && (
+        <div className="pointer-events-none absolute inset-x-0 z-40 flex justify-center px-4" style={{ bottom: handHeight + 56 }}>
+          <p className="rounded-xl border border-red-400/40 bg-red-950/80 px-4 py-2 text-center text-sm text-red-100 backdrop-blur">{toast}</p>
+        </div>
+      )}
+
+      {/* Cards in flight. */}
+      {flights.map((flight) => (
+        <FlightCard key={flight.id} flight={flight} onDone={() => setFlights((current) => current.filter((item) => item.id !== flight.id))} />
+      ))}
+
+      {finished && (
+        <Finish
+          you={winner === playerId}
+          name={nameOf(winner)}
+          isHost={isHost}
+          reduced={reduced}
+          onRestart={onRestart}
+          onLeave={onLeave}
+        />
+      )}
+    </div>
+  )
+}
+
+function TrayButton({ children, onClick, tone = "solid" }: { children: ReactNode; onClick: () => void; tone?: "solid" | "ghost" }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex h-9 shrink-0 items-center gap-1.5 rounded-xl px-3.5 text-sm font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200",
+        tone === "solid" ? "bg-amber-300 text-[#1a1406] hover:bg-amber-200" : "bg-white/10 text-white hover:bg-white/20",
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+function IconButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} aria-label={label} className="grid size-9 shrink-0 place-items-center rounded-xl text-white/70 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200">
+      <X className="size-4" />
+    </button>
+  )
+}
+
+function ColorPicker({ label, onPick, extra }: { label: string; onPick: (color: UnoColor) => void; extra?: ReactNode }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="px-1 text-sm font-semibold"><span className="sm:hidden">Color</span><span className="hidden sm:inline">{label}</span></span>
+      {UNO_COLORS.map((color) => (
+        <button
+          key={color}
+          type="button"
+          onClick={() => onPick(color)}
+          aria-label={`Play as ${COLOR_NAME[color]}`}
+          className="size-9 shrink-0 rounded-full border-2 border-white/90 shadow-lg transition hover:scale-110 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/60 sm:size-10"
+          style={{ background: `radial-gradient(circle at 35% 30%, ${COLOR_HEX[color].base}, ${COLOR_HEX[color].deep})` }}
+        />
+      ))}
+      {extra}
+    </div>
+  )
+}
+
+function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline, tag }: {
+  refCallback: (element: HTMLDivElement | null) => void
+  name: string
+  x: number
+  y: number
+  count: number
+  compact: boolean
+  isTurn: boolean
+  isHost: boolean
+  offline: boolean
+  tag: string | null
+}) {
+  const shown = Math.min(count, compact ? 7 : 10)
+  const backW = compact ? 13 : 17
+  const backH = backW * 1.5
+  const step = compact ? 5 : 6.5
+  const fanW = shown > 0 ? backW + (shown - 1) * step : backW
+  const hue = hash(name) % 360
+  return (
+    <div
+      ref={refCallback}
+      className={cn("absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1 transition-opacity", offline && "opacity-55")}
+      style={{ left: x, top: y, width: compact ? 84 : 120 }}
+    >
+      <div className="relative" style={{ width: fanW, height: backH + 4 }}>
+        {Array.from({ length: shown }, (_, index) => (
+          <span
+            key={index}
+            className="absolute bottom-0 overflow-hidden rounded-[3px] border border-[#fbf8f1] bg-[#151517] shadow-[0_2px_4px_rgb(0_0_0/.5)]"
+            style={{ left: index * step, width: backW, height: backH, transform: `rotate(${(index - (shown - 1) / 2) * 5}deg)`, transformOrigin: "50% 120%" }}
+          >
+            <span className="absolute inset-[2px] rotate-[30deg] rounded-[50%] bg-[#ef3b33]" />
+          </span>
+        ))}
+      </div>
+      <div className="relative">
+        {isTurn && <span aria-hidden="true" className="uno-turn-ring absolute -inset-[5px] rounded-full" style={{ background: `conic-gradient(${TURN_GOLD}, transparent 35%, transparent 60%, ${TURN_GOLD})` }} />}
+        <span
+          className={cn("relative grid place-items-center rounded-full border-2 font-black text-white transition-[border-color,box-shadow] duration-300", compact ? "size-10 text-sm" : "size-12 text-base")}
+          style={{
+            background: `radial-gradient(circle at 35% 30%, hsl(${hue} 45% 62%), hsl(${hue} 40% 30%) 70%)`,
+            borderColor: isTurn ? TURN_GOLD : "rgba(255,255,255,.2)",
+            boxShadow: isTurn ? `0 0 24px ${TURN_GOLD}aa` : "none",
+          }}
+        >
+          {name.slice(0, 1).toUpperCase()}
+        </span>
+        <span className="absolute -bottom-1 -right-2 min-w-[22px] rounded-full bg-[#fbf8f1] px-1.5 text-center text-[11px] font-black leading-[18px] text-[#141416] shadow">{count}</span>
+        {count === 1 && <span className="uno-bob absolute -left-5 -top-2 -rotate-12 rounded-md bg-[#ef3b33] px-1.5 text-[10px] font-black italic leading-4 text-[#ffd23f] ring-2 ring-[#ffd23f]">UNO!</span>}
+      </div>
+      <p className={cn("flex max-w-full items-center gap-1 truncate text-xs font-bold", isTurn ? "text-amber-100" : "text-white/85")}>
+        {isHost && <Crown className="size-3 shrink-0 text-amber-300" />}
+        <span className="truncate">{name}</span>
+        {offline && <WifiOff className="size-3 shrink-0" />}
+      </p>
+      {tag ? (
+        <span className="uno-tag rounded-full bg-[#ef3b33] px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-white shadow">{tag}</span>
+      ) : isTurn ? (
+        <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-[#1a1406]">Playing</span>
+      ) : null}
+    </div>
+  )
+}
+
+function FlightCard({ flight, onDone }: { flight: Flight; onDone: () => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const innerRef = useRef<HTMLDivElement>(null)
+  const done = useRef(onDone)
+  done.current = onDone
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (!element) return
+    const { from, to, delay, duration } = flight
+    const dx = from.x - to.x
+    const dy = from.y - to.y
+    const peak = Math.max(from.scale, to.scale) * 1.08
+    const animation = element.animate(
+      [
+        { transform: `translate(${dx}px, ${dy}px) rotate(${from.rot}deg) scale(${from.scale})`, opacity: 0 },
+        { opacity: 1, offset: 0.1 },
+        { transform: `translate(${dx * 0.45}px, ${dy * 0.45 - 36}px) rotate(${(from.rot + to.rot) / 2 - 8}deg) scale(${peak})`, offset: 0.5 },
+        { opacity: 1, offset: 0.85 },
+        { transform: `translate(0px, 0px) rotate(${to.rot}deg) scale(${to.scale})`, opacity: flight.fade ? 0 : 1 },
+      ],
+      { duration, delay, easing: "cubic-bezier(.3,.7,.25,1)", fill: "both" },
+    )
+    const flip = flight.flip && innerRef.current
+      ? innerRef.current.animate([{ transform: "rotateY(180deg)" }, { transform: "rotateY(180deg)", offset: 0.25 }, { transform: "rotateY(0deg)" }], { duration, delay, easing: "ease-in-out", fill: "both" })
+      : null
+    animation.onfinish = () => window.setTimeout(() => done.current(), 60)
+    return () => {
+      animation.cancel()
+      flip?.cancel()
+    }
+  }, [flight])
+  return (
+    <div
+      ref={ref}
+      aria-hidden="true"
+      className="pointer-events-none absolute z-30 [perspective:800px]"
+      style={{ left: flight.to.x - flight.w / 2, top: flight.to.y - flight.h / 2, width: flight.w, height: flight.h, opacity: 0 }}
+    >
+      {flight.flip && flight.card ? (
+        <div ref={innerRef} className="relative size-full [transform-style:preserve-3d]">
+          <div className="absolute inset-0 [backface-visibility:hidden]"><UnoCardView card={flight.card} className="size-full" /></div>
+          <div className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)]"><UnoCardView card={null} className="size-full" /></div>
+        </div>
+      ) : (
+        <UnoCardView card={flight.card} className="size-full shadow-[0_24px_40px_-10px_rgb(0_0_0/.8)]" />
+      )}
+    </div>
+  )
+}
+
+const CONFETTI = Array.from({ length: 36 }, (_, index) => ({
+  left: (index * 37) % 100,
+  color: COLOR_HEX[UNO_COLORS[index % 4]!].base,
+  delay: (index % 9) * 0.35,
+  fall: 2.6 + (index % 5) * 0.4,
+  drift: ((index % 7) - 3) * 30,
+  spin: 360 + (index % 4) * 180,
+}))
+
+function Finish({ you, name, isHost, reduced, onRestart, onLeave }: { you: boolean; name: string; isHost: boolean; reduced: boolean; onRestart: () => void; onLeave: () => void }) {
+  return (
+    <div className="uno-fade-in absolute inset-0 z-50 grid place-items-center bg-[#060b13]/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="uno-winner">
+      {!reduced && (
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+          {CONFETTI.map((piece, index) => (
+            <span
+              key={index}
+              className="uno-confetti absolute top-0 h-5 w-3.5 rounded-[2px] border border-white/70"
+              style={{ left: `${piece.left}%`, background: piece.color, "--delay": `${piece.delay}s`, "--fall": `${piece.fall}s`, "--drift": `${piece.drift}px`, "--spin": `${piece.spin}deg` } as CSSProperties}
+            />
+          ))}
+        </div>
+      )}
+      <div className="uno-pop relative w-full max-w-sm rounded-3xl border border-white/15 bg-black/60 p-8 text-center shadow-2xl backdrop-blur-md">
+        <Trophy className="mx-auto size-12 text-amber-300 drop-shadow-[0_0_18px_rgba(253,230,138,.7)]" />
+        <p className="mt-3 text-xs font-bold uppercase tracking-[0.3em] text-amber-200/80">Hand over</p>
+        <h2 id="uno-winner" className="mt-2 break-words text-4xl font-black italic tracking-tight">{you ? "You win!" : `${name} wins`}</h2>
+        <div className="mt-7 flex flex-col gap-2">
+          {isHost ? (
+            <button type="button" onClick={onRestart} className="flex h-12 items-center justify-center gap-2 rounded-xl bg-amber-300 font-bold text-[#1a1406] transition hover:bg-amber-200">
+              <RotateCcw className="size-4" />Play again
+            </button>
+          ) : (
+            <p className="text-sm text-white/60">Waiting for the host to start another hand</p>
+          )}
+          <button type="button" onClick={onLeave} className="h-11 rounded-xl text-sm font-semibold text-white/70 transition hover:bg-white/10 hover:text-white">Leave table</button>
         </div>
       </div>
     </div>
-
-    {wildCard && <div className="uno-dialog-backdrop absolute inset-0 z-30 grid place-items-center bg-[#171512]/90 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="uno-color-title"><div ref={colorDialogRef} className="uno-dialog-card w-full max-w-sm border-4 border-[#171512] bg-[#fff8e8] p-6 text-center text-[#171512] shadow-[12px_12px_0_#e84534]"><p className="text-xs font-black uppercase tracking-[0.25em] text-[#e84534]">Wild card</p><h2 id="uno-color-title" className="mt-2 text-3xl font-black uppercase">Pick a color</h2><div className="mt-5 grid grid-cols-2 gap-3">{(["red", "yellow", "green", "blue"] as const).map((color) => <button key={color} type="button" className={cn("h-20 border-4 border-[#171512] text-lg font-black uppercase shadow-[4px_4px_0_#171512] transition hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#171512]", COLOR_STYLES[color])} onClick={() => { onPlayCard(wildCard.id, color); setWildCard(null); setSelectedCardId(null) }}>{COLOR_LABELS[color]}</button>)}</div><Button className="mt-5 h-11 sm:h-9" variant="ghost" onClick={() => { setWildCard(null); setSelectedCardId(null) }}>Cancel</Button></div></div>}
-
-    {state.status === "finished" && <div className="uno-dialog-backdrop absolute inset-0 z-20 grid place-items-center bg-[#171512]/88 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="uno-winner"><div className="uno-winner-card w-full max-w-md min-w-0 border-4 border-[#171512] bg-[#fff8e8] p-8 text-center text-[#171512] shadow-[14px_14px_0_#f4c84b]"><Crown className="mx-auto size-12 text-[#e84534]" /><p className="mt-3 text-xs font-black uppercase tracking-[0.3em] text-[#e84534]">Hand winner</p><h2 id="uno-winner" className="mt-2 break-words text-4xl font-black uppercase tracking-tight sm:text-5xl">{winner?.name ?? "Game complete"}</h2>{isHost ? <Button className="mt-7 h-12 rounded-none bg-[#171512] px-7 font-black uppercase text-[#fff8e8] hover:bg-black" onClick={onRestart}><RotateCcw />Play again</Button> : <p className="mt-5 text-sm font-bold text-[#171512]/60">Waiting for the host to restart</p>}</div></div>}
-  </section>
+  )
 }

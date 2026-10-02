@@ -73,11 +73,6 @@ function UnoPage() {
     </MultiplayerSetupCard></main>
   </div>
   if (view === "lobby" && multiplayer.gameState && multiplayer.playerId) return <MultiplayerLobby title="Uno" subtitle="The first player out of cards wins" onBack={leave} players={players} hostId={multiplayer.gameState.hostId} currentPlayerId={multiplayer.playerId} playerDescription={`${connectedPlayers.length} of 8 players`} settings={<div className="rounded-2xl border bg-red-500/5 p-4 text-sm"><p className="font-bold">Classic deck</p><p className="text-muted-foreground">7-card hands, automatic Uno, no stacking.</p></div>} roomCode={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode} copiedRoomCode={copied} onCopyRoomCode={copyInvite} onStart={multiplayer.startGame} onLeave={leave} canStart={connectedPlayers.length >= 2} isHost={multiplayer.isHost} message={message} startLabel="Deal Cards" />
-  if (view === "game" && multiplayer.gameState && multiplayer.playerId) return <div className="min-h-[calc(100vh-73px)] bg-zinc-950">
-    <GameTopBar title="Uno" subtitle={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode} onBack={leave} />
-    <main className="mx-auto max-w-6xl p-2 sm:p-4"><UnoGame state={multiplayer.gameState} playerId={multiplayer.playerId} isHost={multiplayer.isHost} onPlayCard={multiplayer.playCard} onDrawCard={multiplayer.drawCard} onPass={multiplayer.pass} onRestart={multiplayer.restartGame} />
-      {message && <div className="mx-auto mt-3 max-w-xl rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-center text-sm text-red-200">{message}</div>}
-    </main>
-  </div>
+  if (view === "game" && multiplayer.gameState && multiplayer.playerId) return <UnoGame state={multiplayer.gameState} playerId={multiplayer.playerId} isHost={multiplayer.isHost} roomLabel={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode} message={message} connected={multiplayer.connectionStatus === "connected"} onPlayCard={multiplayer.playCard} onDrawCard={multiplayer.drawCard} onPass={multiplayer.pass} onRestart={multiplayer.restartGame} onLeave={leave} />
   return null
 }

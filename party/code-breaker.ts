@@ -405,7 +405,8 @@ class CodeBreakerParty implements Party.Server {
           } else if (this.allPlayersExhausted()) {
             this.finishGame()
           }
-          if (this.state.status === "finished") {
+          // finishGame() changes the status, which TypeScript cannot see here.
+          if ((this.state.status as string) === "finished") {
             await this.room.storage.deleteAlarm()
           }
           await this.saveState()

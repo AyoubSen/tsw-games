@@ -2,16 +2,20 @@ import type * as Party from "partykit/server"
 import { withRoomCleanup } from "./shared/cleanup"
 import {
   chooseBestMove,
+  diceForRoll,
   getAllySeats,
-  getCapturedTokens,
-  getLegalMoves,
+  getPlayableMoves,
   getTeammateSeat,
   getTeamOfSeat,
   hasWon,
   LUDO_BASE,
+  LUDO_CAPTURE_BONUS,
+  LUDO_HOME_BONUS,
+  LUDO_HOME_INDEX,
   LUDO_SEATS,
   LUDO_TOKENS_PER_PLAYER,
   rollLudoDice,
+  type LudoDie,
   type LudoMode,
   type LudoMove,
 } from "../src/lib/ludo"
@@ -48,9 +52,25 @@ export interface WinnerSnapshot {
   finishedAt: number
 }
 
+export interface LastMove {
+  seat: number
+  tokenIndex: number
+  from: number
+  to: number
+  captured: boolean
+  finishes: boolean
+  moveId: number
+}
+
+export interface LogEntry {
+  text: string
+  /** The roll this happened in, so clients can hold it back while the dice tumble. */
+  rollId: number
+}
+
 export interface LastRoll {
   seat: number
-  value: number
+  values: [number, number]
   rollId: number
 }
 
@@ -64,14 +84,19 @@ export interface GameState {
   maxPlayers: number
   roundId: string
   turnSeat: number
-  dice: number | null
+  /** Moves still owed this roll; null until the seat in play rolls. */
+  dice: LudoDie[] | null
   legalMoves: LudoMove[]
-  /** Survives the auto-played move so the UI can always show what was rolled. */
+  /** Survives the moves so the UI can always show what was rolled. */
   lastRoll: LastRoll | null
   rollCount: number
-  consecutiveSixes: number
+  consecutiveDoubles: number
+  /** The roll in play was doubles, so the seat rolls again once it is spent. */
+  rollAgain: boolean
   turnDeadline: number | null
   lastEvent: string | null
+  log: LogEntry[]
+  lastMove: LastMove | null
   winner: WinnerSnapshot | null
   playerTokens: Record<string, string>
 }
@@ -96,11 +121,13 @@ export interface PublicGameState {
   maxPlayers: number
   roundId: string
   turnSeat: number
-  dice: number | null
+  dice: LudoDie[] | null
   legalMoves: LudoMove[]
   lastRoll: LastRoll | null
   turnDeadline: number | null
   lastEvent: string | null
+  log: LogEntry[]
+  lastMove: LastMove | null
   winner: WinnerSnapshot | null
   serverNow: number
   mySeat: number | null
@@ -113,7 +140,7 @@ export type ClientMessage =
   | { type: "remove-player"; playerId: unknown }
   | { type: "set-mode"; mode: unknown }
   | { type: "roll"; roundId: unknown }
-  | { type: "move"; seat: unknown; tokenIndex: unknown; roundId: unknown }
+  | { type: "move"; moveId: unknown; roundId: unknown }
   | { type: "restart" }
   | { type: "leave" }
 
@@ -123,8 +150,10 @@ export type ServerMessage =
 
 const DISCONNECTED_PLAYER_TTL_MS = 30 * 60 * 1000
 const TURN_TIMEOUT_MS = 45 * 1000
-/** Long enough to read the roll, short enough not to feel like a stall. */
-const BOT_TURN_MS = 1400
+/** Clients tumble, show and hold each roll for ~2.6s - bots wait that out. */
+const BOT_TURN_MS = 3400
+/** Gap between a bot's moves within one roll, so each one can be followed. */
+const BOT_STEP_MS = 1300
 const BOT_NAMES = ["Ada", "Baxter", "Cleo", "Dodge"]
 
 function freshTokens(): number[] {
@@ -143,6 +172,13 @@ class LudoParty implements Party.Server {
     if (!stored) return
 
     this.state = stored
+    // Rooms saved under the old single-die Ludo rules.
+    if (stored.dice !== null && !Array.isArray(stored.dice)) stored.dice = null
+    if (stored.lastRoll && !Array.isArray(stored.lastRoll.values)) stored.lastRoll = null
+    stored.consecutiveDoubles ??= 0
+    stored.log ??= []
+    stored.lastMove ??= null
+    stored.rollAgain ??= false
     for (const player of Object.values(stored.players)) {
       const wasConnected = player.connected !== false
       player.connected = false
@@ -206,11 +242,13 @@ class LudoParty implements Party.Server {
       maxPlayers: this.state.maxPlayers,
       roundId: this.state.roundId,
       turnSeat: this.state.turnSeat,
-      dice: this.state.dice,
+      dice: this.state.dice?.map((die) => ({ ...die })) ?? null,
       legalMoves: this.state.legalMoves.map((move) => ({ ...move })),
       lastRoll: this.state.lastRoll,
       turnDeadline: this.state.turnDeadline,
       lastEvent: this.state.lastEvent,
+      log: this.state.log.map((entry) => ({ ...entry })),
+      lastMove: this.state.lastMove,
       winner: this.state.winner,
       serverNow: Date.now(),
       mySeat: playerId ? (this.state.players[playerId]?.seat ?? null) : null,
@@ -289,7 +327,8 @@ class LudoParty implements Party.Server {
     this.state.turnSeat = seat
     this.state.dice = null
     this.state.legalMoves = []
-    this.state.consecutiveSixes = 0
+    this.state.consecutiveDoubles = 0
+    this.state.rollAgain = false
     this.state.turnDeadline = this.turnDeadlineFor(seat)
   }
 
@@ -326,10 +365,11 @@ class LudoParty implements Party.Server {
             finishedAt: Date.now(),
           }
         : null
-    this.state.lastEvent =
+    this.logEvent(
       survivors.length > 0
         ? `${this.state.winner?.name} wins - everyone else left`
-        : "Everyone left the game"
+        : "Everyone left the game",
+    )
     return true
   }
 
@@ -347,86 +387,138 @@ class LudoParty implements Party.Server {
     this.beginTurn(this.nextSeat(this.state.turnSeat))
   }
 
-  /** Roll for the seat in play, then auto-resolve or await a token choice. */
+  /** Show an event and keep it in the short history. */
+  logEvent(text: string) {
+    if (!this.state) return
+    this.state.lastEvent = text
+    this.state.log = [
+      ...this.state.log,
+      { text, rollId: this.state.rollCount ?? 0 },
+    ].slice(-12)
+  }
+
+  computeMoves(): LudoMove[] {
+    if (!this.state?.dice) return []
+    return getPlayableMoves(
+      this.controlledSeats(this.state.turnSeat),
+      this.state.dice,
+      this.allTokens(),
+      this.allySeats(this.state.turnSeat),
+    )
+  }
+
+  /** Roll both dice for the seat in play, then wait for its moves. */
   rollForCurrentSeat() {
     if (!this.state) return
-    const player = this.seatPlayer(this.state.turnSeat)
+    const seat = this.state.turnSeat
+    const player = this.seatPlayer(seat)
     if (!player) {
       this.endTurn()
       return
     }
 
-    const dice = rollLudoDice()
+    const values = rollLudoDice()
+    const doubles = values[0] === values[1]
     const rollId = (this.state.rollCount ?? 0) + 1
     this.state.rollCount = rollId
-    this.state.lastRoll = { seat: this.state.turnSeat, value: dice, rollId }
-    this.state.dice = dice
-    this.state.turnDeadline = this.turnDeadlineFor(this.state.turnSeat)
-    const sixes = dice === 6 ? this.state.consecutiveSixes + 1 : 0
-    this.state.consecutiveSixes = sixes
+    this.state.lastRoll = { seat, values, rollId }
 
-    if (sixes >= 3) {
-      this.state.lastEvent = `${player.name} rolled three sixes and forfeits the turn`
-      this.endTurn()
-      return
+    if (doubles) {
+      this.state.consecutiveDoubles += 1
+      if (this.state.consecutiveDoubles >= 3) {
+        this.sendLeadPawnHome(seat)
+        this.endTurn()
+        return
+      }
     }
+    this.state.rollAgain = doubles
 
-    const moves = getLegalMoves(
-      this.controlledSeats(this.state.turnSeat),
-      dice,
-      this.allTokens(),
-      this.allySeats(this.state.turnSeat),
+    const allOut = this.controlledSeats(seat).every((controlled) =>
+      (this.seatPlayer(controlled)?.tokens ?? []).every(
+        (position) => position !== LUDO_BASE,
+      ),
     )
-    this.state.legalMoves = moves
+    this.state.dice = diceForRoll(values, allOut)
+    this.state.legalMoves = this.computeMoves()
+    const rolled = doubles
+      ? `${player.name} rolled double ${values[0]}s`
+      : `${player.name} rolled ${values[0]} and ${values[1]}`
 
-    if (moves.length === 0) {
-      this.state.lastEvent = `${player.name} rolled ${dice} and cannot move`
-      this.endTurn()
+    if (this.state.legalMoves.length === 0) {
+      this.logEvent(`${rolled} and cannot move`)
+      this.finishRoll()
       return
     }
-    this.state.lastEvent = `${player.name} rolled ${dice}`
-    if (moves.length === 1) {
-      this.applyMove(moves[0])
-    } else if (player.isBot) {
-      const choice = chooseBestMove(moves)
-      if (choice) this.applyMove(choice)
-    }
+    this.logEvent(rolled)
+    this.state.turnDeadline = this.turnDeadlineFor(seat)
   }
 
-  applyMove(move: LudoMove) {
+  /** Three doubles in a row: the pawn furthest along goes back to the nest. */
+  sendLeadPawnHome(seat: number) {
     if (!this.state) return
+    const player = this.seatPlayer(seat)
+    if (!player) return
+    let lead = -1
+    player.tokens.forEach((position, tokenIndex) => {
+      if (position === LUDO_HOME_INDEX || position === LUDO_BASE) return
+      if (lead === -1 || position > player.tokens[lead]) lead = tokenIndex
+    })
+    if (lead !== -1) player.tokens[lead] = LUDO_BASE
+    this.logEvent(
+      lead !== -1
+        ? `${player.name} rolled three doubles - their lead pawn goes back to the nest`
+        : `${player.name} rolled three doubles and loses the turn`,
+    )
+  }
+
+  /** The roll is spent or stuck: roll again on doubles, else pass the turn. */
+  finishRoll() {
+    if (!this.state) return
+    this.state.dice = null
+    this.state.legalMoves = []
+    if (this.state.rollAgain) {
+      this.state.rollAgain = false
+      this.state.turnDeadline = this.turnDeadlineFor(this.state.turnSeat)
+      return
+    }
+    this.endTurn()
+  }
+
+  /** `auto` moves (bots, timeouts) keep the rest of the roll on the quick beat. */
+  applyMove(move: LudoMove, auto = false) {
+    if (!this.state?.dice) return
     const turnSeat = this.state.turnSeat
     const actor = this.seatPlayer(turnSeat)
     const player = this.seatPlayer(move.seat)
     if (!actor || !player) return
 
-    const captured = getCapturedTokens(
-      move.seat,
-      move.to,
-      this.allTokens(),
-      this.allySeats(turnSeat),
-    )
-    for (const target of captured) {
-      const victim = this.seatPlayer(target.seat)
-      if (victim) victim.tokens[target.tokenIndex] = LUDO_BASE
+    const dice = this.state.dice.filter((_, index) => !move.dice.includes(index))
+    const victim = move.captured ? this.seatPlayer(move.captured.seat) : null
+    if (move.captured && victim) {
+      victim.tokens[move.captured.tokenIndex] = LUDO_BASE
+      dice.push({ value: LUDO_CAPTURE_BONUS, bonus: true })
     }
+    if (move.finishes) dice.push({ value: LUDO_HOME_BONUS, bonus: true })
     player.tokens[move.tokenIndex] = move.to
+    this.state.dice = dice
+    this.state.lastMove = {
+      seat: move.seat,
+      tokenIndex: move.tokenIndex,
+      from: move.from,
+      to: move.to,
+      captured: Boolean(victim),
+      finishes: move.finishes,
+      moveId: (this.state.lastMove?.moveId ?? 0) + 1,
+    }
 
-    const capturedNames = [
-      ...new Set(
-        captured
-          .map((target) => this.seatPlayer(target.seat)?.name)
-          .filter((name): name is string => Boolean(name)),
-      ),
-    ]
     const moved =
       move.seat === turnSeat ? actor.name : `${actor.name} (for ${player.name})`
-    if (capturedNames.length > 0) {
-      this.state.lastEvent = `${moved} knocked out ${capturedNames.join(", ")}`
+    if (victim) {
+      this.logEvent(`${moved} captured ${victim.name} - bonus ${LUDO_CAPTURE_BONUS}`)
     } else if (move.finishes) {
-      this.state.lastEvent = `${moved} brought a token home`
+      this.logEvent(`${moved} brought a pawn home - bonus ${LUDO_HOME_BONUS}`)
     } else if (move.from === LUDO_BASE) {
-      this.state.lastEvent = `${moved} released a token`
+      this.logEvent(`${moved} entered a pawn`)
     }
 
     const winner = this.findWinner()
@@ -436,19 +528,17 @@ class LudoParty implements Party.Server {
       this.state.legalMoves = []
       this.state.turnDeadline = null
       this.state.winner = winner
-      this.state.lastEvent = `${winner.name} got every token home`
+      this.logEvent(`${winner.name} got every pawn home`)
       return
     }
 
-    const extraTurn =
-      this.state.dice === 6 || captured.length > 0 || move.finishes
-    if (extraTurn) {
-      this.state.dice = null
-      this.state.legalMoves = []
-      this.state.turnDeadline = this.turnDeadlineFor(turnSeat)
+    this.state.legalMoves = this.computeMoves()
+    if (this.state.legalMoves.length === 0) {
+      this.finishRoll()
       return
     }
-    this.endTurn()
+    this.state.turnDeadline =
+      auto || actor.isBot ? Date.now() + BOT_STEP_MS : this.turnDeadlineFor(turnSeat)
   }
 
   /** In 2v2 both partners must be home; in classic one player is enough. */
@@ -516,9 +606,12 @@ class LudoParty implements Party.Server {
         legalMoves: [],
         lastRoll: null,
         rollCount: 0,
-        consecutiveSixes: 0,
+        consecutiveDoubles: 0,
+        rollAgain: false,
         turnDeadline: null,
         lastEvent: null,
+        log: [],
+        lastMove: null,
         winner: null,
         playerTokens: {},
       }
@@ -734,6 +827,8 @@ class LudoParty implements Party.Server {
           this.state.lastRoll = null
           this.state.winner = null
           this.state.lastEvent = null
+          this.state.log = []
+          this.state.lastMove = null
           this.beginTurn(0)
           await this.saveState()
           await this.refreshTurnAlarm()
@@ -750,7 +845,7 @@ class LudoParty implements Party.Server {
             return
           }
           if (this.state.dice !== null) {
-            this.send(sender, { type: "error", message: "Move a token first" })
+            this.send(sender, { type: "error", message: "Use your dice first" })
             return
           }
 
@@ -770,12 +865,10 @@ class LudoParty implements Party.Server {
             return
           }
           const move = this.state.legalMoves.find(
-            (candidate) =>
-              candidate.tokenIndex === data.tokenIndex &&
-              candidate.seat === data.seat,
+            (candidate) => candidate.id === data.moveId,
           )
           if (!move) {
-            this.send(sender, { type: "error", message: "That token cannot move" })
+            this.send(sender, { type: "error", message: "That pawn cannot move" })
             return
           }
 
@@ -804,9 +897,12 @@ class LudoParty implements Party.Server {
           this.state.dice = null
           this.state.legalMoves = []
           this.state.lastRoll = null
-          this.state.consecutiveSixes = 0
+          this.state.consecutiveDoubles = 0
+          this.state.rollAgain = false
           this.state.turnDeadline = null
           this.state.lastEvent = null
+          this.state.log = []
+          this.state.lastMove = null
           this.state.winner = null
           for (const player of Object.values(this.state.players)) {
             player.seat = null
@@ -867,9 +963,10 @@ class LudoParty implements Party.Server {
     } else if (this.state.legalMoves.length > 0) {
       this.applyMove(
         chooseBestMove(this.state.legalMoves) ?? this.state.legalMoves[0],
+        true,
       )
     } else {
-      this.endTurn()
+      this.finishRoll()
     }
     await this.saveState()
     await this.refreshTurnAlarm()

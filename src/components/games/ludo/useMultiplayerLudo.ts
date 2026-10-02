@@ -175,8 +175,8 @@ export function useMultiplayerLudo() {
     joinGame,
     startGame: () => isHost && sendNow({ type: "start" }),
     rollDice: (roundId: string) => sendNow({ type: "roll", roundId }),
-    moveToken: (seat: number, tokenIndex: number, roundId: string) =>
-      sendNow({ type: "move", seat, tokenIndex, roundId }),
+    moveToken: (moveId: string, roundId: string) =>
+      sendNow({ type: "move", moveId, roundId }),
     addBot: () => isHost && sendNow({ type: "add-bot" }),
     removePlayer: (playerId: string) =>
       isHost && sendNow({ type: "remove-player", playerId }),

@@ -1,11 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router"
 import {
-  Dice1,
-  Dice2,
-  Dice3,
-  Dice4,
-  Dice5,
-  Dice6,
+  ArrowLeft,
   Bot,
   Dices,
   MousePointerClick,
@@ -45,8 +40,10 @@ import {
   countTokensHome,
   getTeamOfSeat,
   getTokenCell,
+  LUDO_BASE,
   LUDO_COLORS,
   LUDO_TOKENS_PER_PLAYER,
+  type LudoMove,
 } from "@/lib/ludo"
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
 
@@ -55,7 +52,9 @@ export const Route = createFileRoute("/games/ludo")({
   component: LudoPage,
 })
 
-const DICE_ICONS = [Dice1, Dice2, Dice3, Dice4, Dice5, Dice6]
+/** How long the die tumbles, then how long the result stays up before play moves on. */
+const ROLL_TUMBLE_MS = 1100
+const ROLL_HOLD_MS = 1500
 
 type GameView = "select" | "multiplayer-lobby" | "multiplayer-game"
 
@@ -70,8 +69,14 @@ function LudoPage() {
   const [message, setMessage] = useState<string | null>(null)
   const [copiedRoomCode, setCopiedRoomCode] = useState(false)
   const [isRolling, setIsRolling] = useState(false)
-  const [tumblingFace, setTumblingFace] = useState(1)
-  const [frozenPositions, setFrozenPositions] = useState<number[][] | null>(null)
+  const [tumblingFaces, setTumblingFaces] = useState<[number, number]>([1, 1])
+  /** Pawn picked when it has more than one move, to narrow the targets. */
+  const [selectedPawn, setSelectedPawn] = useState<string | null>(null)
+  /** Board and turn as they were before the latest roll, held while it plays out. */
+  const [frozen, setFrozen] = useState<{
+    positions: number[][]
+    turnSeat: number
+  } | null>(null)
 
   const multiplayer = useMultiplayerLudo()
   const gameNight = useGameNight()
@@ -137,9 +142,12 @@ function LudoPage() {
   const rollId = multiplayer.gameState?.lastRoll?.rollId
   const seenRollId = useRef<number | null>(null)
   const previousPositions = useRef<number[][]>([])
+  const previousTurnSeat = useRef(0)
   useEffect(() => {
     if (!rollId) {
       seenRollId.current = null
+      setIsRolling(false)
+      setFrozen(null)
       return
     }
     // Joining or reconnecting mid-game arrives with a roll already on the
@@ -151,21 +159,34 @@ function LudoPage() {
     if (seenRollId.current === rollId) return
     seenRollId.current = rollId
 
-    // A roll that had a single legal move arrives already played, so hold the
-    // board on the pre-roll positions until the die settles.
-    setFrozenPositions(previousPositions.current)
+    // A roll with no moves (or a third double) has already passed the turn -
+    // hold the board and turn on the pre-roll state until the dice have
+    // settled and been read.
+    setFrozen({
+      positions: previousPositions.current,
+      turnSeat: previousTurnSeat.current,
+    })
     setIsRolling(true)
     const tumble = window.setInterval(
-      () => setTumblingFace(1 + Math.floor(Math.random() * 6)),
+      () =>
+        setTumblingFaces([
+          1 + Math.floor(Math.random() * 6),
+          1 + Math.floor(Math.random() * 6),
+        ]),
       150,
     )
     const settle = window.setTimeout(() => {
+      window.clearInterval(tumble)
       setIsRolling(false)
-      setFrozenPositions(null)
-    }, 1200)
+    }, ROLL_TUMBLE_MS)
+    const release = window.setTimeout(
+      () => setFrozen(null),
+      ROLL_TUMBLE_MS + ROLL_HOLD_MS,
+    )
     return () => {
       window.clearInterval(tumble)
       window.clearTimeout(settle)
+      window.clearTimeout(release)
     }
   }, [rollId])
 
@@ -174,6 +195,10 @@ function LudoPage() {
   useEffect(() => {
     previousPositions.current = seatPositions
   }, [seatPositions])
+  const liveTurnSeat = multiplayer.gameState?.turnSeat ?? 0
+  useEffect(() => {
+    previousTurnSeat.current = liveTurnSeat
+  }, [liveTurnSeat])
 
   const isPlaying = multiplayer.gameState?.status === "playing"
   useEffect(() => {
@@ -258,16 +283,16 @@ function LudoPage() {
   ) {
     return (
       <div className="min-h-[calc(100vh-73px)] bg-background">
-        <GameTopBar title="Ludo" subtitle="Race four tokens home" />
+        <GameTopBar title="Parcheesi" subtitle="Race four pawns home" />
         <main className="relative mx-auto grid max-w-5xl gap-6 overflow-hidden px-4 py-8 md:grid-cols-2">
           <div className="pointer-events-none absolute right-10 top-10 -z-10 h-72 w-72 rounded-full bg-emerald-500/10 blur-3xl" />
           <MultiplayerSetupCard
-            title="Ludo Table"
+            title="Parcheesi Table"
             description="Play solo against bots, free-for-all, or 2v2 teams."
             icon={<Users className="h-5 w-5 text-primary" />}
             playerName={playerName}
             roomCode={joinRoomCode}
-            createLabel="Create Ludo Room"
+            createLabel="Create Parcheesi Room"
             onPlayerNameChange={setPlayerName}
             onRoomCodeChange={setJoinRoomCode}
             onJoin={joinMultiplayer}
@@ -280,8 +305,8 @@ function LudoPage() {
                 Classic rules
               </p>
               <p className="mt-2">
-                Sixes, captures and tokens reaching home all earn another roll.
-                Star squares are safe. Add bots in the lobby to fill empty
+                Two dice, blockades, and big bonus moves for captures and
+                pawns reaching home. Add bots in the lobby to fill empty
                 seats.
               </p>
             </div>
@@ -292,23 +317,30 @@ function LudoPage() {
               <Dices className="h-7 w-7 text-primary" />
               <CardTitle>How it plays</CardTitle>
               <CardDescription>
-                Also known as Parcheesi or Pachisi.
+                US rules - the American take on India's Pachisi.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-muted-foreground">
-              <p>Roll a six to move a token out of your yard.</p>
               <p>
-                Land on an opponent outside a star square and they go back to
-                their yard.
+                Roll two dice and move one pawn by each, or one pawn by both.
+                A 5 - on one die or adding up - brings a pawn out of the nest.
               </p>
               <p>
-                Reach the centre with an exact roll. First player to bring all
-                four tokens home wins.
+                Land on an opponent outside a safe square to send them home and
+                move any pawn 20 bonus squares. Getting a pawn home earns 10.
               </p>
-              <p>Three sixes in a row loses the turn.</p>
               <p>
-                In 2v2, partners sit opposite, never knock each other out, and
-                take over their partner's tokens once their own are home.
+                Two of your pawns on one square form a blockade nobody can
+                pass.
+              </p>
+              <p>
+                Doubles roll again, and once all your pawns are out you also use
+                the opposite faces. A third double in a row sends your lead pawn
+                back to the nest.
+              </p>
+              <p>
+                In 2v2, partners sit opposite, never capture each other, and
+                take over their partner's pawns once their own are home.
               </p>
             </CardContent>
           </Card>
@@ -332,7 +364,7 @@ function LudoPage() {
       multiplayer.isHost && lobbyPlayers.length < game.maxPlayers
     return (
       <MultiplayerLobby
-        title="Ludo"
+        title="Parcheesi"
         subtitle="Four colours, one race home"
         onBack={leaveMultiplayer}
         players={lobbyPlayers}
@@ -364,7 +396,7 @@ function LudoPage() {
               </div>
               <p className="mt-2 text-muted-foreground">
                 {isTeams
-                  ? "Red + Yellow against Green + Blue. Partners never knock each other out, and once your tokens are all home you play your partner's. Needs exactly 4 players."
+                  ? "Red + Yellow against Green + Blue. Partners never capture each other, and once your pawns are all home you play your partner's. Needs exactly 4 players."
                   : "Colours are handed out in join order. Turns time out after 45 seconds."}
               </p>
             </div>
@@ -427,7 +459,7 @@ function LudoPage() {
         }
         isHost={multiplayer.isHost}
         message={message}
-        startLabel={isTeams ? "Start 2v2" : "Start Ludo"}
+        startLabel={isTeams ? "Start 2v2" : "Start Parcheesi"}
       />
     )
   }
@@ -449,284 +481,550 @@ function LudoPage() {
     const seatPlayers = game.seatOrder.map((id) =>
       id ? (game.players[id] ?? null) : null,
     )
-    const currentSeatPlayer = seatPlayers[game.turnSeat]
     const serverNow =
       game.serverNow + Math.max(0, now - multiplayer.stateReceivedAt)
     const secondsLeft = game.turnDeadline
       ? Math.max(0, Math.ceil((game.turnDeadline - serverNow) / 1000))
       : null
 
-    const rolledValue = game.lastRoll?.value ?? null
-    const shownFace = isRolling ? tumblingFace : rolledValue
-    const DiceIcon = shownFace ? DICE_ICONS[shownFace - 1] : Dices
-    const canRoll = isMyTurn && game.dice === null && !isRolling
-    const mustChooseToken =
-      isMyTurn && !isRolling && game.dice !== null && game.legalMoves.length > 0
+    // The roll effect only freezes the board after this render commits, so on
+    // the render a new roll arrives, hold the pre-roll view here instead -
+    // otherwise pawns start moving (then snap back) before the die has rolled.
+    const rollJustArrived =
+      rollId != null &&
+      seenRollId.current !== null &&
+      seenRollId.current !== rollId
+    const heldView = rollJustArrived
+      ? {
+          positions: previousPositions.current,
+          turnSeat: previousTurnSeat.current,
+        }
+      : frozen
+    const rolling = isRolling || rollJustArrived
+    const rolledValues = game.lastRoll?.values ?? null
+    const shownFaces = rolling ? tumblingFaces : rolledValues
+    const isHolding = heldView !== null
+    // Shown turn lags the server while a roll plays out on screen.
+    const turnSeat = heldView?.turnSeat ?? game.turnSeat
+    const canRoll = isMyTurn && game.dice === null && !isHolding
+    const mustChoose =
+      isMyTurn && !rolling && game.dice !== null && game.legalMoves.length > 0
+    const choosableMoves = mustChoose ? game.legalMoves : []
+    const pawnMoves = (seat: number, tokenIndex: number) =>
+      choosableMoves.filter(
+        (move) => move.seat === seat && move.tokenIndex === tokenIndex,
+      )
+    // Landing spots only show once a pawn is picked.
+    const activePawn =
+      selectedPawn &&
+      choosableMoves.some(
+        (move) => `${move.seat}-${move.tokenIndex}` === selectedPawn,
+      )
+        ? selectedPawn
+        : null
+    const pickedMoves = activePawn
+      ? choosableMoves.filter(
+          (move) => `${move.seat}-${move.tokenIndex}` === activePawn,
+        )
+      : []
 
-    const shownPositions = frozenPositions ?? seatPositions
+    const shownPositions = heldView?.positions ?? seatPositions
     const tokens: LudoTokenView[] = seatPlayers.flatMap((player, seat) =>
       player
         ? player.tokens.map((position, tokenIndex) => ({
             seat,
             tokenIndex,
             position: shownPositions[seat]?.[tokenIndex] ?? position,
-            movable:
-              mustChooseToken && movableTokens.has(`${seat}-${tokenIndex}`),
+            movable: mustChoose && movableTokens.has(`${seat}-${tokenIndex}`),
           }))
         : [],
     )
     const orderedSeats = seatPlayers
       .map((player, seat) => ({ player, seat }))
+      .filter(
+        (entry): entry is { player: NonNullable<typeof entry.player>; seat: number } =>
+          entry.player !== null,
+      )
       .sort((left, right) =>
         game.mode === "teams"
           ? getTeamOfSeat(left.seat) - getTeamOfSeat(right.seat) ||
             left.seat - right.seat
           : left.seat - right.seat,
       )
-    const targets: LudoMoveTarget[] = mustChooseToken
-      ? game.legalMoves.map((move) => {
-          const [row, col] = getTokenCell(move.seat, move.tokenIndex, move.to)
-          return { seat: move.seat, tokenIndex: move.tokenIndex, row, col }
-        })
-      : []
+    const moveLabel = (move: LudoMove) =>
+      move.from === LUDO_BASE
+        ? "Out"
+        : `${move.finishes ? "Home " : ""}+${move.to - move.from}`
+    const targets: LudoMoveTarget[] = pickedMoves.map((move) => {
+      const [row, col] = getTokenCell(move.seat, move.tokenIndex, move.to)
+      return {
+        id: move.id,
+        seat: move.seat,
+        tokenIndex: move.tokenIndex,
+        row,
+        col,
+        label: moveLabel(move),
+      }
+    })
+
+    const turnPlayer = seatPlayers[turnSeat]
+    const turnColor = isFinished ? "#f59e0b" : LUDO_COLORS[turnSeat].hex
+    const mySeatColor = mySeat !== null ? LUDO_COLORS[mySeat].hex : undefined
+    const rollerSeat = game.lastRoll?.seat ?? null
+    const rollerName =
+      rollerSeat === mySeat
+        ? "You"
+        : rollerSeat !== null
+          ? (seatPlayers[rollerSeat]?.name ?? "Someone")
+          : "Someone"
+    const rollText = rolledValues
+      ? rolledValues[0] === rolledValues[1]
+        ? `double ${rolledValues[0]}s`
+        : `${rolledValues[0]} and ${rolledValues[1]}`
+      : ""
+    const statusText = isFinished
+      ? "Game over"
+      : rolling
+        ? rollerSeat === mySeat
+          ? "Rolling..."
+          : `${rollerName} is rolling...`
+        : mustChoose
+          ? activePawn
+            ? "Pick where that pawn goes"
+            : "Tap a glowing pawn to see where it can go"
+          : isHolding && rolledValues
+            ? `${rollerName} rolled ${rollText}`
+            : canRoll
+              ? rolledValues &&
+                game.lastRoll?.seat === mySeat &&
+                rolledValues[0] === rolledValues[1]
+                ? "Doubles - roll again!"
+                : "Your turn - roll the dice"
+              : `${turnPlayer?.name ?? "A player"}'s turn`
+    const showTimer = secondsLeft !== null && !isFinished && !isHolding
+    // Newest first; hold back whatever the current roll caused until it has been shown.
+    const log = game.log
+      .filter((entry) => !isHolding || entry.rollId !== game.lastRoll?.rollId)
+      .slice(-8)
+      .reverse()
+    const glass =
+      "pointer-events-auto rounded-2xl border border-white/10 bg-black/40 shadow-2xl backdrop-blur-md"
+    const sendMove = (moveId: string) => {
+      if (multiplayer.connectionStatus !== "connected") return
+      multiplayer.moveToken(moveId, game.roundId)
+      setSelectedPawn(null)
+    }
+    const selectPawn = (seat: number, tokenIndex: number) => {
+      if (pawnMoves(seat, tokenIndex).length === 0) return
+      const key = `${seat}-${tokenIndex}`
+      setSelectedPawn((current) => (current === key ? null : key))
+    }
 
     return (
-      <div className="min-h-[calc(100vh-73px)] bg-background">
-        <GameTopBar
-          title="Ludo"
-          subtitle={
-            isFinished
-              ? "Game over"
-              : isMyTurn
-                ? game.dice === null
-                  ? "Your turn - roll the dice"
-                  : "Pick a token to move"
-                : `${currentSeatPlayer?.name ?? "A player"} is playing`
-          }
-          onBack={leaveMultiplayer}
-          rightAction={
-            secondsLeft !== null && !isFinished ? (
-              <span className="font-mono text-xs font-bold">{secondsLeft}s</span>
-            ) : undefined
-          }
+      <div
+        className="relative h-[calc(100dvh-73px)] min-h-[560px] w-full overflow-hidden text-white"
+        style={{
+          background:
+            "radial-gradient(120% 100% at 50% 42%, #2f6b57 0%, #174034 48%, #07170f 100%)",
+        }}
+      >
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 opacity-40 mix-blend-overlay"
+          style={{
+            backgroundImage:
+              "repeating-radial-gradient(circle at 30% 20%, rgba(255,255,255,0.05) 0 1px, transparent 1px 3px)",
+          }}
         />
-        <main className="mx-auto grid max-w-6xl gap-5 px-4 py-6 lg:grid-cols-[1fr_340px]">
-          <section className="space-y-4">
-            {isFinished && (
-              <Card className="text-center">
-                <CardHeader>
-                  <Trophy className="mx-auto h-14 w-14 text-amber-500" />
-                  <CardTitle className="text-3xl">
-                    {game.winner?.ids.includes(multiplayer.playerId)
-                      ? game.mode === "teams"
-                        ? "Your team won!"
-                        : "You won!"
-                      : `${game.winner?.name ?? "A player"} wins!`}
-                  </CardTitle>
-                  <CardDescription>
-                    {game.mode === "teams"
-                      ? "Both partners brought every token home."
-                      : "All four tokens made it home."}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {multiplayer.isHost ? (
-                    <Button onClick={multiplayer.restartGame}>
-                      <RotateCcw className="mr-2 h-4 w-4" />
-                      Play Again
-                    </Button>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      Waiting for the host to start another game.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-            {/* Reserve room for the prompt without clipping wrapped mobile text. */}
-            <div className="min-h-16">
-              <div
-                className={`flex min-h-16 items-center gap-3 rounded-2xl border-2 px-4 py-2 transition-opacity duration-300 ${
-                  mustChooseToken
-                    ? "border-amber-400 bg-amber-50 text-amber-900 opacity-100 dark:bg-amber-950/60 dark:text-amber-100"
-                    : "border-transparent opacity-0"
-                }`}
-              >
-                <MousePointerClick className="h-6 w-6 shrink-0" />
-                <p className="text-sm font-semibold">
-                  You rolled {game.dice ?? rolledValue}. Tap a pulsing token, or
-                  the dashed circle where it would land.
-                </p>
-              </div>
-            </div>
-            {canRoll && (
-              <Button
-                className="h-11 w-full lg:hidden"
-                disabled={multiplayer.connectionStatus !== "connected"}
-                onClick={() => multiplayer.rollDice(game.roundId)}
-              >
-                <Dices className="mr-2 h-4 w-4" />
-                Roll Dice
-              </Button>
-            )}
-            <LudoBoard
-              tokens={tokens}
-              targets={targets}
-              activeSeats={seatPlayers
-                .map((player, seat) => (player ? seat : -1))
-                .filter((seat) => seat !== -1)}
-              onSelectToken={(seat, tokenIndex) => {
-                if (multiplayer.connectionStatus === "connected") multiplayer.moveToken(seat, tokenIndex, game.roundId)
-              }}
-            />
-            {mustChooseToken && (
-              <div className="grid grid-cols-2 gap-2 lg:hidden">
-                {game.legalMoves.map((move) => (
-                  <Button
-                    key={`${move.seat}-${move.tokenIndex}`}
-                    className="h-11 min-w-0"
-                    variant="outline"
-                    disabled={multiplayer.connectionStatus !== "connected"}
-                    onClick={() =>
-                      multiplayer.moveToken(
-                        move.seat,
-                        move.tokenIndex,
-                        game.roundId,
-                      )
-                    }
-                  >
-                    <span className="truncate">
-                      {seatPlayers[move.seat]?.name ??
-                        LUDO_COLORS[move.seat].label}
-                      : token {move.tokenIndex + 1}
-                    </span>
-                  </Button>
-                ))}
-              </div>
-            )}
-          </section>
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 transition-[background] duration-700"
+          style={{
+            background: `radial-gradient(55% 55% at 50% 50%, ${turnColor}2e, transparent 75%)`,
+          }}
+        />
 
-          <aside className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  {isFinished
-                    ? "Final board"
-                    : isMyTurn
-                      ? "Your move"
-                      : `${currentSeatPlayer?.name ?? "Waiting"}'s turn`}
-                </CardTitle>
-                <CardDescription>
-                  {game.lastEvent ?? "Roll a six to release a token."}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div
-                  className={`flex items-center gap-4 rounded-2xl p-4 transition-colors ${
-                    mustChooseToken
-                      ? "bg-amber-100 dark:bg-amber-950/60"
-                      : "bg-accent/40"
-                  }`}
-                >
-                  <div
-                    className={`shrink-0 ${isRolling ? "animate-spin" : ""}`}
-                    style={isRolling ? { animationDuration: "900ms" } : undefined}
-                  >
-                    <DiceIcon className="h-14 w-14 text-primary" />
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    {isRolling
-                      ? "Rolling..."
-                      : rolledValue === null
-                        ? "No roll yet"
-                        : mustChooseToken
-                          ? `Rolled ${rolledValue} - choose a token`
-                          : `${
-                              game.lastRoll?.seat === mySeat ? "You" : "Last"
-                            } rolled ${rolledValue}`}
-                  </div>
+        {/* Board - leaves room for the panels on small screens, fills the table on large ones. */}
+        <div className="absolute inset-x-0 top-[124px] bottom-[176px] lg:inset-x-0 lg:top-14 lg:bottom-0">
+          <LudoBoard
+            tokens={tokens}
+            targets={targets}
+            activeSeats={seatPlayers
+              .map((player, seat) => (player ? seat : -1))
+              .filter((seat) => seat !== -1)}
+            viewSeat={mySeat}
+            turnSeat={isFinished ? null : turnSeat}
+            dice={{ values: shownFaces, rolling }}
+            selectedPawn={activePawn}
+            lastMove={
+              game.lastMove
+                ? { ...game.lastMove, key: String(game.lastMove.moveId) }
+                : null
+            }
+            onSelectPawn={selectPawn}
+            onSelectTarget={sendMove}
+          />
+        </div>
+
+        {/* Top bar */}
+        <div className="pointer-events-none absolute inset-x-3 top-3 flex items-center gap-2 lg:inset-x-6 lg:top-5">
+          <button
+            type="button"
+            onClick={leaveMultiplayer}
+            className={`${glass} flex h-11 shrink-0 items-center gap-1.5 px-3 text-sm font-semibold transition hover:bg-black/60`}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span className="hidden sm:inline">Leave</span>
+          </button>
+          <div className="hidden pl-2 lg:block">
+            <p className="text-lg font-black leading-none tracking-tight">Parcheesi</p>
+            <p className="text-xs text-white/60">
+              {game.mode === "teams" ? "Teams 2v2" : "Free for all"}
+            </p>
+          </div>
+          <div
+            className={`${glass} flex h-11 min-w-0 flex-1 items-center gap-3 px-4 transition-colors duration-500 lg:absolute lg:left-1/2 lg:min-w-[340px] lg:max-w-[560px] lg:flex-none lg:-translate-x-1/2 ${
+              mustChoose ? "border-amber-300/70 bg-amber-500/25" : ""
+            }`}
+          >
+            {mustChoose ? (
+              <MousePointerClick className="h-4 w-4 shrink-0 text-amber-200" />
+            ) : (
+              <span
+                aria-hidden="true"
+                className={`h-3 w-3 shrink-0 rounded-full ${isFinished ? "" : "animate-pulse"}`}
+                style={{ background: turnColor, boxShadow: `0 0 14px ${turnColor}` }}
+              />
+            )}
+            <p className="min-w-0 flex-1 truncate text-sm font-semibold">
+              {statusText}
+            </p>
+            {showTimer && (
+              <span className="shrink-0 rounded-full bg-white/15 px-2 py-0.5 font-mono text-xs font-bold tabular-nums">
+                {secondsLeft}s
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Players - chips on small screens */}
+        <div className="pointer-events-none absolute inset-x-3 top-[64px] flex gap-2 overflow-x-auto pb-1 lg:hidden">
+          {orderedSeats.map(({ player, seat }) => {
+            const color = LUDO_COLORS[seat].hex
+            const isTurn = seat === turnSeat && !isFinished
+            const home = countTokensHome(player.tokens)
+            return (
+              <div
+                key={player.id}
+                className={`${glass} flex h-12 shrink-0 items-center gap-2 px-2.5 transition-all ${
+                  player.connected === false ? "opacity-60" : ""
+                }`}
+                style={isTurn ? { borderColor: color, boxShadow: `0 0 18px ${color}66` } : undefined}
+              >
+                <PlayerAvatar name={player.name} isBot={player.isBot} color={color} small />
+                <div className="min-w-0">
+                  <p className="max-w-[88px] truncate text-xs font-semibold">
+                    {player.id === multiplayer.playerId ? "You" : player.name}
+                  </p>
+                  <HomePips home={home} color={color} />
                 </div>
-                <Button
-                  className="hidden w-full lg:inline-flex"
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Players - side panel on large screens */}
+        <div className={`${glass} absolute left-6 top-24 hidden w-72 p-3 lg:block`}>
+          <p className="px-1 pb-2 text-xs font-semibold uppercase tracking-wider text-white/50">
+            {game.mode === "teams" ? "Teams" : "Players"}
+          </p>
+          <div className="space-y-2">
+            {orderedSeats.map(({ player, seat }) => {
+              const color = LUDO_COLORS[seat].hex
+              const isTurn = seat === turnSeat && !isFinished
+              const home = countTokensHome(player.tokens)
+              return (
+                <div
+                  key={player.id}
+                  className={`relative flex items-center gap-3 overflow-hidden rounded-xl border py-2.5 pl-3.5 pr-3 transition-all duration-300 ${
+                    isTurn ? "" : "border-transparent bg-white/5"
+                  } ${player.connected === false ? "opacity-60" : ""}`}
+                  style={
+                    isTurn
+                      ? {
+                          borderColor: color,
+                          background: `${color}26`,
+                          boxShadow: `0 0 22px ${color}40`,
+                        }
+                      : undefined
+                  }
+                >
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-y-0 left-0 w-1"
+                    style={{ background: color }}
+                  />
+                  <PlayerAvatar name={player.name} isBot={player.isBot} color={color} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">
+                      {player.name}
+                      {player.id === multiplayer.playerId ? " (you)" : ""}
+                    </p>
+                    <p className="text-[11px] text-white/55">
+                      {player.connected === false && !player.isBot
+                        ? "Reconnecting..."
+                        : game.mode === "teams"
+                          ? `${LUDO_COLORS[seat].label} · Team ${getTeamOfSeat(seat) + 1}`
+                          : LUDO_COLORS[seat].label}
+                    </p>
+                  </div>
+                  <HomePips home={home} color={color} />
+                </div>
+              )
+            })}
+          </div>
+          {log.length > 0 && (
+            <>
+              <p className="px-1 pb-2 pt-4 text-xs font-semibold uppercase tracking-wider text-white/50">
+                Recent
+              </p>
+              <ol className="max-h-56 space-y-1.5 overflow-y-auto px-1">
+                {log.map((entry, index) => (
+                  <li
+                    // biome-ignore lint/suspicious/noArrayIndexKey: log is append-only and capped
+                    key={`${entry.rollId}-${index}`}
+                    className={`text-xs leading-snug ${
+                      index === 0 ? "text-white" : "text-white/55"
+                    }`}
+                  >
+                    {entry.text}
+                  </li>
+                ))}
+              </ol>
+            </>
+          )}
+        </div>
+
+        {/* Dice tray */}
+        <div
+          className={`${glass} absolute inset-x-3 bottom-3 overflow-hidden lg:inset-x-auto lg:bottom-6 lg:right-6 lg:w-80`}
+        >
+          <div
+            className="h-1 w-full transition-colors duration-500"
+            style={{ background: turnColor }}
+          />
+          <div className="flex items-center gap-3 p-3 lg:p-4">
+            <DieFace value={shownFaces?.[0] ?? null} rolling={rolling} />
+            <DieFace value={shownFaces?.[1] ?? null} rolling={rolling} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold">
+                {rolling
+                  ? "Rolling..."
+                  : rolledValues === null
+                    ? "No roll yet"
+                    : `${rollerName} rolled ${rollText}`}
+              </p>
+              <p className="line-clamp-2 text-xs text-white/60">
+                {isHolding
+                  ? " "
+                  : (game.lastEvent ?? "Roll a 5 to bring a pawn out.")}
+              </p>
+            </div>
+          </div>
+          {!isFinished && (
+            <div className="space-y-2 px-3 pb-3 lg:px-4 lg:pb-4">
+              {game.dice && game.dice.length > 0 && !rolling && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-white/50">
+                    To use
+                  </span>
+                  {game.dice.map((die, index) => (
+                    <span
+                      // biome-ignore lint/suspicious/noArrayIndexKey: dice keep their slot order
+                      key={index}
+                      className={`rounded-lg px-2 py-0.5 text-xs font-black tabular-nums ${
+                        die.bonus
+                          ? "bg-amber-400 text-amber-950"
+                          : "bg-white text-slate-900"
+                      }`}
+                    >
+                      {die.bonus ? `+${die.value}` : die.value}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {mustChoose ? (
+                <div className="grid max-h-28 grid-cols-2 gap-2 overflow-y-auto">
+                  {(activePawn ? pickedMoves : choosableMoves).map((move) => (
+                    <button
+                      key={move.id}
+                      type="button"
+                      disabled={multiplayer.connectionStatus !== "connected"}
+                      onClick={() => sendMove(move.id)}
+                      className="flex h-10 min-w-0 items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 text-xs font-semibold transition hover:bg-white/20 disabled:opacity-50"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="h-3 w-3 shrink-0 rounded-full"
+                        style={{ background: LUDO_COLORS[move.seat].hex }}
+                      />
+                      <span className="truncate">
+                        {move.seat === mySeat
+                          ? "Pawn"
+                          : `${seatPlayers[move.seat]?.name ?? LUDO_COLORS[move.seat].label}`}{" "}
+                        {move.tokenIndex + 1} · {moveLabel(move)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <button
+                  type="button"
                   disabled={
                     !canRoll || multiplayer.connectionStatus !== "connected"
                   }
                   onClick={() => multiplayer.rollDice(game.roundId)}
+                  className="flex h-12 w-full items-center justify-center gap-2 rounded-xl text-base font-black tracking-wide text-white shadow-lg transition enabled:hover:scale-[1.02] enabled:active:scale-95 disabled:cursor-default disabled:bg-white/10 disabled:text-white/50 disabled:shadow-none"
+                  style={
+                    canRoll
+                      ? {
+                          background: `linear-gradient(135deg, ${mySeatColor}, ${mySeatColor}cc)`,
+                          boxShadow: `0 8px 24px ${mySeatColor}66`,
+                        }
+                      : undefined
+                  }
                 >
-                  <Dices className="mr-2 h-4 w-4" />
-                  {canRoll ? "Roll Dice" : "Waiting..."}
-                </Button>
-              </CardContent>
-            </Card>
+                  <Dices className="h-5 w-5" />
+                  {canRoll
+                    ? "Roll Dice"
+                    : `Waiting for ${turnPlayer?.name ?? "players"}...`}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  {game.mode === "teams" ? "Teams" : "Players"}
-                </CardTitle>
-                <CardDescription>
-                  {game.mode === "teams"
-                    ? "Partners sit opposite. Eight tokens home wins it."
-                    : "Tokens home out of four."}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {orderedSeats.map(({ player, seat }) =>
-                  player ? (
-                    <div
-                      key={player.id}
-                      className={`flex items-center justify-between rounded-2xl px-3 py-3 ${
-                        seat === game.turnSeat && !isFinished
-                          ? "bg-primary/10"
-                          : "bg-accent/40"
-                      } ${player.connected === false ? "opacity-60" : ""}`}
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span
-                          aria-hidden="true"
-                          className="h-3 w-3 shrink-0 rounded-full"
-                          style={{ background: LUDO_COLORS[seat].hex }}
-                        />
-                        <div className="min-w-0">
-                          <p className="flex items-center gap-1 truncate text-sm font-medium">
-                            {player.isBot && (
-                              <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                            )}
-                            {player.name}
-                            {player.id === multiplayer.playerId ? " (you)" : ""}
-                          </p>
-                          <p className="text-[11px] text-muted-foreground">
-                            {player.connected === false && !player.isBot
-                              ? "Reconnecting..."
-                              : game.mode === "teams"
-                                ? `${LUDO_COLORS[seat].label} · Team ${
-                                    getTeamOfSeat(seat) + 1
-                                  }`
-                                : LUDO_COLORS[seat].label}
-                          </p>
-                        </div>
-                      </div>
-                      <span className="text-lg font-black">
-                        {countTokensHome(player.tokens)}/
-                        {LUDO_TOKENS_PER_PLAYER}
-                      </span>
-                    </div>
-                  ) : null,
+        {isFinished && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 p-4 backdrop-blur-[2px]">
+            <div className={`${glass} w-full max-w-sm p-6 text-center`}>
+              <Trophy className="mx-auto h-16 w-16 text-amber-400 drop-shadow-[0_0_18px_rgba(251,191,36,0.6)]" />
+              <h2 className="mt-3 text-3xl font-black tracking-tight">
+                {game.winner?.ids.includes(multiplayer.playerId)
+                  ? game.mode === "teams"
+                    ? "Your team won!"
+                    : "You won!"
+                  : `${game.winner?.name ?? "A player"} wins!`}
+              </h2>
+              <p className="mt-1 text-sm text-white/65">
+                {game.mode === "teams"
+                  ? "Both partners brought every pawn home."
+                  : "All four pawns made it home."}
+              </p>
+              <div className="mt-5 flex justify-center gap-2">
+                {multiplayer.isHost ? (
+                  <Button onClick={multiplayer.restartGame}>
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    Play Again
+                  </Button>
+                ) : (
+                  <p className="text-sm text-white/65">
+                    Waiting for the host to start another game.
+                  </p>
                 )}
                 <Button
-                  className="mt-3 w-full"
                   variant="outline"
+                  className="border-white/20 bg-transparent text-white hover:bg-white/10 hover:text-white"
                   onClick={leaveMultiplayer}
                 >
-                  Leave Room
+                  Leave
                 </Button>
-              </CardContent>
-            </Card>
-          </aside>
-        </main>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
 
   return null
+}
+
+const TOKEN_SLOTS = Array.from({ length: LUDO_TOKENS_PER_PLAYER }, (_, slot) => slot)
+
+const PIP_CELLS = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+const PIP_LAYOUT: Record<number, number[]> = {
+  1: [4],
+  2: [0, 8],
+  3: [0, 4, 8],
+  4: [0, 2, 6, 8],
+  5: [0, 2, 4, 6, 8],
+  6: [0, 2, 3, 5, 6, 8],
+}
+
+function DieFace({ value, rolling }: { value: number | null; rolling: boolean }) {
+  const pips = value ? PIP_LAYOUT[value] : []
+  return (
+    <div
+      className={`grid h-14 w-14 shrink-0 grid-cols-3 grid-rows-3 rounded-xl border border-black/10 bg-gradient-to-br from-white to-stone-200 p-2 shadow-[inset_0_-3px_0_rgba(0,0,0,0.12),0_4px_10px_rgba(0,0,0,0.18)] ${
+        rolling ? "animate-bounce" : ""
+      }`}
+    >
+      {PIP_CELLS.map((cell) => (
+        <span
+          key={cell}
+          className={`m-auto rounded-full ${
+            pips.includes(cell)
+              ? value === 1
+                ? "h-3.5 w-3.5 bg-red-600"
+                : "h-2.5 w-2.5 bg-slate-900"
+              : ""
+          }`}
+        />
+      ))}
+    </div>
+  )
+}
+
+function PlayerAvatar({
+  name,
+  isBot,
+  color,
+  small = false,
+}: {
+  name: string
+  isBot?: boolean
+  color: string
+  small?: boolean
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`flex shrink-0 items-center justify-center rounded-full font-black text-white ${
+        small ? "h-7 w-7 text-xs" : "h-9 w-9 text-sm"
+      }`}
+      style={{
+        background: `radial-gradient(circle at 35% 30%, rgba(255,255,255,0.55), ${color} 60%)`,
+      }}
+    >
+      {isBot ? <Bot className="h-4 w-4" /> : name.slice(0, 1).toUpperCase()}
+    </span>
+  )
+}
+
+function HomePips({ home, color }: { home: number; color: string }) {
+  return (
+    <div className="flex shrink-0 gap-1" title={`${home}/${LUDO_TOKENS_PER_PLAYER} home`}>
+      {TOKEN_SLOTS.map((slot) => (
+        <span
+          key={slot}
+          aria-hidden="true"
+          className="h-2.5 w-2.5 rounded-full border-2 transition-colors"
+          style={{ borderColor: color, background: slot < home ? color : "transparent" }}
+        />
+      ))}
+      <span className="sr-only">
+        {home} of {LUDO_TOKENS_PER_PLAYER} tokens home
+      </span>
+    </div>
+  )
 }

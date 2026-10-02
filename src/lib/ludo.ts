@@ -1,3 +1,7 @@
+/**
+ * Parcheesi (US rules). The game keeps its original "ludo" ids for routes,
+ * party names and saved sessions.
+ */
 export const LUDO_COLORS = [
   { id: "red", label: "Red", hex: "#ef4444" },
   { id: "green", label: "Green", hex: "#22c55e" },
@@ -9,63 +13,70 @@ export type LudoColor = (typeof LUDO_COLORS)[number]["id"]
 
 export const LUDO_SEATS = 4
 export const LUDO_TOKENS_PER_PLAYER = 4
-export const LUDO_TRACK_LENGTH = 52
-/** Relative steps: 0-50 on the shared track, 51-56 in the private home column. */
-export const LUDO_HOME_ENTRY = 51
-export const LUDO_HOME_INDEX = 56
+export const LUDO_BOARD_SIZE = 19
+export const LUDO_TRACK_LENGTH = 68
+/** Relative steps: 0-63 on the shared track, 64-70 up the home path, 71 home. */
+export const LUDO_HOME_ENTRY = 64
+export const LUDO_HOME_INDEX = 71
 export const LUDO_BASE = -1
+/** A five - on one die, or both dice together - brings a pawn out of the nest. */
+export const LUDO_ENTER_VALUE = 5
+export const LUDO_CAPTURE_BONUS = 20
+export const LUDO_HOME_BONUS = 10
 
-/** Board cells of the shared track, clockwise, on a 15x15 grid. */
-export const LUDO_TRACK: ReadonlyArray<readonly [number, number]> = [
-  [6, 1], [6, 2], [6, 3], [6, 4], [6, 5],
-  [5, 6], [4, 6], [3, 6], [2, 6], [1, 6], [0, 6],
-  [0, 7],
-  [0, 8],
-  [1, 8], [2, 8], [3, 8], [4, 8], [5, 8],
-  [6, 9], [6, 10], [6, 11], [6, 12], [6, 13], [6, 14],
-  [7, 14],
-  [8, 14],
-  [8, 13], [8, 12], [8, 11], [8, 10], [8, 9],
-  [9, 8], [10, 8], [11, 8], [12, 8], [13, 8], [14, 8],
-  [14, 7],
-  [14, 6],
-  [13, 6], [12, 6], [11, 6], [10, 6], [9, 6],
-  [8, 5], [8, 4], [8, 3], [8, 2], [8, 1], [8, 0],
-  [7, 0],
-  [6, 0],
-]
+/**
+ * Board cells of the shared track, clockwise, on a 19x19 grid. Each arm is
+ * three columns of eight: out along one side, across the end, back down the
+ * other.
+ */
+export const LUDO_TRACK: ReadonlyArray<readonly [number, number]> = (() => {
+  const track: Array<readonly [number, number]> = []
+  for (let row = 7; row >= 0; row--) track.push([row, 8])
+  track.push([0, 9])
+  for (let row = 0; row <= 7; row++) track.push([row, 10])
+  for (let col = 11; col <= 18; col++) track.push([8, col])
+  track.push([9, 18])
+  for (let col = 18; col >= 11; col--) track.push([10, col])
+  for (let row = 11; row <= 18; row++) track.push([row, 10])
+  track.push([18, 9])
+  for (let row = 18; row >= 11; row--) track.push([row, 8])
+  for (let col = 7; col >= 0; col--) track.push([10, col])
+  track.push([9, 0])
+  for (let col = 0; col <= 7; col++) track.push([8, col])
+  return track
+})()
 
-/** Track index each seat enters on. */
-export const LUDO_ENTRY_INDEX = [0, 13, 26, 39] as const
+/** Track index each seat enters on - the fifth square in, beside its nest. */
+export const LUDO_ENTRY_INDEX = [64, 13, 30, 47] as const
 
-/** Entry squares plus the star squares eight steps later. */
+/** Entry squares, the fifth square on the other side of each arm, and the arm ends. */
 export const LUDO_SAFE_CELLS: ReadonlySet<number> = new Set([
-  0, 8, 13, 21, 26, 34, 39, 47,
+  64, 13, 30, 47, 54, 3, 20, 37, 59, 8, 25, 42,
 ])
 
-/** Six private cells leading to the centre, per seat. */
+/** Seven private cells up the middle of an arm, then the home triangle. */
 export const LUDO_HOME_PATH: ReadonlyArray<ReadonlyArray<readonly [number, number]>> = [
-  [[7, 1], [7, 2], [7, 3], [7, 4], [7, 5], [7, 6]],
-  [[1, 7], [2, 7], [3, 7], [4, 7], [5, 7], [6, 7]],
-  [[7, 13], [7, 12], [7, 11], [7, 10], [7, 9], [7, 8]],
-  [[13, 7], [12, 7], [11, 7], [10, 7], [9, 7], [8, 7]],
+  [[9, 1], [9, 2], [9, 3], [9, 4], [9, 5], [9, 6], [9, 7], [9, 8]],
+  [[1, 9], [2, 9], [3, 9], [4, 9], [5, 9], [6, 9], [7, 9], [8, 9]],
+  [[9, 17], [9, 16], [9, 15], [9, 14], [9, 13], [9, 12], [9, 11], [9, 10]],
+  [[17, 9], [16, 9], [15, 9], [14, 9], [13, 9], [12, 9], [11, 9], [10, 9]],
 ]
 
-/** Top-left corner of each seat's 6x6 base yard. */
-const BASE_ORIGIN = [
+/** Top-left corner of each seat's 8x8 nest. */
+export const LUDO_NEST_ORIGIN = [
   [0, 0],
-  [0, 9],
-  [9, 9],
-  [9, 0],
+  [0, 11],
+  [11, 11],
+  [11, 0],
 ] as const
 
 export const LUDO_BASE_SLOTS: ReadonlyArray<ReadonlyArray<readonly [number, number]>> =
-  BASE_ORIGIN.map(([row, col]) =>
+  LUDO_NEST_ORIGIN.map(([row, col]) =>
     [
-      [1, 1],
-      [1, 4],
-      [4, 1],
-      [4, 4],
+      [2, 2],
+      [2, 5],
+      [5, 2],
+      [5, 5],
     ].map(([slotRow, slotCol]) => [row + slotRow, col + slotCol] as const),
   )
 
@@ -91,13 +102,22 @@ export function getAllySeats(seat: number, mode: LudoMode): number[] {
   return mode === "teams" ? [seat, getTeammateSeat(seat)] : [seat]
 }
 
+/** A move still owed this turn: a rolled die, or a capture / home bonus. */
+export interface LudoDie {
+  value: number
+  bonus: boolean
+}
+
 export interface LudoMove {
-  /** Whose token moves - your own, or in 2v2 your partner's once yours are home. */
+  id: string
+  /** Whose pawn moves - your own, or in 2v2 your partner's once yours are home. */
   seat: number
   tokenIndex: number
   from: number
   to: number
-  captures: boolean
+  /** Indices into the pending dice this move uses up. */
+  dice: number[]
+  captured: { seat: number; tokenIndex: number } | null
   finishes: boolean
 }
 
@@ -123,87 +143,215 @@ export function getTokenCell(
   return LUDO_HOME_PATH[seat][relative - LUDO_HOME_ENTRY]
 }
 
-/** Every move playable with this dice value across the seats you control. */
+/** Pawns standing on the same physical square as `seat`'s step `relative`. */
+function occupantsAt(
+  seat: number,
+  relative: number,
+  allTokens: number[][],
+): Array<{ seat: number; tokenIndex: number }> {
+  const occupants: Array<{ seat: number; tokenIndex: number }> = []
+  if (isOnTrack(relative)) {
+    const cell = toAbsoluteCell(seat, relative)
+    allTokens.forEach((tokens, otherSeat) => {
+      tokens.forEach((position, tokenIndex) => {
+        if (isOnTrack(position) && toAbsoluteCell(otherSeat, position) === cell) {
+          occupants.push({ seat: otherSeat, tokenIndex })
+        }
+      })
+    })
+  } else if (relative > LUDO_BASE && relative < LUDO_HOME_INDEX) {
+    allTokens[seat]?.forEach((position, tokenIndex) => {
+      if (position === relative) occupants.push({ seat, tokenIndex })
+    })
+  }
+  return occupants
+}
+
+/** Two pawns of one colour on a square block everyone from passing it. */
+function isBlockade(occupants: Array<{ seat: number }>): boolean {
+  return occupants.length >= 2 && occupants[0].seat === occupants[1].seat
+}
+
+function tryEnter(
+  seat: number,
+  tokenIndex: number,
+  allTokens: number[][],
+  allySeats: number[],
+): Omit<LudoMove, "id" | "dice"> | null {
+  const occupants = occupantsAt(seat, 0, allTokens)
+  const friendly = occupants.filter((occupant) => allySeats.includes(occupant.seat))
+  if (friendly.length >= 2) return null
+  // Entering knocks out an opponent even though the entry square is safe.
+  const captured =
+    occupants.find((occupant) => !allySeats.includes(occupant.seat)) ?? null
+  return { seat, tokenIndex, from: LUDO_BASE, to: 0, captured, finishes: false }
+}
+
+function tryAdvance(
+  seat: number,
+  tokenIndex: number,
+  value: number,
+  allTokens: number[][],
+  allySeats: number[],
+): Omit<LudoMove, "id" | "dice"> | null {
+  const from = allTokens[seat][tokenIndex]
+  if (from === LUDO_BASE || from === LUDO_HOME_INDEX) return null
+  const to = from + value
+  if (to > LUDO_HOME_INDEX) return null
+
+  for (let step = from + 1; step <= to && step < LUDO_HOME_INDEX; step++) {
+    if (isBlockade(occupantsAt(seat, step, allTokens))) return null
+  }
+  if (to === LUDO_HOME_INDEX) {
+    return { seat, tokenIndex, from, to, captured: null, finishes: true }
+  }
+
+  const occupants = occupantsAt(seat, to, allTokens)
+  if (occupants.length >= 2) return null
+  const opponent = occupants.find((occupant) => !allySeats.includes(occupant.seat))
+  const safe = isOnTrack(to) && LUDO_SAFE_CELLS.has(toAbsoluteCell(seat, to))
+  return {
+    seat,
+    tokenIndex,
+    from,
+    to,
+    captured: opponent && !safe ? opponent : null,
+    finishes: false,
+  }
+}
+
+/** Every move playable with the pending dice across the seats you control. */
 export function getLegalMoves(
   controlledSeats: number[],
-  dice: number,
+  pending: LudoDie[],
   allTokens: number[][],
   allySeats: number[] = controlledSeats,
 ): LudoMove[] {
   const moves: LudoMove[] = []
-  for (const seat of controlledSeats) {
-    const tokens = allTokens[seat] ?? []
-    for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex++) {
-      const from = tokens[tokenIndex]
-      if (from === LUDO_HOME_INDEX) continue
+  const add = (move: Omit<LudoMove, "id" | "dice"> | null, dice: number[]) => {
+    if (move) moves.push({ ...move, dice, id: `${move.seat}-${move.tokenIndex}-${dice.join("+")}` })
+  }
 
-      let to: number
-      if (from === LUDO_BASE) {
-        if (dice !== 6) continue
-        to = 0
-      } else {
-        to = from + dice
-        if (to > LUDO_HOME_INDEX) continue
-      }
-
-      moves.push({
-        seat,
-        tokenIndex,
-        from,
-        to,
-        captures: getCapturedTokens(seat, to, allTokens, allySeats).length > 0,
-        finishes: to === LUDO_HOME_INDEX,
+  const seenValues = new Set<string>()
+  pending.forEach((die, dieIndex) => {
+    const key = `${die.value}:${die.bonus}`
+    if (seenValues.has(key)) return
+    seenValues.add(key)
+    for (const seat of controlledSeats) {
+      const tokens = allTokens[seat] ?? []
+      // Pawns in the nest are interchangeable - offer just one of them.
+      const nestPawn = tokens.indexOf(LUDO_BASE)
+      tokens.forEach((position, tokenIndex) => {
+        if (position === LUDO_BASE) {
+          if (tokenIndex !== nestPawn) return
+          if (die.bonus || die.value !== LUDO_ENTER_VALUE) return
+          add(tryEnter(seat, tokenIndex, allTokens, allySeats), [dieIndex])
+          return
+        }
+        add(tryAdvance(seat, tokenIndex, die.value, allTokens, allySeats), [dieIndex])
       })
+    }
+  })
+
+  // Two rolled dice that add up to five also bring a pawn out.
+  for (let first = 0; first < pending.length; first++) {
+    for (let second = first + 1; second < pending.length; second++) {
+      const a = pending[first]
+      const b = pending[second]
+      if (a.bonus || b.bonus || a.value + b.value !== LUDO_ENTER_VALUE) continue
+      const key = `enter:${Math.min(a.value, b.value)}`
+      if (seenValues.has(key)) continue
+      seenValues.add(key)
+      for (const seat of controlledSeats) {
+        const nestPawn = (allTokens[seat] ?? []).indexOf(LUDO_BASE)
+        if (nestPawn === -1) continue
+        add(tryEnter(seat, nestPawn, allTokens, allySeats), [first, second])
+      }
     }
   }
   return moves
 }
 
+function applyToTokens(allTokens: number[][], move: LudoMove): number[][] {
+  const next = allTokens.map((tokens) => [...tokens])
+  next[move.seat][move.tokenIndex] = move.to
+  if (move.captured) next[move.captured.seat][move.captured.tokenIndex] = LUDO_BASE
+  return next
+}
+
+/**
+ * Legal moves, narrowed to those that still let you use as many of the
+ * pending dice as possible - you cannot throw a die away when both could
+ * be played.
+ */
+export function getPlayableMoves(
+  controlledSeats: number[],
+  pending: LudoDie[],
+  allTokens: number[][],
+  allySeats: number[] = controlledSeats,
+): LudoMove[] {
+  const moves = getLegalMoves(controlledSeats, pending, allTokens, allySeats)
+  if (moves.length <= 1) return moves
+
+  const memo = new Map<string, number>()
+  const remaining = (dice: LudoDie[], move: LudoMove) =>
+    dice.filter((_, index) => !move.dice.includes(index))
+  const mostUsable = (tokens: number[][], dice: LudoDie[]): number => {
+    if (dice.length === 0) return 0
+    const key = `${tokens.map((seat) => seat.join(",")).join("/")}|${dice
+      .map((die) => `${die.value}${die.bonus ? "b" : ""}`)
+      .sort()
+      .join(",")}`
+    const cached = memo.get(key)
+    if (cached !== undefined) return cached
+    let most = 0
+    for (const move of getLegalMoves(controlledSeats, dice, tokens, allySeats)) {
+      const used =
+        move.dice.length + mostUsable(applyToTokens(tokens, move), remaining(dice, move))
+      if (used > most) most = used
+      if (most === dice.length) break
+    }
+    memo.set(key, most)
+    return most
+  }
+
+  const scored = moves.map((move) => ({
+    move,
+    used:
+      move.dice.length + mostUsable(applyToTokens(allTokens, move), remaining(pending, move)),
+  }))
+  const best = Math.max(...scored.map((entry) => entry.used))
+  return scored.filter((entry) => entry.used === best).map((entry) => entry.move)
+}
+
+/** The dice a roll grants: doubles add their opposite faces once no pawn is nested. */
+export function diceForRoll(values: readonly [number, number], allOut: boolean): LudoDie[] {
+  const [a, b] = values
+  if (a === b && allOut) {
+    return [a, a, 7 - a, 7 - a].map((value) => ({ value, bonus: false }))
+  }
+  return [a, b].map((value) => ({ value, bonus: false }))
+}
+
 /**
  * Pick a move the way a reasonable player would: take the capture, bring a
- * token home, open the home column, get out of the yard, else run furthest.
+ * pawn home, get out of the nest, spend big bonuses, else run furthest.
  */
 export function chooseBestMove(moves: LudoMove[]): LudoMove | null {
   let best: LudoMove | null = null
   let bestScore = Number.NEGATIVE_INFINITY
   for (const move of moves) {
-    let score = move.to
-    if (move.captures) score += 1000
+    let score = move.to + (move.to - Math.max(0, move.from))
+    if (move.captured) score += 1000
     if (move.finishes) score += 800
-    if (move.to >= LUDO_HOME_ENTRY) score += 600
-    if (move.from === LUDO_BASE) score += 400
+    if (move.from === LUDO_BASE) score += 500
+    if (move.to >= LUDO_HOME_ENTRY) score += 200
     if (score > bestScore) {
       bestScore = score
       best = move
     }
   }
   return best
-}
-
-/** Opponent tokens knocked back to base when the seat lands on `relative`. */
-export function getCapturedTokens(
-  seat: number,
-  relative: number,
-  allTokens: number[][],
-  allySeats: number[] = [seat],
-): Array<{ seat: number; tokenIndex: number }> {
-  if (!isOnTrack(relative)) return []
-  const cell = toAbsoluteCell(seat, relative)
-  if (LUDO_SAFE_CELLS.has(cell)) return []
-
-  const captured: Array<{ seat: number; tokenIndex: number }> = []
-  for (let otherSeat = 0; otherSeat < allTokens.length; otherSeat++) {
-    if (allySeats.includes(otherSeat)) continue
-    const otherTokens = allTokens[otherSeat]
-    for (let tokenIndex = 0; tokenIndex < otherTokens.length; tokenIndex++) {
-      const position = otherTokens[tokenIndex]
-      if (!isOnTrack(position)) continue
-      if (toAbsoluteCell(otherSeat, position) === cell) {
-        captured.push({ seat: otherSeat, tokenIndex })
-      }
-    }
-  }
-  return captured
 }
 
 export function hasWon(tokens: number[]): boolean {
@@ -214,6 +362,6 @@ export function countTokensHome(tokens: number[]): number {
   return tokens.filter((position) => position === LUDO_HOME_INDEX).length
 }
 
-export function rollLudoDice(random: () => number = Math.random): number {
-  return Math.floor(random() * 6) + 1
+export function rollLudoDice(random: () => number = Math.random): [number, number] {
+  return [Math.floor(random() * 6) + 1, Math.floor(random() * 6) + 1]
 }

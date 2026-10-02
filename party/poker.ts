@@ -5,6 +5,7 @@ import {
   shuffleDeck,
   evaluateBestHand,
   compareHands,
+  HandCategory,
   type HandResult,
 } from "../src/lib/poker/handEvaluator"
 import { calculatePots, type PotContribution } from "../src/lib/poker/potCalculator"
@@ -18,6 +19,37 @@ import {
 
 export type GamePhase = "waiting" | "playing" | "finished"
 export type BettingRound = "pre-flop" | "flop" | "turn" | "river" | "showdown"
+export type PendingStep = "street" | "award" | "fold-win"
+
+export interface SeatAction {
+  kind: "sb" | "bb" | "check" | "call" | "bet" | "raise" | "all-in" | "fold"
+  /** The player's total bet this street after the action. */
+  amount?: number
+}
+
+export interface PokerLogEntry {
+  id: number
+  kind: "hand" | "blinds-up" | "sb" | "bb" | "fold" | "check" | "call" | "bet" | "raise" | "all-in" | "street" | "show" | "win" | "timeout"
+  playerId?: string
+  name?: string
+  amount?: number
+  allIn?: boolean
+  round?: BettingRound
+  cards?: number[]
+  hand?: string
+}
+
+const LOG_LIMIT = 40
+const DEAL_MS = 1500
+const ROUND_PAUSE_MS = 1100
+const RUNOUT_PAUSE_MS = 1800
+const SHOWDOWN_PAUSE_MS = 2400
+const FOLD_WIN_PAUSE_MS = 900
+const DISCONNECT_FOLD_MS = 10000
+/** Bots take a human-looking beat to think. */
+const BOT_THINK_MS = 1300
+const BOT_THINK_JITTER_MS = 1100
+const BOT_NAMES = ["Ace", "Maverick", "Lucky", "Duchess", "Slim", "Rosie", "Tex", "Vegas"]
 
 export interface PokerSettings {
   startingChips: number
@@ -38,6 +70,8 @@ export interface Player {
   connected: boolean
   seatIndex: number
   isDealer: boolean
+  lastAction: SeatAction | null
+  isBot?: boolean
 }
 
 export interface WinnerInfo {
@@ -72,6 +106,10 @@ export interface GameState {
   showdownPlayers: string[]
   handInProgress: boolean
   playerTokens: Record<string, string>
+  pending: { step: PendingStep; at: number } | null
+  turnDeadline: number | null
+  log: PokerLogEntry[]
+  logSeq: number
 }
 
 export interface PublicPlayer {
@@ -87,6 +125,8 @@ export interface PublicPlayer {
   isDealer: boolean
   hasCards: boolean
   holeCards: number[] | null
+  lastAction: SeatAction | null
+  isBot?: boolean
 }
 
 export interface PublicGameState {
@@ -110,12 +150,17 @@ export interface PublicGameState {
   showdownPlayers: string[]
   handInProgress: boolean
   myHoleCards: number[]
+  turnDeadline: number | null
+  serverNow: number
+  log: PokerLogEntry[]
 }
 
 export type ClientMessage =
   | { type: "join"; name: string }
   | { type: "leave" }
   | { type: "start-game" }
+  | { type: "add-bot" }
+  | { type: "remove-bot"; playerId: string }
   | { type: "fold" }
   | { type: "check" }
   | { type: "call" }
@@ -202,9 +247,14 @@ class PokerParty implements Party.Server {
         const parsed = JSON.parse(stored)
         parsed.actedThisRound = new Set(parsed.actedThisRound || [])
         parsed.playerTokens ??= {}
+        parsed.pending ??= null
+        parsed.turnDeadline ??= null
+        parsed.log ??= []
+        parsed.logSeq ??= 0
+        for (const player of Object.values(parsed.players) as Player[]) player.lastAction ??= null
         this.state = parsed
         for (const player of Object.values(this.state!.players) as Player[]) {
-          player.connected = false
+          player.connected = Boolean(player.isBot)
         }
         await this.saveState()
       } catch {
@@ -253,6 +303,8 @@ class PokerParty implements Party.Server {
         isDealer: p.isDealer,
         hasCards: p.holeCards.length > 0,
         holeCards: showCards ? p.holeCards : null,
+        lastAction: p.lastAction,
+        isBot: p.isBot,
       }
     }
 
@@ -284,6 +336,9 @@ class PokerParty implements Party.Server {
       showdownPlayers: s.showdownPlayers,
       handInProgress: s.handInProgress,
       myHoleCards: s.players[playerId]?.holeCards || [],
+      turnDeadline: s.turnDeadline,
+      serverNow: Date.now(),
+      log: s.log,
     }
   }
 
@@ -314,6 +369,36 @@ class PokerParty implements Party.Server {
 
   // ─── Game Logic ──────────────────────────────────────────────────────────
 
+  addLog(entry: Omit<PokerLogEntry, "id">) {
+    const s = this.state!
+    s.logSeq += 1
+    s.log = [...s.log, { ...entry, id: s.logSeq }].slice(-LOG_LIMIT)
+  }
+
+  /** Queue the dealer's next step. It runs from the alarm, so a restart cannot strand the hand. */
+  schedule(step: PendingStep, delay: number) {
+    const s = this.state!
+    s.currentPlayerIndex = -1
+    s.turnDeadline = null
+    s.pending = { step, at: Date.now() + delay }
+    this.room.storage.setAlarm(s.pending.at)
+  }
+
+  startTurn(index: number, extraMs = 0) {
+    const s = this.state!
+    s.currentPlayerIndex = index
+    const player = s.players[s.seatOrder[index]]
+    if (player?.isBot) {
+      s.turnDeadline = null
+      this.room.storage.setAlarm(Date.now() + extraMs + BOT_THINK_MS + Math.random() * BOT_THINK_JITTER_MS)
+      return
+    }
+    s.turnDeadline = s.settings.turnTimeLimit > 0 ? Date.now() + s.settings.turnTimeLimit * 1000 + extraMs : null
+    const alarm = s.turnDeadline ?? (player && !player.connected ? Date.now() + DISCONNECT_FOLD_MS : null)
+    if (alarm) this.room.storage.setAlarm(alarm)
+    else this.room.storage.deleteAlarm()
+  }
+
   startNewHand() {
     if (!this.state) return
     const s = this.state
@@ -335,7 +420,11 @@ class PokerParty implements Party.Server {
 
     // Increase blinds if configured
     if (s.settings.blindIncrease > 0 && s.handNumber > 0 && s.handNumber % s.settings.blindIncrease === 0) {
-      s.settings.smallBlind = Math.min(s.settings.smallBlind * 2, Math.floor(s.settings.startingChips / 2))
+      const raised = Math.min(s.settings.smallBlind * 2, Math.floor(s.settings.startingChips / 2))
+      if (raised !== s.settings.smallBlind) {
+        s.settings.smallBlind = raised
+        this.addLog({ kind: "blinds-up", amount: raised })
+      }
     }
 
     s.handNumber++
@@ -345,6 +434,7 @@ class PokerParty implements Party.Server {
     s.bettingRound = "pre-flop"
     s.pot = 0
     s.handInProgress = true
+    s.pending = null
     s.lastRaiseAmount = s.settings.smallBlind * 2
     s.minRaise = s.settings.smallBlind * 2
     s.actedThisRound = new Set()
@@ -360,6 +450,7 @@ class PokerParty implements Party.Server {
         p.folded = p.chips <= 0  // auto-fold eliminated players
         p.allIn = false
         p.isDealer = false
+        p.lastAction = null
       }
     }
 
@@ -378,9 +469,11 @@ class PokerParty implements Party.Server {
       s.bigBlindIndex = nextAliveSeatIndex(s, s.smallBlindIndex)
     }
 
+    this.addLog({ kind: "hand", amount: s.handNumber, playerId: dealer?.id, name: dealer?.name })
+
     // Post blinds
-    this.postBlind(s.seatOrder[s.smallBlindIndex], s.settings.smallBlind)
-    this.postBlind(s.seatOrder[s.bigBlindIndex], s.settings.smallBlind * 2)
+    this.postBlind(s.seatOrder[s.smallBlindIndex], s.settings.smallBlind, "sb")
+    this.postBlind(s.seatOrder[s.bigBlindIndex], s.settings.smallBlind * 2, "bb")
 
     // Deal hole cards
     s.deck = shuffleDeck(createDeck())
@@ -394,21 +487,16 @@ class PokerParty implements Party.Server {
     }
     s.deck = s.deck.slice(cardIdx)
 
-    // Set first to act: left of big blind for pre-flop
-    s.currentPlayerIndex = nextCanActSeatIndex(s, s.bigBlindIndex)
-    if (s.currentPlayerIndex === -1) {
-      // Everyone is all-in, run out the board
-      this.runOutBoard()
+    // First to act: left of big blind. The clock starts once the cards have landed.
+    const firstIdx = nextCanActSeatIndex(s, s.bigBlindIndex)
+    if (firstIdx === -1) {
+      this.schedule("street", DEAL_MS + ROUND_PAUSE_MS)
       return
     }
-
-    // Set turn timer
-    if (s.settings.turnTimeLimit > 0) {
-      this.room.storage.setAlarm(Date.now() + s.settings.turnTimeLimit * 1000)
-    }
+    this.startTurn(firstIdx, DEAL_MS)
   }
 
-  postBlind(playerId: string, amount: number) {
+  postBlind(playerId: string, amount: number, kind: "sb" | "bb") {
     if (!this.state) return
     const p = this.state.players[playerId]
     if (!p) return
@@ -418,10 +506,24 @@ class PokerParty implements Party.Server {
     p.currentBet += actualAmount      // accumulate (handles SB then BB on same player in heads-up edge cases)
     p.totalBetThisHand += actualAmount // accumulate
     this.state.pot += actualAmount
+    p.lastAction = { kind, amount: p.currentBet }
+    this.addLog({ kind, playerId, name: p.name, amount: actualAmount })
 
     if (p.chips === 0) {
       p.allIn = true
     }
+  }
+
+  /** One player is left in the hand: let the last fold land, then push them the pot. */
+  closeHandByFold() {
+    this.schedule("fold-win", FOLD_WIN_PAUSE_MS)
+    this.broadcastState()
+  }
+
+  /** Betting is over for this street: hold the bets in front of the players for a beat. */
+  closeRound() {
+    this.schedule("street", ROUND_PAUSE_MS)
+    this.broadcastState()
   }
 
   handleFold(playerId: string) {
@@ -430,13 +532,15 @@ class PokerParty implements Party.Server {
     if (!p) return
 
     p.folded = true
+    p.lastAction = { kind: "fold" }
     this.state.actedThisRound.add(playerId)
+    this.addLog({ kind: "fold", playerId, name: p.name })
 
     this.broadcast({ type: "player-action", playerId, action: "fold" })
 
     const active = getActivePlayers(this.state)
     if (active.length === 1) {
-      this.winByFold(active[0])
+      this.closeHandByFold()
       return
     }
     if (active.length === 0) {
@@ -457,6 +561,8 @@ class PokerParty implements Party.Server {
     if (p.currentBet < highestBet) return
 
     this.state.actedThisRound.add(playerId)
+    p.lastAction = { kind: "check" }
+    this.addLog({ kind: "check", playerId, name: p.name })
     this.broadcast({ type: "player-action", playerId, action: "check" })
     this.advanceAction()
   }
@@ -477,11 +583,13 @@ class PokerParty implements Party.Server {
     if (p.chips === 0) p.allIn = true
 
     this.state.actedThisRound.add(playerId)
+    p.lastAction = { kind: p.allIn ? "all-in" : "call", amount: p.currentBet }
+    this.addLog({ kind: "call", playerId, name: p.name, amount: callAmount, allIn: p.allIn })
     this.broadcast({ type: "player-action", playerId, action: "call", amount: callAmount })
 
     const active = getActivePlayers(this.state)
     if (active.length === 1) {
-      this.winByFold(active[0])
+      this.closeHandByFold()
       return
     }
 
@@ -514,6 +622,9 @@ class PokerParty implements Party.Server {
     // Everyone must act again after a raise
     this.state.actedThisRound = new Set([playerId])
 
+    const kind = p.allIn ? "all-in" : highestBet === 0 ? "bet" : "raise"
+    p.lastAction = { kind, amount: totalBetAmount }
+    this.addLog({ kind, playerId, name: p.name, amount: totalBetAmount })
     this.broadcast({ type: "player-action", playerId, action: "raise", amount: totalBetAmount })
     this.advanceAction()
   }
@@ -545,12 +656,14 @@ class PokerParty implements Party.Server {
     }
 
     p.currentBet = newBet
+    p.lastAction = { kind: "all-in", amount: newBet }
+    this.addLog({ kind: "all-in", playerId, name: p.name, amount: newBet })
 
     this.broadcast({ type: "player-action", playerId, action: "all-in", amount: allInAmount })
 
     const active = getActivePlayers(this.state)
     if (active.length === 1) {
-      this.winByFold(active[0])
+      this.closeHandByFold()
       return
     }
 
@@ -564,14 +677,9 @@ class PokerParty implements Party.Server {
     const activeNotAllIn = getActiveNotAllInPlayers(s)
     const highestBet = getHighestBet(s)
 
-    // If nobody or only 1 player can still act, advance or run out
+    // Everyone is all-in or folded: run the board out street by street
     if (activeNotAllIn.length === 0) {
-      // Everyone is all-in or folded
-      if (getActivePlayers(s).length > 1) {
-        this.runOutBoard()
-      } else {
-        this.advanceBettingRound()
-      }
+      this.closeRound()
       return
     }
 
@@ -579,12 +687,7 @@ class PokerParty implements Party.Server {
       const sole = activeNotAllIn[0]
       // If this sole player's bet matches the highest, the round is over
       if (sole.currentBet >= highestBet && s.actedThisRound.has(sole.id)) {
-        if (getActivePlayers(s).length > 1 && getActivePlayers(s).some((p) => p.allIn)) {
-          // Others are all-in - check if bets match, then advance
-          this.advanceBettingRound()
-        } else {
-          this.advanceBettingRound()
-        }
+        this.closeRound()
         return
       }
     }
@@ -594,7 +697,7 @@ class PokerParty implements Party.Server {
     const allMatched = activeNotAllIn.every((p) => p.currentBet === highestBet)
 
     if (allActed && allMatched) {
-      this.advanceBettingRound()
+      this.closeRound()
       return
     }
 
@@ -603,7 +706,7 @@ class PokerParty implements Party.Server {
     let nextIdx = nextCanActSeatIndex(s, startIdx)
 
     if (nextIdx === -1) {
-      this.advanceBettingRound()
+      this.closeRound()
       return
     }
 
@@ -612,7 +715,7 @@ class PokerParty implements Party.Server {
     if (nextPlayer && s.actedThisRound.has(nextPlayer.id) && nextPlayer.currentBet === highestBet) {
       // Check if ALL active non-all-in have matching bets and acted
       if (allMatched && allActed) {
-        this.advanceBettingRound()
+        this.closeRound()
         return
       }
       // Otherwise keep looking
@@ -629,65 +732,46 @@ class PokerParty implements Party.Server {
         }
       }
       if (!found) {
-        this.advanceBettingRound()
+        this.closeRound()
         return
       }
     }
 
-    s.currentPlayerIndex = nextIdx
-
-    // Reset turn timer
-    this.room.storage.deleteAlarm()
-    if (s.settings.turnTimeLimit > 0) {
-      this.room.storage.setAlarm(Date.now() + s.settings.turnTimeLimit * 1000)
-    }
-
+    this.startTurn(nextIdx)
     this.broadcastState()
   }
 
-  advanceBettingRound() {
+  /** Sweep the bets into the pot and deal the next street (or go to showdown after the river). */
+  dealStreet() {
     if (!this.state) return
     const s = this.state
 
-    // Reset bets for new round
     for (const id of s.seatOrder) {
       const p = s.players[id]
-      if (p) p.currentBet = 0
+      if (p) {
+        p.currentBet = 0
+        p.lastAction = null
+      }
     }
     s.actedThisRound = new Set()
     s.lastAggressorIndex = -1
     s.minRaise = s.settings.smallBlind * 2
 
-    const active = getActivePlayers(s)
-    if (active.length <= 1) {
-      if (active.length === 1) {
-        this.winByFold(active[0])
-      }
+    if (getActivePlayers(s).length <= 1) {
+      this.awardFoldWin()
+      return
+    }
+    if (s.bettingRound === "river" || s.bettingRound === "showdown") {
+      this.revealShowdown()
       return
     }
 
-    switch (s.bettingRound) {
-      case "pre-flop":
-        s.bettingRound = "flop"
-        s.communityCards = [s.deck[0], s.deck[1], s.deck[2]]
-        s.deck = s.deck.slice(3)
-        break
-      case "flop":
-        s.bettingRound = "turn"
-        s.communityCards.push(s.deck[0])
-        s.deck = s.deck.slice(1)
-        break
-      case "turn":
-        s.bettingRound = "river"
-        s.communityCards.push(s.deck[0])
-        s.deck = s.deck.slice(1)
-        break
-      case "river":
-        this.goToShowdown()
-        return
-      default:
-        return
-    }
+    const count = s.bettingRound === "pre-flop" ? 3 : 1
+    s.bettingRound = s.bettingRound === "pre-flop" ? "flop" : s.bettingRound === "flop" ? "turn" : "river"
+    const cards = s.deck.slice(0, count)
+    s.deck = s.deck.slice(count)
+    s.communityCards = [...s.communityCards, ...cards]
+    this.addLog({ kind: "street", round: s.bettingRound, cards })
 
     this.broadcast({
       type: "community-cards",
@@ -695,71 +779,48 @@ class PokerParty implements Party.Server {
       round: s.bettingRound,
     })
 
-    // First to act is left of dealer (post-flop)
+    // First to act is left of dealer (post-flop). Nobody bets when at most one player still can.
     const nextIdx = nextCanActSeatIndex(s, s.dealerIndex)
-    if (nextIdx === -1) {
-      this.runOutBoard()
-      return
+    if (nextIdx === -1 || getActiveNotAllInPlayers(s).length <= 1) {
+      this.schedule("street", RUNOUT_PAUSE_MS)
+    } else {
+      this.startTurn(nextIdx)
     }
-    s.currentPlayerIndex = nextIdx
-
-    this.room.storage.deleteAlarm()
-    if (s.settings.turnTimeLimit > 0) {
-      this.room.storage.setAlarm(Date.now() + s.settings.turnTimeLimit * 1000)
-    }
-
     this.broadcastState()
   }
 
-  runOutBoard() {
+  /** Turn the remaining hands face up, then pay out after a pause so everyone can read them. */
+  revealShowdown() {
     if (!this.state) return
     const s = this.state
 
-    while (s.communityCards.length < 5 && s.deck.length > 0) {
-      s.communityCards.push(s.deck[0])
-      s.deck = s.deck.slice(1)
-    }
-
     s.bettingRound = "showdown"
-    this.goToShowdown()
+    const active = getActivePlayers(s)
+    s.showdownPlayers = active.map((p) => p.id)
+
+    const reveals = active
+      .filter((p) => p.holeCards.length === 2 && s.communityCards.length >= 5)
+      .map((p) => ({ id: p.id, holeCards: p.holeCards, handResult: evaluateBestHand(p.holeCards, s.communityCards) }))
+    for (const reveal of reveals) {
+      this.addLog({ kind: "show", playerId: reveal.id, name: s.players[reveal.id].name, cards: reveal.holeCards, hand: reveal.handResult.description })
+    }
+    this.broadcast({ type: "showdown", players: reveals })
+
+    this.schedule("award", SHOWDOWN_PAUSE_MS)
+    this.broadcastState()
   }
 
-  goToShowdown() {
+  awardShowdown() {
     if (!this.state) return
     const s = this.state
-
-    this.room.storage.deleteAlarm()
-    s.bettingRound = "showdown"
-    s.handInProgress = false
-
     const active = getActivePlayers(s)
 
-    // Deal remaining community cards if needed
-    while (s.communityCards.length < 5 && s.deck.length > 0) {
-      s.communityCards.push(s.deck[0])
-      s.deck = s.deck.slice(1)
-    }
-
-    // Evaluate hands
     const handResults: { playerId: string; result: HandResult }[] = []
     for (const p of active) {
       if (p.holeCards.length === 2 && s.communityCards.length >= 5) {
-        const result = evaluateBestHand(p.holeCards, s.communityCards)
-        handResults.push({ playerId: p.id, result })
+        handResults.push({ playerId: p.id, result: evaluateBestHand(p.holeCards, s.communityCards) })
       }
     }
-
-    // Show all active players' cards
-    s.showdownPlayers = active.map((p) => p.id)
-
-    this.broadcast({
-      type: "showdown",
-      players: handResults.map((h) => ({
-        id: h.playerId,
-        holeCards: s.players[h.playerId].holeCards,
-        handResult: h.result,
-      })),
-    })
 
     // Calculate pots
     const contributions: PotContribution[] = s.seatOrder.map((id) => {
@@ -781,8 +842,8 @@ class PokerParty implements Party.Server {
 
       if (eligibleHands.length === 0) {
         // No eligible hand evaluated - give to first eligible player
-        if (pot.eligiblePlayerIds.length > 0) {
-          const winnerId = pot.eligiblePlayerIds[0]
+        const winnerId = pot.eligiblePlayerIds.find((id) => s.players[id])
+        if (winnerId) {
           s.players[winnerId].chips += pot.amount
           winners.push({
             playerId: winnerId,
@@ -817,43 +878,175 @@ class PokerParty implements Party.Server {
       }
     }
 
-    s.winners = winners
-    s.pot = 0
-
-    this.broadcast({ type: "hand-over", winners })
-    this.broadcastState()
-
-    const playersWithChips = s.seatOrder.filter((id) => s.players[id]?.chips > 0)
-    if (playersWithChips.length <= 1) {
-      s.status = "finished"
-    }
+    this.finishHand(winners)
   }
 
-  winByFold(winner: Player) {
+  awardFoldWin() {
     if (!this.state) return
     const s = this.state
-
-    this.room.storage.deleteAlarm()
-    s.handInProgress = false
-    s.bettingRound = "showdown"
-
+    const winner = getActivePlayers(s)[0]
+    if (!winner) {
+      this.finishHand([])
+      return
+    }
     winner.chips += s.pot
-    s.winners = [{
+    this.finishHand([{
       playerId: winner.id,
       playerName: winner.name,
       amount: s.pot,
       handResult: null,
       potIndex: 0,
-    }]
-    s.pot = 0
+    }])
+  }
 
-    this.broadcast({ type: "hand-over", winners: s.winners })
-    this.broadcastState()
+  finishHand(winners: WinnerInfo[]) {
+    if (!this.state) return
+    const s = this.state
+
+    this.room.storage.deleteAlarm()
+    s.pending = null
+    s.turnDeadline = null
+    s.currentPlayerIndex = -1
+    s.handInProgress = false
+    s.bettingRound = "showdown"
+    s.winners = winners
+    s.pot = 0
+    for (const id of s.seatOrder) {
+      const p = s.players[id]
+      if (p) p.currentBet = 0
+    }
+    for (const w of winners) {
+      this.addLog({ kind: "win", playerId: w.playerId, name: w.playerName, amount: w.amount, hand: w.handResult?.description })
+    }
 
     const playersWithChips = s.seatOrder.filter((id) => s.players[id]?.chips > 0)
     if (playersWithChips.length <= 1) {
       s.status = "finished"
     }
+
+    this.broadcast({ type: "hand-over", winners })
+    this.broadcastState()
+  }
+
+  // ─── Bots ────────────────────────────────────────────────────────────────
+
+  /** Rough 0..1 strength of a bot's hand, counting draws while cards are still to come. */
+  botStrength(p: Player): number {
+    const s = this.state!
+    const [a, b] = p.holeCards
+    const hi = Math.max(a % 13, b % 13)
+    const lo = Math.min(a % 13, b % 13)
+    const suited = Math.floor(a / 13) === Math.floor(b / 13)
+
+    if (s.communityCards.length < 3) {
+      if (hi === lo) return 0.5 + (hi / 12) * 0.5
+      const gap = hi - lo
+      return Math.min(0.95, ((hi + lo) / 24) * 0.6 + (suited ? 0.08 : 0) + (gap <= 1 ? 0.06 : gap === 2 ? 0.03 : 0) + (hi === 12 ? 0.1 : 0))
+    }
+
+    const result = evaluateBestHand(p.holeCards, s.communityCards)
+    const holeRanks = [a % 13, b % 13]
+    let strength: number
+    switch (result.category) {
+      case HandCategory.HighCard:
+        strength = 0.08 + (hi / 12) * 0.1
+        break
+      case HandCategory.OnePair: {
+        // A pair that lives only on the board belongs to everyone.
+        const pairRank = result.ranks[0]
+        if (!holeRanks.includes(pairRank)) strength = 0.12 + (hi / 12) * 0.08
+        else {
+          const boardTop = Math.max(...s.communityCards.map((card) => card % 13))
+          strength = pairRank >= boardTop ? 0.55 + (pairRank / 12) * 0.1 : 0.38 + (pairRank / 12) * 0.08
+        }
+        break
+      }
+      case HandCategory.TwoPair:
+        strength = holeRanks.some((rank) => result.ranks.slice(0, 2).includes(rank)) ? 0.72 : 0.3
+        break
+      case HandCategory.ThreeOfAKind:
+        strength = holeRanks.includes(result.ranks[0]) ? 0.8 : 0.4
+        break
+      case HandCategory.Straight:
+        strength = 0.84
+        break
+      case HandCategory.Flush:
+        strength = 0.88
+        break
+      case HandCategory.FullHouse:
+        strength = 0.94
+        break
+      default:
+        strength = 0.99
+    }
+
+    if (s.communityCards.length < 5 && strength < 0.6) {
+      const all = [...p.holeCards, ...s.communityCards]
+      const suitCounts = [0, 0, 0, 0]
+      for (const card of all) suitCounts[Math.floor(card / 13)]++
+      const flushDraw = suitCounts.some((count, suit) => count === 4 && p.holeCards.some((card) => Math.floor(card / 13) === suit))
+      const ranks = new Set(all.map((card) => card % 13))
+      if (ranks.has(12)) ranks.add(-1)
+      let straightDraw = false
+      for (let start = -1; start <= 8; start++) {
+        let run = 0
+        for (let r = start; r < start + 5; r++) if (ranks.has(r)) run++
+        if (run === 4) straightDraw = true
+      }
+      if (flushDraw) strength = Math.max(strength, 0.42)
+      if (straightDraw) strength = Math.max(strength, flushDraw ? 0.5 : 0.36)
+    }
+    return strength
+  }
+
+  botAct(p: Player) {
+    const s = this.state!
+    const highest = getHighestBet(s)
+    const toCall = Math.min(highest - p.currentBet, p.chips)
+    const bigBlind = s.settings.smallBlind * 2
+    const potOdds = toCall > 0 ? toCall / (s.pot + toCall) : 0
+    const strength = Math.min(1, this.botStrength(p) + (Math.random() - 0.5) * 0.12)
+    const maxTotal = p.currentBet + p.chips
+
+    const raiseTo = (fraction: number) => {
+      const target = highest + Math.max(s.minRaise, Math.round(((s.pot + toCall) * fraction) / bigBlind) * bigBlind)
+      if (target >= maxTotal || toCall >= p.chips) {
+        // Only shove for real when the hand is worth the whole stack.
+        if (strength > 0.8 || maxTotal <= highest + s.minRaise) this.handleAllIn(p.id)
+        else if (toCall > 0) this.handleCall(p.id)
+        else this.handleCheck(p.id)
+        return
+      }
+      this.handleRaise(p.id, target)
+    }
+
+    // Monsters raise, sometimes slow-playing with a call.
+    if (strength > 0.8) {
+      if (toCall > 0 && Math.random() < 0.25) this.handleCall(p.id)
+      else raiseTo(0.6 + Math.random() * 0.5)
+      return
+    }
+
+    if (toCall === 0) {
+      const bluff = Math.random() < 0.1
+      if ((strength > 0.55 && Math.random() < 0.7) || bluff) raiseTo(0.4 + Math.random() * 0.3)
+      else this.handleCheck(p.id)
+      return
+    }
+
+    // Strong hands push back on small bets; everything else weighs the price.
+    if (strength > 0.62 && toCall < p.chips * 0.4 && Math.random() < 0.35) {
+      raiseTo(0.5 + Math.random() * 0.4)
+      return
+    }
+    const cheap = toCall <= bigBlind && s.bettingRound === "pre-flop"
+    if (strength >= potOdds + 0.12 || (cheap && strength > 0.25) || (strength > 0.45 && toCall <= bigBlind * 2)) {
+      if (toCall >= p.chips && strength < 0.6) this.handleFold(p.id)
+      else if (toCall >= p.chips) this.handleAllIn(p.id)
+      else this.handleCall(p.id)
+      return
+    }
+    this.handleFold(p.id)
   }
 
   // ─── Party.Server Methods ───────────────────────────────────────────────
@@ -908,6 +1101,10 @@ class PokerParty implements Party.Server {
         showdownPlayers: [],
         handInProgress: false,
         playerTokens: {},
+        pending: null,
+        turnDeadline: null,
+        log: [],
+        logSeq: 0,
       }
       await this.saveState()
     }
@@ -978,6 +1175,7 @@ class PokerParty implements Party.Server {
             connected: true,
             seatIndex,
             isDealer: false,
+            lastAction: null,
           }
 
           this.state.players[sender.id] = player
@@ -1026,6 +1224,65 @@ class PokerParty implements Party.Server {
           this.state.status = "playing"
           this.state.dealerIndex = this.state.seatOrder.length - 1 // Will advance to 0 in startNewHand
           this.startNewHand()
+          await this.saveState()
+          this.broadcastState()
+          break
+        }
+
+        case "add-bot": {
+          if (sender.id !== this.state.hostId) {
+            this.send(sender, { type: "error", message: "Only the host can add bots" })
+            return
+          }
+          if (this.state.status !== "waiting") {
+            this.send(sender, { type: "error", message: "Game already started" })
+            return
+          }
+          if (this.state.seatOrder.length >= 8) {
+            this.send(sender, { type: "error", message: "Game is full (max 8 players)" })
+            return
+          }
+          const taken = new Set(Object.values(this.state.players).map((player) => player.name))
+          const id = `bot-${crypto.randomUUID().slice(0, 8)}`
+          this.state.players[id] = {
+            id,
+            name: BOT_NAMES.find((candidate) => !taken.has(candidate)) ?? `Bot ${this.state.seatOrder.length + 1}`,
+            chips: this.state.settings.startingChips,
+            holeCards: [],
+            currentBet: 0,
+            totalBetThisHand: 0,
+            folded: false,
+            allIn: false,
+            connected: true,
+            seatIndex: this.state.seatOrder.length,
+            isDealer: false,
+            lastAction: null,
+            isBot: true,
+          }
+          this.state.seatOrder.push(id)
+          await this.saveState()
+          this.broadcastState()
+          break
+        }
+
+        case "remove-bot": {
+          if (sender.id !== this.state.hostId) {
+            this.send(sender, { type: "error", message: "Only the host can remove bots" })
+            return
+          }
+          if (this.state.status !== "waiting") {
+            this.send(sender, { type: "error", message: "Game already started" })
+            return
+          }
+          if (!this.state.players[data.playerId]?.isBot) {
+            this.send(sender, { type: "error", message: "Only bots can be removed" })
+            return
+          }
+          delete this.state.players[data.playerId]
+          this.state.seatOrder = this.state.seatOrder.filter((id) => id !== data.playerId)
+          this.state.seatOrder.forEach((id, index) => {
+            this.state!.players[id].seatIndex = index
+          })
           await this.saveState()
           this.broadcastState()
           break
@@ -1128,7 +1385,7 @@ class PokerParty implements Party.Server {
             leavingPlayer.folded = true
             const active = getActivePlayers(this.state)
             if (active.length === 1) {
-              this.winByFold(active[0])
+              this.closeHandByFold()
             } else if (this.state.seatOrder[this.state.currentPlayerIndex] === sender.id) {
               // It was their turn, advance
               this.advanceAction()
@@ -1139,7 +1396,7 @@ class PokerParty implements Party.Server {
           delete this.state.playerTokens[sender.id]
           this.state.seatOrder = this.state.seatOrder.filter((id) => id !== sender.id)
 
-		  if (this.state.seatOrder.length === 0) {
+		  if (!this.state.seatOrder.some((id) => !this.state!.players[id]?.isBot)) {
 			this.state = null
 			await this.room.storage.delete("state")
 			await this.room.storage.deleteAlarm()
@@ -1163,10 +1420,8 @@ class PokerParty implements Party.Server {
 
           // Transfer host
           if (sender.id === this.state.hostId) {
-            const remaining = this.state.seatOrder
-            if (remaining.length > 0) {
-              this.state.hostId = remaining[0]
-            }
+            const nextHost = this.state.seatOrder.find((id) => !this.state!.players[id]?.isBot)
+            if (nextHost) this.state.hostId = nextHost
           }
 
           await this.saveState()
@@ -1200,7 +1455,8 @@ class PokerParty implements Party.Server {
       this.state.handInProgress &&
       this.state.seatOrder[this.state.currentPlayerIndex] === conn.id
     ) {
-      this.room.storage.setAlarm(Date.now() + 10000)
+      const foldAt = Date.now() + DISCONNECT_FOLD_MS
+      this.room.storage.setAlarm(this.state.turnDeadline ? Math.min(this.state.turnDeadline, foldAt) : foldAt)
     }
 
     await this.saveState()
@@ -1209,17 +1465,42 @@ class PokerParty implements Party.Server {
   }
 
   async onAlarm() {
-    if (!this.state || !this.state.handInProgress) return
+    const s = this.state
+    if (!s) return
 
-    const currentId = this.state.seatOrder[this.state.currentPlayerIndex]
+    if (s.pending) {
+      if (Date.now() < s.pending.at - 50) {
+        await this.room.storage.setAlarm(s.pending.at)
+        return
+      }
+      const { step } = s.pending
+      s.pending = null
+      if (step === "street") this.dealStreet()
+      else if (step === "award") this.awardShowdown()
+      else this.awardFoldWin()
+      await this.saveState()
+      return
+    }
+
+    if (!s.handInProgress) return
+    const currentId = s.seatOrder[s.currentPlayerIndex]
     if (!currentId) return
-
-    const player = this.state.players[currentId]
+    const player = s.players[currentId]
     if (!player) return
 
-    if (!player.connected || this.state.settings.turnTimeLimit > 0) {
+    if (player.isBot) {
+      this.botAct(player)
+      await this.saveState()
+      return
+    }
+
+    const timedOut = s.turnDeadline !== null && Date.now() >= s.turnDeadline - 250
+    if (timedOut || !player.connected) {
+      if (timedOut) this.addLog({ kind: "timeout", playerId: currentId, name: player.name })
       this.handleFold(currentId)
       await this.saveState()
+    } else if (s.turnDeadline) {
+      await this.room.storage.setAlarm(s.turnDeadline)
     }
   }
 

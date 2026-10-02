@@ -8,7 +8,7 @@ import { getGameNightInviteLink, parseInviteSearch } from '@/lib/inviteLinks'
 import { useMultiplayerSession } from '@/lib/multiplayerSession'
 import { GameModeSelector } from '@/components/games/poker/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/poker/MultiplayerLobby'
-import { MultiplayerGame } from '@/components/games/poker/v2/MultiplayerGameV2'
+import { PokerGame } from '@/components/games/poker/PokerGame'
 import { useMultiplayerPoker, type PokerSettings } from '@/components/games/poker/useMultiplayerPoker'
 
 export const Route = createFileRoute('/games/poker')({
@@ -155,6 +155,8 @@ function PokerPage() {
           playerId={multiplayer.playerId}
           isHost={multiplayer.isHost}
           onStartGame={multiplayer.startGame}
+          onAddBot={multiplayer.addBot}
+          onRemoveBot={multiplayer.removeBot}
           onLeave={handleLeaveMultiplayer}
         />
         </div>
@@ -165,36 +167,21 @@ function PokerPage() {
   // View 3: Game
   if (effectiveView === 'game' && multiplayer.gameState && multiplayer.playerId) {
     return (
-      <div className="flex h-[calc(100vh-73px)] flex-col overflow-hidden bg-[#0d1117]">
-        <div className="flex shrink-0 items-center justify-between border-b border-white/[0.07] px-4 py-2.5">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleLeaveMultiplayer}
-            className="text-white/50 hover:bg-white/5 hover:text-white"
-          >
-            <ArrowLeft className="w-4 h-4 mr-1" />
-            Leave
-          </Button>
-          <h1 className="text-sm font-semibold text-white/80">Texas Hold'em</h1>
-          <span className="font-mono text-xs text-white/30">
-            {gameNightConnection ? bridge.publicRoomCode : multiplayer.gameState.roomCode}
-          </span>
-        </div>
-        <MultiplayerGame
-          gameState={multiplayer.gameState}
-          playerId={multiplayer.playerId}
-          isHost={multiplayer.isHost}
-          onFold={multiplayer.fold}
-          onCheck={multiplayer.check}
-          onCall={multiplayer.call}
-          onRaise={multiplayer.raise}
-          onAllIn={multiplayer.allIn}
-          onNextHand={multiplayer.nextHand}
-          onLeave={handleLeaveMultiplayer}
-          error={multiplayer.error}
-        />
-      </div>
+      <PokerGame
+        state={multiplayer.gameState}
+        playerId={multiplayer.playerId}
+        isHost={multiplayer.isHost}
+        roomLabel={gameNightConnection ? bridge.publicRoomCode : multiplayer.gameState.roomCode}
+        error={multiplayer.error}
+        connected={multiplayer.connectionStatus === 'connected'}
+        onFold={multiplayer.fold}
+        onCheck={multiplayer.check}
+        onCall={multiplayer.call}
+        onRaise={multiplayer.raise}
+        onAllIn={multiplayer.allIn}
+        onNextHand={multiplayer.nextHand}
+        onLeave={handleLeaveMultiplayer}
+      />
     )
   }
 

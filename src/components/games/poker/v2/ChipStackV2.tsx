@@ -1,77 +1,75 @@
 import { cn } from "@/lib/utils"
 
 /** Casino denominations, high to low. */
-const DENOMS: { value: number; face: string; edge: string }[] = [
-  { value: 1000, face: "#1c1c22", edge: "#f0c040" },
-  { value: 500, face: "#6d28d9", edge: "#c4b5fd" },
-  { value: 100, face: "#18181b", edge: "#a1a1aa" },
-  { value: 25, face: "#15803d", edge: "#86efac" },
-  { value: 5, face: "#b91c1c", edge: "#fca5a5" },
-  { value: 1, face: "#e4e4e7", edge: "#71717a" },
+const DENOMS: { value: number; face: string; edge: string; side: string }[] = [
+  { value: 1000, face: "#e0a422", edge: "#fff6dc", side: "#8a5f0c" },
+  { value: 500, face: "#6c3fb0", edge: "#efe6ff", side: "#3b1f66" },
+  { value: 100, face: "#1d1d24", edge: "#f1f1f4", side: "#050507" },
+  { value: 25, face: "#1d8a4f", edge: "#f0fff6", side: "#0d4a29" },
+  { value: 5, face: "#c42c35", edge: "#fff0f0", side: "#6e121a" },
+  { value: 1, face: "#ece9e0", edge: "#2f64b8", side: "#8f8a7c" },
 ]
 
-/** Greedy breakdown, biggest chips first, capped so a big stack stays readable. */
-function chipsFor(amount: number, max: number) {
-  const out: (typeof DENOMS)[number][] = []
+const MAX_PER_COLUMN = 7
+
+/** Greedy breakdown into at most three columns, one per denomination, biggest first. */
+function columnsFor(amount: number) {
+  const columns: { denom: (typeof DENOMS)[number]; count: number }[] = []
   let left = amount
   for (const denom of DENOMS) {
-    while (left >= denom.value && out.length < max) {
-      out.push(denom)
-      left -= denom.value
+    const count = Math.floor(left / denom.value)
+    if (count > 0) {
+      columns.push({ denom, count: Math.min(count, MAX_PER_COLUMN) })
+      left -= count * denom.value
     }
-    if (out.length >= max) break
+    if (columns.length === 3) break
   }
-  if (out.length === 0 && amount > 0) out.push(DENOMS[DENOMS.length - 1])
-  return out
+  if (columns.length === 0 && amount > 0) columns.push({ denom: DENOMS[DENOMS.length - 1], count: 1 })
+  return columns
 }
 
 interface ChipStackProps {
   amount: number
-  size?: "sm" | "md"
-  showLabel?: boolean
+  /** Chip diameter in px. */
+  chip?: number
+  label?: "right" | "below" | "none"
   className?: string
 }
 
-export function ChipStack({
-  amount,
-  size = "sm",
-  showLabel = true,
-  className,
-}: ChipStackProps) {
+export function ChipStack({ amount, chip = 18, label = "right", className }: ChipStackProps) {
   if (amount <= 0) return null
-
-  const max = size === "md" ? 6 : 4
-  const chips = chipsFor(amount, max)
-  const dim = size === "md" ? 22 : 16
-  const lift = size === "md" ? 4 : 3
+  const columns = columnsFor(amount)
+  const lift = chip * 0.13
+  const discH = chip * 0.56
+  const tallest = Math.max(...columns.map((column) => column.count))
+  const step = chip * 0.72
 
   return (
-    <div className={cn("flex items-center gap-1.5", className)}>
-      <div
-        className="relative shrink-0"
-        style={{ width: dim, height: dim + (chips.length - 1) * lift }}
-      >
-        {chips.map((chip, i) => (
-          <div
-            key={`${chip.value}-${i}`}
-            className="absolute rounded-full"
-            style={{
-              width: dim,
-              height: dim,
-              bottom: i * lift,
-              background: `radial-gradient(circle at 50% 35%, ${chip.face} 55%, rgba(0,0,0,0.45) 100%)`,
-              border: `${size === "md" ? 2.5 : 2}px dashed ${chip.edge}`,
-              boxShadow: "0 1px 2px rgba(0,0,0,0.5)",
-            }}
-          />
+    <div className={cn("pointer-events-none flex items-center", label === "below" ? "flex-col gap-1" : "gap-1.5", className)}>
+      <div className="relative shrink-0" style={{ width: chip + step * (columns.length - 1), height: discH + lift * tallest }}>
+        {columns.map((column, ci) => (
+          <div key={column.denom.value} className="absolute bottom-0" style={{ left: ci * step, width: chip, height: discH + lift * column.count, zIndex: ci % 2 === 1 ? 2 : 1 }}>
+            {Array.from({ length: column.count }, (_, k) => (
+              <div
+                key={k}
+                className="absolute left-0"
+                style={{
+                  bottom: k * lift,
+                  width: chip,
+                  height: discH,
+                  borderRadius: "50%",
+                  background: `radial-gradient(ellipse at center, ${column.denom.face} 0 44%, ${column.denom.edge} 45% 49%, transparent 50%), repeating-conic-gradient(${column.denom.face} 0 30deg, ${column.denom.edge} 30deg 45deg)`,
+                  boxShadow: `0 ${lift}px 0 ${column.denom.side}, 0 ${lift + 1}px 3px rgba(0,0,0,0.55)`,
+                }}
+              />
+            ))}
+          </div>
         ))}
       </div>
-      {showLabel && (
+      {label !== "none" && (
         <span
-          className={cn(
-            "font-mono font-semibold tabular-nums text-amber-200",
-            size === "md" ? "text-sm" : "text-[10px]",
-          )}
+          className="rounded-full bg-black/60 px-2 py-0.5 font-mono font-bold tabular-nums text-amber-100 ring-1 ring-white/10"
+          style={{ fontSize: Math.max(10, chip * 0.6) }}
         >
           {amount.toLocaleString()}
         </span>

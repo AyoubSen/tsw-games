@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Copy, Check, Crown, Users, LogOut, Play, Coins, Clock, TrendingUp } from "lucide-react"
+import { Copy, Check, Crown, Users, LogOut, Play, Coins, Clock, TrendingUp, Bot, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { getInviteLink } from "@/lib/inviteLinks"
@@ -10,6 +10,8 @@ interface MultiplayerLobbyProps {
   playerId: string
   isHost: boolean
   onStartGame: () => void
+  onAddBot: () => void
+  onRemoveBot: (playerId: string) => void
   onLeave: () => void
 }
 
@@ -18,6 +20,8 @@ export function MultiplayerLobby({
   playerId,
   isHost,
   onStartGame,
+  onAddBot,
+  onRemoveBot,
   onLeave,
 }: MultiplayerLobbyProps) {
   const [copied, setCopied] = useState(false)
@@ -118,7 +122,7 @@ export function MultiplayerLobby({
                 >
                   <div className="flex items-center gap-2">
                     <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-sm font-medium">
-                      {player.name.charAt(0).toUpperCase()}
+                      {player.isBot ? <Bot className="w-4 h-4" /> : player.name.charAt(0).toUpperCase()}
                     </div>
                     <span className="font-medium">{player.name}</span>
                     {!player.connected && (
@@ -127,12 +131,33 @@ export function MultiplayerLobby({
                     {player.id === playerId && (
                       <span className="text-xs text-muted-foreground">(You)</span>
                     )}
+                    {player.isBot && (
+                      <span className="text-xs text-muted-foreground">Bot</span>
+                    )}
                   </div>
                   {player.id === gameState.hostId && (
                     <Crown className="w-4 h-4 text-yellow-500" />
                   )}
+                  {player.isBot && isHost && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => onRemoveBot(player.id)}
+                      aria-label={`Remove ${player.name}`}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  )}
                 </div>
               ))}
+
+              {isHost && players.length < 8 && (
+                <Button variant="outline" className="w-full border-dashed" onClick={onAddBot}>
+                  <Bot className="w-4 h-4 mr-2" />
+                  Add bot
+                </Button>
+              )}
 
               {Array.from({ length: Math.max(0, 2 - connectedPlayers.length) }).map((_, i) => (
                 <div
@@ -175,7 +200,7 @@ export function MultiplayerLobby({
         </div>
 
         <p className="text-xs text-muted-foreground text-center">
-          Need at least 2 players to start
+          Need at least 2 players to start · add bots to play solo
         </p>
       </div>
     </div>

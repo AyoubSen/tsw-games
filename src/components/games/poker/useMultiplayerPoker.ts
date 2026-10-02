@@ -245,6 +245,14 @@ export function useMultiplayerPoker() {
     if (state.isHost) sendNow({ type: "start-game" })
   }, [sendNow, state.isHost])
 
+  const addBot = useCallback(() => {
+    if (state.isHost) sendNow({ type: "add-bot" })
+  }, [sendNow, state.isHost])
+
+  const removeBot = useCallback((playerId: string) => {
+    if (state.isHost) sendNow({ type: "remove-bot", playerId })
+  }, [sendNow, state.isHost])
+
   const fold = useCallback(() => {
     sendNow({ type: "fold" })
   }, [sendNow])
@@ -282,6 +290,8 @@ export function useMultiplayerPoker() {
     createGame,
     joinGame,
     startGame,
+    addBot,
+    removeBot,
     fold,
     check,
     call,

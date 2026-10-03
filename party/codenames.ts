@@ -11,6 +11,8 @@ import {
   validateGameNightConnection,
   type GameNightMember,
 } from "./shared/gameNight"
+import { clearSpectators, dropSpectator, MAX_SPECTATORS, publicSpectators, type PublicSpectator, type Spectator } from "./shared/spectators"
+import { isReaction, takeReactionSlot, type Reaction, type ReactionMessage } from "../src/lib/reactions"
 
 // Core types
 export type Team = "red" | "blue"
@@ -21,6 +23,38 @@ export type TurnPhase = "giving-clue" | "guessing"
 export type GameMode = "classic" | "hardcore" | "duet"
 export type WinReason = "cards" | "assassin" | "wrong-guess" | "timeout"
 
+/** What a guessed card turned out to be, from the guessing side's point of view. */
+export type GuessResult = "correct" | "neutral" | "opponent" | "assassin"
+export type GuessNext = "continue" | "turn-over" | "game-over"
+export interface LoggedGuess {
+  index: number
+  by: string
+  result: GuessResult
+}
+
+/**
+ * Server-paced beats, advanced by the storage alarm so every client sees the
+ * same timeline. Client animations inside a beat must fit these durations.
+ */
+export const PACE_MS = {
+  clue: 2600,
+  tension: 1300,
+  flip: 1700,
+  /** Flip that ends the game on the last agent. */
+  flipFinal: 2600,
+  assassin: 3600,
+  handoff: 1700,
+} as const
+
+export type Pending =
+  | { kind: "clue"; seq: number; endsAt: number; word: string; count: number; team: Team | null; givenBy: string }
+  | {
+    kind: "guess"; seq: number; endsAt: number; stage: "tension" | "flip"
+    cardIndex: number; byId: string; byName: string; team: Team | null
+    result: GuessResult | null; next: GuessNext | null
+  }
+  | { kind: "handoff"; seq: number; endsAt: number; team: Team | null; toId: string | null; reason: string }
+
 export const DUET_TURN_LIMIT = 9
 export type DuetCardType = "agent" | "bystander" | "assassin"
 export interface DuetClue {
@@ -28,6 +62,7 @@ export interface DuetClue {
   count: number
   giverId: string
   givenBy: string
+  guesses?: LoggedGuess[]
 }
 interface DuetState {
   playerIds: string[]
@@ -48,7 +83,8 @@ interface DuetState {
 export interface PublicDuetState {
   turnLimit: number
   playerIds: string[]
-  myKey: DuetCardType[]
+  /** Null for spectators, who never see either key. */
+  myKey: DuetCardType[] | null
   partnerKey: DuetCardType[] | null
   found: number[]
   bystanders: Record<string, number[]>
@@ -96,6 +132,7 @@ export interface Clue {
   team: Team
   givenBy: string
   timestamp: number
+  guesses?: LoggedGuess[]
 }
 
 export interface Turn {
@@ -123,6 +160,15 @@ export interface GameState {
   winReason: WinReason | null
   playerTokens: Record<string, string>
   duet: DuetState | null
+  pending: Pending | null
+  paceSeq: number
+  /** When the running clue/guess timer runs out; null while paused or untimed. */
+  turnDeadline: number | null
+  /** Guess intents: player id → card they are considering. Shown to their own team only. */
+  intents: Record<string, number>
+  finishedAt: number | null
+  /** People who joined mid-game; the host can seat them between games. */
+  spectators?: Record<string, Spectator>
 }
 
 // Public state sent to clients (hides card types for non-spymasters)
@@ -141,11 +187,16 @@ export interface PublicGameState {
   winner: Team | null
   winReason: WinReason | null
   duet: PublicDuetState | null
+  pending: Pending | null
+  turnDeadline: number | null
+  intents: Record<string, number>
+  finishedAt: number | null
+  spectators: PublicSpectator[]
 }
 
 export interface PublicCard {
   word: string
-  type: CardType | null // null if not revealed and viewer is not spymaster
+  type: CardType | null // null if not revealed and viewer is not spymaster (every type is public once the game ends)
   revealed: boolean
   revealedBy: Team | null
 }
@@ -158,9 +209,12 @@ export type ClientMessage =
   | { type: "select-team"; team: Team; role: PlayerRole }
   | { type: "start-game" }
   | { type: "give-clue"; word: string; count: number }
+  | { type: "consider"; cardIndex: number | null }
   | { type: "guess"; cardIndex: number }
   | { type: "end-guessing" }
   | { type: "restart" }
+  | { type: "seat-spectator"; playerId: string }
+  | { type: "react"; reaction: Reaction }
   | { type: "duet-clue"; turnId: string; revision: number; word: string; count: number }
   | { type: "duet-guess"; turnId: string; revision: number; cardIndex: number }
   | { type: "duet-pass"; turnId: string; revision: number }
@@ -171,13 +225,8 @@ export type ServerMessage =
   | { type: "player-joined"; player: Player }
   | { type: "player-left"; playerId: string }
   | { type: "player-updated"; player: Player }
-  | { type: "game-started"; startingTeam: Team }
-  | { type: "clue-given"; clue: Clue }
-  | { type: "card-revealed"; cardIndex: number; cardType: CardType; team: Team }
-  | { type: "turn-ended"; nextTeam: Team; reason: string }
-  | { type: "timer-tick"; timeRemaining: number; phase: TurnPhase }
-  | { type: "game-over"; winner: Team; reason: WinReason }
   | { type: "error"; message: string }
+  | ReactionMessage
 
 // Word list (~400 words)
 const CODENAMES_WORDS = [
@@ -269,23 +318,35 @@ function generateBoard(startingTeam: Team): Card[] {
   }))
 }
 
+type GuessPending = Extract<Pending, { kind: "guess" }>
+
+const otherTeam = (team: Team): Team => (team === "red" ? "blue" : "red")
+
 class CodenamesParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
   gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
+  reactedAt = new Map<string, number>()
 
   async onStart() {
     const stored = await this.room.storage.get<GameState>("state")
     if (stored) {
       stored.playerTokens ??= {}
       stored.duet ??= null
+      stored.pending ??= null
+      stored.paceSeq ??= 0
+      stored.turnDeadline ??= null
+      stored.intents ??= {}
+      stored.finishedAt ??= null
+      clearSpectators(stored)
       this.state = stored
       for (const player of Object.values(this.state.players)) {
         player.connected = false
       }
       await this.saveState()
+      await this.scheduleAlarm()
     }
   }
 
@@ -295,10 +356,28 @@ class CodenamesParty implements Party.Server {
     }
   }
 
+  /** The alarm drives both the pacing beats and the turn timer; a beat always comes first. */
+  async scheduleAlarm() {
+    const s = this.state
+    const at = s?.status === "playing" ? s.pending?.endsAt ?? s.turnDeadline : null
+    if (at) await this.room.storage.setAlarm(Math.max(Date.now() + 10, at))
+    else await this.room.storage.deleteAlarm()
+  }
+
+  async commit() {
+    await this.saveState()
+    await this.scheduleAlarm()
+    this.broadcastState()
+  }
+
   isAuthenticated(conn: Party.Connection): boolean {
     if (!this.state) return false
     const token = this.connectionTokens.get(conn)
     return Boolean(token && this.state.playerTokens[conn.id] === token)
+  }
+
+  maxPlayers() {
+    return this.state?.settings.gameMode === "duet" ? 2 : 8
   }
 
   getPublicState(playerId: string): PublicGameState {
@@ -308,10 +387,11 @@ class CodenamesParty implements Party.Server {
 
     const player = this.state.players[playerId]
     const isSpymaster = player?.role === "spymaster"
+    const over = this.state.status === "finished"
 
     const publicBoard: PublicCard[] = this.state.board.map((card) => ({
       word: card.word,
-      type: this.state!.settings.gameMode === "duet" ? null : card.revealed || isSpymaster ? card.type : null,
+      type: this.state!.settings.gameMode === "duet" ? null : card.revealed || isSpymaster || over ? card.type : null,
       revealed: card.revealed,
       revealedBy: card.revealedBy,
     }))
@@ -331,7 +411,23 @@ class CodenamesParty implements Party.Server {
       winner: this.state.winner,
       winReason: this.state.winReason,
       duet: this.getPublicDuetState(playerId),
+      pending: this.state.pending,
+      turnDeadline: this.state.turnDeadline,
+      intents: this.visibleIntents(playerId),
+      finishedAt: this.state.finishedAt,
+      spectators: publicSpectators(this.state.spectators),
     }
+  }
+
+  /** Teammates see each other's intents; the other team and spectators never do. */
+  visibleIntents(viewerId: string): Record<string, number> {
+    const s = this.state!
+    const viewer = s.players[viewerId]
+    if (!viewer) return {}
+    const sameSide = (id: string) => s.duet
+      ? s.duet.playerIds.includes(viewerId) && s.duet.playerIds.includes(id)
+      : Boolean(viewer.team) && s.players[id]?.team === viewer.team
+    return Object.fromEntries(Object.entries(s.intents).filter(([id]) => sameSide(id)))
   }
 
   duetRemaining(keyOwnerId: string): number {
@@ -342,17 +438,19 @@ class CodenamesParty implements Party.Server {
 
   getPublicDuetState(playerId: string): PublicDuetState | null {
     const duet = this.state?.duet
-    if (!duet || !duet.playerIds.includes(playerId)) return null
-    const partnerId = duet.playerIds.find((id) => id !== playerId)!
+    if (!duet) return null
+    const isPlayer = duet.playerIds.includes(playerId)
+    const selfId = isPlayer ? playerId : duet.playerIds[0]
+    const partnerId = duet.playerIds.find((id) => id !== selfId)!
     return {
       turnLimit: DUET_TURN_LIMIT,
-      playerIds: duet.playerIds, myKey: duet.keys[playerId],
-      partnerKey: this.state?.status === "finished" ? duet.keys[partnerId] : null,
+      playerIds: duet.playerIds, myKey: isPlayer ? duet.keys[playerId] : null,
+      partnerKey: isPlayer && this.state?.status === "finished" ? duet.keys[partnerId] : null,
       found: duet.found, bystanders: duet.bystanders, giverId: duet.giverId,
       phase: duet.phase, turnsUsed: duet.turnsUsed, turnId: duet.turnId, revision: duet.revision,
       clue: duet.clue, history: duet.history, guessesThisTurn: duet.guessesThisTurn,
       agentsRemaining: 15 - duet.found.length,
-      myAgentsRemaining: this.duetRemaining(playerId), partnerAgentsRemaining: this.duetRemaining(partnerId),
+      myAgentsRemaining: this.duetRemaining(selfId), partnerAgentsRemaining: this.duetRemaining(partnerId),
       outcome: duet.outcome, lastGuess: duet.lastGuess,
     }
   }
@@ -385,12 +483,17 @@ class CodenamesParty implements Party.Server {
     }
     this.state.status = "playing"
     this.state.currentTurn = null
+    this.state.finishedAt = null
   }
 
   finishDuet(outcome: NonNullable<DuetState["outcome"]>) {
     if (!this.state?.duet) return
     this.state.duet.outcome = outcome
     this.state.status = "finished"
+    this.state.pending = null
+    this.state.turnDeadline = null
+    this.state.intents = {}
+    this.state.finishedAt = Date.now()
   }
 
   endDuetTurn() {
@@ -409,11 +512,19 @@ class CodenamesParty implements Party.Server {
     duet.phase = "giving-clue"
   }
 
+  canGuessDuet(playerId: string) {
+    const duet = this.state?.duet
+    if (!duet || !duet.playerIds.includes(playerId)) return false
+    const partnerId = duet.playerIds.find((id) => id !== playerId)!
+    return this.duetRemaining(partnerId) > 0 && (duet.phase === "sudden-death" || (duet.phase === "guessing" && playerId !== duet.giverId))
+  }
+
   handleDuetAction(data: Extract<ClientMessage, { type: "duet-clue" | "duet-guess" | "duet-pass" }>, sender: Party.Connection) {
     const duet = this.state?.duet
     if (!this.state || this.state.settings.gameMode !== "duet" || this.state.status !== "playing" || !duet ||
       !duet.playerIds.includes(sender.id) || data.turnId !== duet.turnId || data.revision !== duet.revision) return
     const error = (message: string) => this.send(sender, { type: "error", message })
+    if (this.state.pending) return error("Wait for the table to catch up")
     const partnerId = duet.playerIds.find((id) => id !== sender.id)!
     if (data.type === "duet-clue") {
       if (duet.phase !== "giving-clue" || sender.id !== duet.giverId) return error("It is your partner's turn to give a clue")
@@ -421,35 +532,175 @@ class CodenamesParty implements Party.Server {
       if (!/^[A-Z]{1,30}$/.test(word)) return error("Use one word with letters only (up to 30 characters)")
       if (this.state.board.some((card, index) => !duet.found.includes(index) && card.word === word)) return error("Your clue cannot be an unfound word on the board")
       if (!Number.isInteger(data.count) || data.count < 1 || data.count > this.duetRemaining(sender.id)) return error("Choose a count from 1 to your remaining agents")
-      duet.clue = { word, count: data.count, giverId: sender.id, givenBy: this.state.players[sender.id].name }
-      duet.history.push(duet.clue)
+      const givenBy = this.state.players[sender.id].name
+      duet.clue = { word, count: data.count, giverId: sender.id, givenBy }
+      duet.history.push({ ...duet.clue, guesses: [] })
       duet.phase = "guessing"
+      this.state.intents = {}
+      this.state.pending = { kind: "clue", seq: ++this.state.paceSeq, endsAt: Date.now() + PACE_MS.clue, word, count: data.count, team: null, givenBy }
     } else if (data.type === "duet-pass") {
       if (duet.phase !== "guessing" || sender.id === duet.giverId || duet.guessesThisTurn < 1) return error("The guesser must make at least one guess before ending the turn")
       this.endDuetTurn()
+      this.beginHandoff("passed")
     } else {
       if (duet.phase !== "sudden-death" && (duet.phase !== "guessing" || sender.id === duet.giverId)) return error("Wait for your partner's clue before guessing")
       if (this.duetRemaining(partnerId) === 0) return error("You have already found all agents on your partner's key")
       const index = data.cardIndex
       if (!Number.isInteger(index) || index < 0 || index >= 25 || duet.found.includes(index) || duet.bystanders[sender.id].includes(index)) return error("Choose an unfound card you have not ruled out")
-      // Always evaluate against the clue giver's key, never the guesser's own key.
-      const type = duet.keys[partnerId][index]
-      duet.lastGuess = { cardIndex: index, playerId: sender.id, type }
-      duet.guessesThisTurn++
-      if (type === "assassin") this.finishDuet("assassin")
-      else if (type === "bystander") {
-        duet.bystanders[sender.id].push(index)
-        if (duet.phase === "sudden-death") this.finishDuet("bystander")
-        else this.endDuetTurn()
-      } else {
-        duet.found.push(index)
-        this.state.board[index].revealed = true
-        if (duet.found.length === 15) this.finishDuet("win")
-        else if (duet.phase !== "sudden-death" && this.duetRemaining(partnerId) === 0) this.endDuetTurn()
-      }
+      this.startGuess(index, sender.id)
     }
     duet.revision++
     return true
+  }
+
+  // ─── Pacing ─────────────────────────────────────────────────────────────
+
+  startTimer(limitSeconds: number) {
+    const s = this.state!
+    s.turnDeadline = limitSeconds > 0 ? Date.now() + limitSeconds * 1000 : null
+    if (s.currentTurn) s.currentTurn.phaseStartedAt = Date.now()
+  }
+
+  /** Sweep to whoever plays next; nobody can act until it has played. */
+  beginHandoff(reason: string) {
+    const s = this.state!
+    s.intents = {}
+    s.turnDeadline = null
+    s.pending = {
+      kind: "handoff", seq: ++s.paceSeq, endsAt: Date.now() + PACE_MS.handoff,
+      team: s.currentTurn?.team ?? null,
+      toId: s.duet && s.duet.phase !== "sudden-death" ? s.duet.giverId : null,
+      reason: s.duet?.phase === "sudden-death" ? "sudden-death" : reason,
+    }
+  }
+
+  /** The tension beat: the card is locked in but nothing about it is sent yet. */
+  startGuess(cardIndex: number, byId: string) {
+    const s = this.state!
+    s.turnDeadline = null
+    for (const [id, index] of Object.entries(s.intents)) if (index === cardIndex) delete s.intents[id]
+    s.pending = {
+      kind: "guess", seq: ++s.paceSeq, endsAt: Date.now() + PACE_MS.tension, stage: "tension",
+      cardIndex, byId, byName: s.players[byId]?.name ?? "Someone", team: s.currentTurn?.team ?? null,
+      result: null, next: null,
+    }
+  }
+
+  flipEndsAt(result: GuessResult, next: GuessNext) {
+    return Date.now() + (result === "assassin" ? PACE_MS.assassin : next === "game-over" ? PACE_MS.flipFinal : PACE_MS.flip)
+  }
+
+  flipClassicGuess(p: GuessPending) {
+    const s = this.state!
+    const turn = s.currentTurn
+    const card = s.board[p.cardIndex]
+    if (!turn || !card || card.revealed) {
+      s.pending = null
+      return
+    }
+    const team = turn.team
+    card.revealed = true
+    card.revealedBy = team
+    if (card.type === "red") s.redCardsRemaining--
+    else if (card.type === "blue") s.blueCardsRemaining--
+    turn.guessedThisTurn.push(p.cardIndex)
+    const result: GuessResult = card.type === team ? "correct" : card.type === "assassin" ? "assassin" : card.type === "neutral" ? "neutral" : "opponent"
+    const clue = s.clueHistory[s.clueHistory.length - 1]
+    if (clue) (clue.guesses ??= []).push({ index: p.cardIndex, by: p.byName, result })
+
+    let next: GuessNext
+    if (result === "assassin" || s.redCardsRemaining === 0 || s.blueCardsRemaining === 0) next = "game-over"
+    else if (result !== "correct") next = s.settings.gameMode === "hardcore" ? "game-over" : "turn-over"
+    else {
+      turn.guessesRemaining--
+      // Count 0 means unlimited guesses.
+      next = turn.clue?.count !== 0 && turn.guessesRemaining <= 0 ? "turn-over" : "continue"
+    }
+    p.stage = "flip"
+    p.result = result
+    p.next = next
+    p.endsAt = this.flipEndsAt(result, next)
+  }
+
+  settleClassicGuess(p: GuessPending) {
+    const s = this.state!
+    const team = s.currentTurn?.team ?? p.team ?? "red"
+    if (p.next === "game-over") {
+      if (p.result === "assassin") return this.endGame(otherTeam(team), "assassin")
+      if (s.redCardsRemaining === 0) return this.endGame("red", "cards")
+      if (s.blueCardsRemaining === 0) return this.endGame("blue", "cards")
+      return this.endGame(otherTeam(team), "wrong-guess")
+    }
+    if (p.next === "turn-over") return this.switchTurn(p.result === "correct" ? "out of guesses" : "wrong guess")
+    s.pending = null
+    this.startTimer(s.settings.guessTimeLimit)
+  }
+
+  flipDuetGuess(p: GuessPending) {
+    const s = this.state!
+    const duet = s.duet!
+    const partnerId = duet.playerIds.find((id) => id !== p.byId)!
+    // Always evaluate against the clue giver's key, never the guesser's own key.
+    const type = duet.keys[partnerId][p.cardIndex]
+    duet.lastGuess = { cardIndex: p.cardIndex, playerId: p.byId, type }
+    duet.guessesThisTurn++
+    const result: GuessResult = type === "agent" ? "correct" : type === "assassin" ? "assassin" : "neutral"
+    const clue = duet.history[duet.history.length - 1]
+    if (clue && duet.phase === "guessing") (clue.guesses ??= []).push({ index: p.cardIndex, by: p.byName, result })
+
+    let next: GuessNext
+    if (type === "assassin") next = "game-over"
+    else if (type === "bystander") {
+      duet.bystanders[p.byId].push(p.cardIndex)
+      next = duet.phase === "sudden-death" ? "game-over" : "turn-over"
+    } else {
+      duet.found.push(p.cardIndex)
+      s.board[p.cardIndex].revealed = true
+      next = duet.found.length === 15 ? "game-over"
+        : duet.phase !== "sudden-death" && this.duetRemaining(partnerId) === 0 ? "turn-over" : "continue"
+    }
+    duet.revision++
+    p.stage = "flip"
+    p.result = result
+    p.next = next
+    p.endsAt = this.flipEndsAt(result, next)
+  }
+
+  settleDuetGuess(p: GuessPending) {
+    const s = this.state!
+    const duet = s.duet!
+    duet.revision++
+    if (p.next === "game-over") return this.finishDuet(p.result === "assassin" ? "assassin" : p.result === "neutral" ? "bystander" : "win")
+    if (p.next === "turn-over") {
+      this.endDuetTurn()
+      return this.beginHandoff(p.result === "correct" ? "all found" : "bystander")
+    }
+    s.pending = null
+  }
+
+  advancePending(p: Pending) {
+    const s = this.state!
+    const duet = s.settings.gameMode === "duet"
+    if (p.kind === "guess") {
+      if (p.stage === "tension") return duet ? this.flipDuetGuess(p) : this.flipClassicGuess(p)
+      return duet ? this.settleDuetGuess(p) : this.settleClassicGuess(p)
+    }
+    s.pending = null
+    if (s.duet) s.duet.revision++
+    if (!duet) this.startTimer(p.kind === "clue" ? s.settings.guessTimeLimit : s.settings.clueTimeLimit)
+  }
+
+  timeOut() {
+    const s = this.state!
+    const turn = s.currentTurn
+    s.turnDeadline = null
+    if (!turn || s.settings.gameMode === "duet") return
+    // Hardcore: a silent spymaster, or guessers who never guessed, lose outright.
+    if (s.settings.gameMode === "hardcore" && (turn.phase === "giving-clue" || turn.guessedThisTurn.length === 0)) {
+      this.endGame(otherTeam(turn.team), "timeout")
+    } else {
+      this.switchTurn("time expired")
+    }
   }
 
   isSpymaster(playerId: string): boolean {
@@ -514,93 +765,10 @@ class CodenamesParty implements Party.Server {
     return { valid: true, message: "Teams are ready" }
   }
 
-  handleGuess(cardIndex: number, guessingTeam: Team): void {
-    if (!this.state || !this.state.currentTurn) return
-
-    const card = this.state.board[cardIndex]
-    if (!card || card.revealed) return
-
-    // Reveal the card
-    card.revealed = true
-    card.revealedBy = guessingTeam
-
-    // Update remaining counts
-    if (card.type === "red") {
-      this.state.redCardsRemaining--
-    } else if (card.type === "blue") {
-      this.state.blueCardsRemaining--
-    }
-
-    // Track this guess
-    this.state.currentTurn.guessedThisTurn.push(cardIndex)
-
-    // Broadcast card reveal
-    this.broadcast({
-      type: "card-revealed",
-      cardIndex,
-      cardType: card.type,
-      team: guessingTeam,
-    })
-
-    // Check win conditions
-    if (card.type === "assassin") {
-      // Guessing team loses
-      const winner = guessingTeam === "red" ? "blue" : "red"
-      this.endGame(winner, "assassin")
-      return
-    }
-
-    // Check if any team found all their cards
-    if (this.state.redCardsRemaining === 0) {
-      this.endGame("red", "cards")
-      return
-    }
-    if (this.state.blueCardsRemaining === 0) {
-      this.endGame("blue", "cards")
-      return
-    }
-
-    // Check turn flow
-    if (card.type !== guessingTeam) {
-      // Wrong team's card or neutral
-
-      // In hardcore mode, any wrong guess = instant loss
-      if (this.state.settings.gameMode === "hardcore") {
-        const winner = guessingTeam === "red" ? "blue" : "red"
-        this.endGame(winner, "wrong-guess")
-        return
-      }
-
-      // Classic mode - just end turn
-      this.switchTurn("wrong guess")
-    } else {
-      // Correct guess
-      this.state.currentTurn.guessesRemaining--
-
-      // Reset guess timer if in speed mode
-      if (this.state.settings.guessTimeLimit > 0) {
-        this.state.currentTurn.phaseStartedAt = Date.now()
-        this.setGuessTimer()
-      }
-
-      // Check if out of guesses (unless unlimited with count=0)
-      if (
-        this.state.currentTurn.clue?.count !== 0 &&
-        this.state.currentTurn.guessesRemaining <= 0
-      ) {
-        this.switchTurn("out of guesses")
-      }
-      // Otherwise, they can continue guessing
-    }
-  }
-
   switchTurn(reason: string) {
     if (!this.state || !this.state.currentTurn) return
 
-    // Cancel any existing timer
-    this.room.storage.deleteAlarm()
-
-    const nextTeam = this.state.currentTurn.team === "red" ? "blue" : "red"
+    const nextTeam = otherTeam(this.state.currentTurn.team)
 
     this.state.currentTurn = {
       team: nextTeam,
@@ -610,80 +778,48 @@ class CodenamesParty implements Party.Server {
       guessedThisTurn: [],
       phaseStartedAt: Date.now(),
     }
-
-    this.broadcast({ type: "turn-ended", nextTeam, reason })
-    this.broadcastState()
-
-    // Set clue timer if in speed mode
-    if (this.state.settings.clueTimeLimit > 0) {
-      this.setClueTimer()
-    }
-  }
-
-  setClueTimer() {
-    if (!this.state || this.state.settings.clueTimeLimit === 0) return
-    const timeout = this.state.settings.clueTimeLimit * 1000
-    this.room.storage.setAlarm(Date.now() + timeout)
-  }
-
-  setGuessTimer() {
-    if (!this.state || this.state.settings.guessTimeLimit === 0) return
-    const timeout = this.state.settings.guessTimeLimit * 1000
-    this.room.storage.setAlarm(Date.now() + timeout)
+    this.beginHandoff(reason)
   }
 
   async onAlarm() {
-    if (this.state?.settings.gameMode === "duet") return
-    if (!this.state || this.state.status !== "playing" || !this.state.currentTurn) {
-      return
-    }
-
-    const turn = this.state.currentTurn
+    const s = this.state
+    if (!s || s.status !== "playing") return
     const now = Date.now()
-    const elapsed = now - turn.phaseStartedAt
-
-    if (turn.phase === "giving-clue") {
-      // Clue timer expired - skip turn
-      const timeLimit = this.state.settings.clueTimeLimit * 1000
-      if (elapsed >= timeLimit - 500) {
-        // In hardcore mode, timeout = loss
-        if (this.state.settings.gameMode === "hardcore") {
-          const winner = turn.team === "red" ? "blue" : "red"
-          this.endGame(winner, "timeout")
-        } else {
-          this.switchTurn("time expired")
-        }
-        await this.saveState()
-      }
-    } else if (turn.phase === "guessing") {
-      // Guess timer expired - end guessing phase
-      const timeLimit = this.state.settings.guessTimeLimit * 1000
-      if (elapsed >= timeLimit - 500) {
-        // In hardcore mode with no guesses made, it's a loss
-        if (this.state.settings.gameMode === "hardcore" && turn.guessedThisTurn.length === 0) {
-          const winner = turn.team === "red" ? "blue" : "red"
-          this.endGame(winner, "timeout")
-        } else {
-          this.switchTurn("time expired")
-        }
-        await this.saveState()
-      }
+    if (s.pending) {
+      if (now < s.pending.endsAt - 50) return this.scheduleAlarm()
+      this.advancePending(s.pending)
+    } else if (s.turnDeadline && now >= s.turnDeadline - 500) {
+      this.timeOut()
+    } else {
+      return this.scheduleAlarm()
     }
+    await this.commit()
   }
 
   endGame(winner: Team, reason: WinReason) {
     if (!this.state) return
 
-    // Cancel any pending timer
-    this.room.storage.deleteAlarm()
-
     this.state.status = "finished"
     this.state.winner = winner
     this.state.winReason = reason
     this.state.currentTurn = null
+    this.state.pending = null
+    this.state.turnDeadline = null
+    this.state.intents = {}
+    this.state.finishedAt = Date.now()
+  }
 
-    this.broadcast({ type: "game-over", winner, reason })
-    this.broadcastState()
+  canConsider(playerId: string, cardIndex: number | null) {
+    const s = this.state!
+    if (s.status !== "playing" || s.pending?.kind === "guess") return false
+    if (s.duet) {
+      if (!this.canGuessDuet(playerId)) return false
+      return cardIndex === null || (!s.duet.found.includes(cardIndex) && !s.duet.bystanders[playerId]?.includes(cardIndex))
+    }
+    const player = s.players[playerId]
+    const turn = s.currentTurn
+    return Boolean(player?.role === "guesser" && turn && player.team === turn.team && turn.phase === "guessing" &&
+      (cardIndex === null || !s.board[cardIndex].revealed))
   }
 
   async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
@@ -718,8 +854,8 @@ class CodenamesParty implements Party.Server {
         status: "waiting",
         settings: {
           gameMode,
-          clueTimeLimit: gameMode === "duet" ? 0 : Math.max(0, Math.min(120, clueTimeLimit)),
-          guessTimeLimit: gameMode === "duet" ? 0 : Math.max(0, Math.min(60, guessTimeLimit)),
+          clueTimeLimit: gameMode === "duet" ? 0 : Math.max(0, Math.min(120, clueTimeLimit || 0)),
+          guessTimeLimit: gameMode === "duet" ? 0 : Math.max(0, Math.min(60, guessTimeLimit || 0)),
         },
         board: [],
         startingTeam,
@@ -731,6 +867,12 @@ class CodenamesParty implements Party.Server {
         winReason: null,
         playerTokens: {},
         duet: null,
+        pending: null,
+        paceSeq: 0,
+        turnDeadline: null,
+        intents: {},
+        finishedAt: null,
+        spectators: {},
       }
       await this.saveState()
     }
@@ -754,6 +896,16 @@ class CodenamesParty implements Party.Server {
         return
       }
 
+      // Spectators only watch: the one thing they can do besides joining is leave.
+      if (data.type !== "join" && this.state.spectators?.[sender.id]) {
+        if (data.type === "leave") {
+          dropSpectator(this.state, sender.id)
+          await this.saveState()
+          this.broadcastState()
+        }
+        return
+      }
+
       switch (data.type) {
         case "join": {
 		  const playerToken = this.connectionTokens.get(sender)
@@ -768,6 +920,17 @@ class CodenamesParty implements Party.Server {
 			this.send(sender, { type: "error", message: "Invalid player session" })
 			return
 		  }
+          const watching = this.state.spectators?.[sender.id]
+          if (watching) {
+            if (expectedToken !== playerToken) {
+              this.send(sender, { type: "error", message: "Invalid player session" })
+              return
+            }
+            watching.name = gameNightName || data.name || watching.name
+            await this.saveState()
+            this.broadcastState()
+            return
+          }
           // A known player is reconnecting, not joining. Their team and role
           // are still on record, so broadcastState hands the spymaster their
           // spymaster view again - and only them.
@@ -781,12 +944,21 @@ class CodenamesParty implements Party.Server {
             break
           }
 
-          if (this.state.status === "playing" || (this.state.settings.gameMode === "duet" && this.state.status !== "waiting")) {
-            this.send(sender, { type: "error", message: "Game already in progress" })
+          // Mid-game arrivals watch; the host can seat them once the game ends.
+          if (this.state.status === "playing" || this.state.status === "finished") {
+            this.state.spectators ??= {}
+            if (Object.keys(this.state.spectators).length >= MAX_SPECTATORS) {
+              this.send(sender, { type: "error", message: "Too many people are watching" })
+              return
+            }
+            this.state.spectators[sender.id] = { id: sender.id, name: gameNightName || data.name || "Spectator", joinedAt: Date.now() }
+            this.state.playerTokens[sender.id] = playerToken
+            await this.saveState()
+            this.broadcastState()
             return
           }
 
-		  if (Object.keys(this.state.players).length >= (this.state.settings.gameMode === "duet" ? 2 : 8)) {
+		  if (Object.keys(this.state.players).length >= this.maxPlayers()) {
 			this.send(sender, { type: "error", message: "Game is full" })
 			return
 		  }
@@ -883,11 +1055,12 @@ class CodenamesParty implements Party.Server {
               return
             }
             this.startDuet()
-            await this.room.storage.deleteAlarm()
-            await this.saveState()
-            this.broadcastState()
+            this.beginHandoff("start")
+            await this.commit()
             break
           }
+
+          if (this.state.status === "playing") return
 
           for (const player of Object.values(this.state.players)) {
             if (player.connected === false) {
@@ -905,6 +1078,7 @@ class CodenamesParty implements Party.Server {
           // Generate the board
           this.state.board = generateBoard(this.state.startingTeam)
           this.state.status = "playing"
+          this.state.finishedAt = null
           this.state.currentTurn = {
             team: this.state.startingTeam,
             phase: "giving-clue",
@@ -913,16 +1087,8 @@ class CodenamesParty implements Party.Server {
             guessedThisTurn: [],
             phaseStartedAt: Date.now(),
           }
-
-          await this.saveState()
-
-          this.broadcast({ type: "game-started", startingTeam: this.state.startingTeam })
-          this.broadcastState()
-
-          // Start clue timer if in speed mode
-          if (this.state.settings.clueTimeLimit > 0) {
-            this.setClueTimer()
-          }
+          this.beginHandoff("start")
+          await this.commit()
           break
         }
 
@@ -933,7 +1099,7 @@ class CodenamesParty implements Party.Server {
             return
           }
 
-          if (this.state.currentTurn.phase !== "giving-clue") {
+          if (this.state.currentTurn.phase !== "giving-clue" || this.state.pending) {
             this.send(sender, { type: "error", message: "Not the clue-giving phase" })
             return
           }
@@ -950,8 +1116,8 @@ class CodenamesParty implements Party.Server {
           }
 
           // Validate clue
-          const clueWord = data.word.toUpperCase().trim()
-          if (!clueWord || clueWord.includes(" ") || clueWord.includes("-")) {
+          const clueWord = typeof data.word === "string" ? data.word.toUpperCase().trim() : ""
+          if (!clueWord || clueWord.length > 30 || clueWord.includes(" ") || clueWord.includes("-")) {
             this.send(sender, { type: "error", message: "Clue must be a single word" })
             return
           }
@@ -965,13 +1131,10 @@ class CodenamesParty implements Party.Server {
             return
           }
 
-          if (data.count < 0 || data.count > 9) {
+          if (!Number.isInteger(data.count) || data.count < 0 || data.count > 9) {
             this.send(sender, { type: "error", message: "Count must be 0-9" })
             return
           }
-
-          // Cancel clue timer
-          this.room.storage.deleteAlarm()
 
           const clue: Clue = {
             word: clueWord,
@@ -979,24 +1142,33 @@ class CodenamesParty implements Party.Server {
             team: this.state.currentTurn.team,
             givenBy: player.name,
             timestamp: Date.now(),
+            guesses: [],
           }
 
           this.state.currentTurn.clue = clue
           this.state.currentTurn.phase = "guessing"
-          this.state.currentTurn.phaseStartedAt = Date.now()
           // +1 guess allowed (or unlimited if count=0)
           this.state.currentTurn.guessesRemaining = data.count === 0 ? 999 : data.count + 1
           this.state.clueHistory.push(clue)
-
-          await this.saveState()
-
-          this.broadcast({ type: "clue-given", clue })
-          this.broadcastState()
-
-          // Start guess timer if in speed mode
-          if (this.state.settings.guessTimeLimit > 0) {
-            this.setGuessTimer()
+          this.state.intents = {}
+          this.state.turnDeadline = null
+          // The guess timer starts once the announcement has played.
+          this.state.pending = {
+            kind: "clue", seq: ++this.state.paceSeq, endsAt: Date.now() + PACE_MS.clue,
+            word: clueWord, count: data.count, team: clue.team, givenBy: player.name,
           }
+          await this.commit()
+          break
+        }
+
+        case "consider": {
+          const index = data.cardIndex
+          if (index !== null && (!Number.isInteger(index) || index < 0 || index >= 25)) return
+          if (!this.canConsider(sender.id, index)) return
+          if (index === null) delete this.state.intents[sender.id]
+          else this.state.intents[sender.id] = index
+          await this.saveState()
+          this.broadcastState()
           break
         }
 
@@ -1012,6 +1184,11 @@ class CodenamesParty implements Party.Server {
             return
           }
 
+          if (this.state.pending) {
+            this.send(sender, { type: "error", message: "Wait for the reveal to finish" })
+            return
+          }
+
           const player = this.state.players[sender.id]
           if (!player || player.role !== "guesser") {
             this.send(sender, { type: "error", message: "Only Guessers can guess" })
@@ -1023,7 +1200,7 @@ class CodenamesParty implements Party.Server {
             return
           }
 
-          if (data.cardIndex < 0 || data.cardIndex >= 25) {
+          if (!Number.isInteger(data.cardIndex) || data.cardIndex < 0 || data.cardIndex >= 25) {
             this.send(sender, { type: "error", message: "Invalid card index" })
             return
           }
@@ -1034,8 +1211,8 @@ class CodenamesParty implements Party.Server {
             return
           }
 
-          this.handleGuess(data.cardIndex, this.state.currentTurn.team)
-          await this.saveState()
+          this.startGuess(data.cardIndex, sender.id)
+          await this.commit()
           break
         }
 
@@ -1046,7 +1223,7 @@ class CodenamesParty implements Party.Server {
             return
           }
 
-          if (this.state.currentTurn.phase !== "guessing") {
+          if (this.state.currentTurn.phase !== "guessing" || this.state.pending) {
             this.send(sender, { type: "error", message: "Not the guessing phase" })
             return
           }
@@ -1064,7 +1241,7 @@ class CodenamesParty implements Party.Server {
           }
 
           this.switchTurn("passed")
-          await this.saveState()
+          await this.commit()
           break
         }
 
@@ -1072,7 +1249,40 @@ class CodenamesParty implements Party.Server {
         case "duet-guess":
         case "duet-pass": {
           if (!this.handleDuetAction(data, sender)) break
+          await this.commit()
+          break
+        }
+
+        case "react": {
+          if (!this.state.players[sender.id] || !isReaction(data.reaction)) return
+          if (!takeReactionSlot(this.reactedAt, sender.id)) return
+          this.broadcast({ type: "reaction", playerId: sender.id, reaction: data.reaction })
+          break
+        }
+
+        case "seat-spectator": {
+          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
+            this.send(sender, { type: "error", message: "Only the host can seat spectators" })
+            return
+          }
+          if (this.state.status === "playing") {
+            this.send(sender, { type: "error", message: "Seat them once this game is over" })
+            return
+          }
+          const spectator = this.state.spectators?.[data.playerId]
+          if (!spectator) {
+            this.send(sender, { type: "error", message: "They're no longer watching" })
+            return
+          }
+          if (Object.keys(this.state.players).length >= this.maxPlayers()) {
+            this.send(sender, { type: "error", message: "No empty seats" })
+            return
+          }
+          delete this.state.spectators![spectator.id]
+          const seated: Player = { id: spectator.id, name: spectator.name, team: null, role: null, joinedAt: Date.now(), connected: true }
+          this.state.players[spectator.id] = seated
           await this.saveState()
+          this.broadcast({ type: "player-joined", player: seated })
           this.broadcastState()
           break
         }
@@ -1083,9 +1293,6 @@ class CodenamesParty implements Party.Server {
             this.send(sender, { type: "error", message: "Only host can restart" })
             return
           }
-
-          // Cancel any pending timer
-          this.room.storage.deleteAlarm()
 
           // Keep players but reset their team/role
           for (const player of Object.values(this.state.players)) {
@@ -1106,9 +1313,12 @@ class CodenamesParty implements Party.Server {
           this.state.winner = null
           this.state.winReason = null
           this.state.duet = null
+          this.state.pending = null
+          this.state.turnDeadline = null
+          this.state.intents = {}
+          this.state.finishedAt = null
 
-          await this.saveState()
-          this.broadcastState()
+          await this.commit()
           break
         }
 
@@ -1116,6 +1326,7 @@ class CodenamesParty implements Party.Server {
           if (this.state.settings.gameMode === "duet" && this.state.status === "playing") this.finishDuet("partner-left")
           delete this.state.players[sender.id]
           delete this.state.playerTokens[sender.id]
+          delete this.state.intents[sender.id]
 
 		  if (Object.keys(this.state.players).length === 0) {
 			this.state = null
@@ -1131,9 +1342,8 @@ class CodenamesParty implements Party.Server {
             else if (this.state.settings.gameMode === "duet") this.state.hostId = Object.keys(this.state.players)[0]
           }
 
-          await this.saveState()
+          await this.commit()
           this.broadcast({ type: "player-left", playerId: sender.id })
-          this.broadcastState()
           break
         }
       }
@@ -1151,6 +1361,13 @@ class CodenamesParty implements Party.Server {
 	  this.connectionTokens.delete(conn)
 	  return
 	}
+
+    if (this.isAuthenticated(conn) && dropSpectator(this.state, conn.id)) {
+      await this.saveState()
+      this.broadcastState()
+      this.connectionTokens.delete(conn)
+      return
+    }
 
     if (this.state.players[conn.id] && this.isAuthenticated(conn)) {
       markDisconnected(this.state.players, conn.id)

@@ -18,6 +18,8 @@ import type {
   GameMode,
   GameSettings,
 } from "../../../../party/codenames"
+import type { Reaction } from "@/lib/reactions"
+import { useReactionBubbles } from "@/components/multiplayer/Reactions"
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
 
@@ -42,6 +44,7 @@ export function useMultiplayerCodenames() {
     isHost: false,
   })
 
+  const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles()
   const socketRef = useRef<PartySocket | null>(null)
   const roomCodeRef = useRef("")
   const playerNameRef = useRef<string>("")
@@ -184,54 +187,8 @@ export function useMultiplayerCodenames() {
         })
         break
 
-      case "game-started":
-        // State update will come through "state" message
-        break
-
-      case "clue-given":
-        setState((prev) => {
-          if (!prev.gameState || !prev.gameState.currentTurn) return prev
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              currentTurn: {
-                ...prev.gameState.currentTurn,
-                clue: message.clue,
-                phase: "guessing",
-              },
-              clueHistory: [...prev.gameState.clueHistory, message.clue],
-            },
-          }
-        })
-        break
-
-      case "card-revealed":
-        setState((prev) => {
-          if (!prev.gameState) return prev
-          const newBoard = [...prev.gameState.board]
-          newBoard[message.cardIndex] = {
-            ...newBoard[message.cardIndex],
-            revealed: true,
-            revealedBy: message.team,
-            type: message.cardType,
-          }
-          return {
-            ...prev,
-            gameState: {
-              ...prev.gameState,
-              board: newBoard,
-            },
-          }
-        })
-        break
-
-      case "turn-ended":
-        // State update will come through "state" message
-        break
-
-      case "game-over":
-        // State update will come through "state" message
+      case "reaction":
+        receiveReaction(message)
         break
 
       case "error":
@@ -250,12 +207,13 @@ export function useMultiplayerCodenames() {
         }, 3000)
         break
     }
-  }, [])
+  }, [receiveReaction])
 
   const disconnect = useCallback(() => {
     const socket = socketRef.current
     socketRef.current = null
     if (socket) leavePartySocket(socket, { type: "leave" })
+    clearReactions()
     if (roomCodeRef.current) {
       clearPersistentPlayerId("codenames", roomCodeRef.current)
       clearPersistentPlayerToken("codenames", roomCodeRef.current)
@@ -269,7 +227,7 @@ export function useMultiplayerCodenames() {
       error: null,
       isHost: false,
     })
-  }, [])
+  }, [clearReactions])
 
   const abandonReconnect = useCallback(() => {
     const socket = socketRef.current
@@ -323,6 +281,18 @@ export function useMultiplayerCodenames() {
     sendNow({ type: "guess", cardIndex })
   }, [sendNow])
 
+  const consider = useCallback((cardIndex: number | null) => {
+    sendNow({ type: "consider", cardIndex })
+  }, [sendNow])
+
+  const react = useCallback((reaction: Reaction) => {
+    sendNow({ type: "react", reaction })
+  }, [sendNow])
+
+  const seatSpectator = useCallback((playerId: string) => {
+    if (state.isHost) sendNow({ type: "seat-spectator", playerId })
+  }, [sendNow, state.isHost])
+
   const endGuessing = useCallback(() => {
     sendNow({ type: "end-guessing" })
   }, [sendNow])
@@ -358,6 +328,10 @@ export function useMultiplayerCodenames() {
     startGame,
     giveClue,
     guess,
+    consider,
+    react,
+    reactions,
+    seatSpectator,
     endGuessing,
     restart,
     sendDuet,

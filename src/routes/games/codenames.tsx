@@ -9,7 +9,8 @@ import { useMultiplayerSession } from '@/lib/multiplayerSession'
 import { GameModeSelector } from '@/components/games/codenames/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/codenames/MultiplayerLobby'
 import { TeamSelector } from '@/components/games/codenames/TeamSelector'
-import { MultiplayerGame } from '@/components/games/codenames/MultiplayerGame'
+import { CodenamesGame } from '@/components/games/codenames/CodenamesGame'
+import { SpectatorSeats } from '@/components/games/codenames/table'
 import { DuetGame } from '@/components/games/codenames/DuetGame'
 import { useMultiplayerCodenames, type GameSettings } from '@/components/games/codenames/useMultiplayerCodenames'
 import type { Team, PlayerRole } from '../../../party/codenames'
@@ -30,10 +31,16 @@ function CodenamesPage() {
   const gameNightConnection = gameNight.connection?.gameId === 'codenames' && gameNight.connection.roomCode === night
     ? gameNight.connection
     : null
+  const isSpectator = Boolean(
+    multiplayer.gameState &&
+    multiplayer.playerId &&
+    !multiplayer.gameState.players[multiplayer.playerId] &&
+    multiplayer.gameState.spectators.some((spectator) => spectator.id === multiplayer.playerId)
+  )
   const hasGameState = Boolean(
     multiplayer.gameState &&
     multiplayer.playerId &&
-    multiplayer.gameState.players[multiplayer.playerId]
+    (multiplayer.gameState.players[multiplayer.playerId] || isSpectator)
   )
   const session = useMultiplayerSession({
     game: 'codenames',
@@ -146,6 +153,41 @@ function CodenamesPage() {
     )
   }
 
+  const gameState = multiplayer.gameState
+  const seats = gameState && (
+    <SpectatorSeats
+      light
+      spectators={gameState.spectators}
+      canSeat={multiplayer.isHost}
+      seatsLeft={(gameState.settings.gameMode === 'duet' ? 2 : 8) - Object.keys(gameState.players).length}
+      onSeat={multiplayer.seatSpectator}
+    />
+  )
+
+  // Watching between games: wait for the host to seat them
+  if ((view === 'lobby' || view === 'team-selection') && gameState && isSpectator) {
+    return (
+      <div className="min-h-[calc(100vh-73px)] bg-background">
+        <div className="px-4 py-3 flex items-center justify-between border-b border-border">
+          <Button variant="ghost" size="sm" onClick={handleBackToSelect}>
+            <ArrowLeft className="w-4 h-4 mr-1" />
+            Back
+          </Button>
+          <h1 className="text-lg font-bold">Codenames</h1>
+          <div className="w-[60px]" />
+        </div>
+        <div className="mx-auto max-w-md space-y-4 p-6 text-center">
+          <p className="text-lg font-semibold">You're watching</p>
+          <p className="text-sm text-muted-foreground">The host can seat you for the next game.</p>
+          <ul className="space-y-1 text-sm">
+            {Object.values(gameState.players).map((player) => <li key={player.id}>{player.name}</li>)}
+          </ul>
+          <Button variant="outline" onClick={handleLeaveMultiplayer}>Leave</Button>
+        </div>
+      </div>
+    )
+  }
+
   // Multiplayer lobby view
   if (view === 'lobby' && multiplayer.gameState && multiplayer.playerId) {
     const lobbyState = gameNightConnection
@@ -177,6 +219,7 @@ function CodenamesPage() {
           error={multiplayer.error}
         />
         </div>
+        {gameState && gameState.spectators.length > 0 && <div className="mx-auto max-w-md px-4 pb-6">{seats}</div>}
       </div>
     )
   }
@@ -202,46 +245,52 @@ function CodenamesPage() {
           onLeave={handleLeaveMultiplayer}
           error={multiplayer.error}
         />
+        {gameState && gameState.spectators.length > 0 && <div className="mx-auto max-w-md px-4 pb-6">{seats}</div>}
       </div>
     )
   }
 
   // Multiplayer game view
   if (view === 'game' && multiplayer.gameState && multiplayer.playerId) {
-    return (
-      <div className="min-h-[calc(100vh-73px)] bg-background">
-        <div className="px-4 py-3 flex items-center justify-between border-b border-border">
-          <Button variant="ghost" size="sm" onClick={handleBackToSelect}>
-            <ArrowLeft className="w-4 h-4 mr-1" />
-            Back
-          </Button>
-          <h1 className="text-lg font-bold">Codenames</h1>
-          <div className="w-[60px]" />
-        </div>
-        {multiplayer.gameState.settings.gameMode === 'duet' ? <DuetGame
-          gameState={multiplayer.gameState}
-          playerId={multiplayer.playerId}
-          isHost={multiplayer.isHost}
-          connected={multiplayer.connectionStatus === 'connected'}
-          error={multiplayer.error}
-          onClue={(word, count) => multiplayer.sendDuet({ type: 'duet-clue', word, count })}
-          onGuess={(cardIndex) => multiplayer.sendDuet({ type: 'duet-guess', cardIndex })}
-          onPass={() => multiplayer.sendDuet({ type: 'duet-pass' })}
-          onRestart={multiplayer.restart}
-          onLeave={handleLeaveMultiplayer}
-        /> : <MultiplayerGame
-          gameState={multiplayer.gameState}
-          playerId={multiplayer.playerId}
-          isSpymaster={multiplayer.isSpymaster}
-          isHost={multiplayer.isHost}
-          onGiveClue={multiplayer.giveClue}
-          onGuess={multiplayer.guess}
-          onEndGuessing={multiplayer.endGuessing}
-          onRestart={multiplayer.restart}
-          onLeave={handleLeaveMultiplayer}
-          error={multiplayer.error}
-        />}
-      </div>
+    const roomLabel = gameNightConnection ? bridge.publicRoomCode : multiplayer.gameState.roomCode
+    const connected = multiplayer.connectionStatus === 'connected'
+    return multiplayer.gameState.settings.gameMode === 'duet' ? (
+      <DuetGame
+        gameState={multiplayer.gameState}
+        playerId={multiplayer.playerId}
+        isHost={multiplayer.isHost}
+        roomLabel={roomLabel}
+        connected={connected}
+        error={multiplayer.error}
+        reactions={multiplayer.reactions}
+        onReact={multiplayer.react}
+        onClue={(word, count) => multiplayer.sendDuet({ type: 'duet-clue', word, count })}
+        onConsider={multiplayer.consider}
+        onGuess={(cardIndex) => multiplayer.sendDuet({ type: 'duet-guess', cardIndex })}
+        onPass={() => multiplayer.sendDuet({ type: 'duet-pass' })}
+        onRestart={multiplayer.restart}
+        onSeat={multiplayer.seatSpectator}
+        onLeave={handleLeaveMultiplayer}
+      />
+    ) : (
+      <CodenamesGame
+        state={multiplayer.gameState}
+        playerId={multiplayer.playerId}
+        isSpymaster={multiplayer.isSpymaster}
+        isHost={multiplayer.isHost}
+        roomLabel={roomLabel}
+        connected={connected}
+        error={multiplayer.error}
+        reactions={multiplayer.reactions}
+        onReact={multiplayer.react}
+        onGiveClue={multiplayer.giveClue}
+        onConsider={multiplayer.consider}
+        onGuess={multiplayer.guess}
+        onEndGuessing={multiplayer.endGuessing}
+        onRestart={multiplayer.restart}
+        onSeat={multiplayer.seatSpectator}
+        onLeave={handleLeaveMultiplayer}
+      />
     )
   }
 

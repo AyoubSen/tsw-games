@@ -18,6 +18,7 @@ import {
   type LudoTokenView,
 } from "@/components/games/ludo/LudoBoard"
 import { useMultiplayerLudo } from "@/components/games/ludo/useMultiplayerLudo"
+import { BotLevelPicker } from "@/components/multiplayer/BotLevelPicker"
 import {
   GameTopBar,
   MultiplayerLobby,
@@ -31,6 +32,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { BOT_LEVEL_LABELS } from "@/lib/botLevel"
 import {
   getGameNightInviteLink,
   getInviteLink,
@@ -429,15 +431,23 @@ function LudoPage() {
                         <Bot className="h-3.5 w-3.5 text-muted-foreground" />
                         {bot.name}
                       </span>
-                      {multiplayer.isHost && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => multiplayer.removePlayer(bot.id)}
-                        >
-                          Remove
-                        </Button>
-                      )}
+                      <span className="flex items-center gap-1">
+                        <BotLevelPicker
+                          name={bot.name}
+                          level={bot.botLevel}
+                          disabled={!multiplayer.isHost}
+                          onChange={(level) => multiplayer.setBotLevel(bot.id, level)}
+                        />
+                        {multiplayer.isHost && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => multiplayer.removePlayer(bot.id)}
+                          >
+                            Remove
+                          </Button>
+                        )}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -723,8 +733,16 @@ function LudoPage() {
               >
                 <PlayerAvatar name={player.name} isBot={player.isBot} color={color} small />
                 <div className="min-w-0">
-                  <p className="max-w-[88px] truncate text-xs font-semibold">
-                    {player.id === multiplayer.playerId ? "You" : player.name}
+                  <p className="flex max-w-[88px] items-center gap-1 text-xs font-semibold">
+                    <span className="truncate">{player.id === multiplayer.playerId ? "You" : player.name}</span>
+                    {player.isBot && player.botLevel && (
+                      <span
+                        title={`${BOT_LEVEL_LABELS[player.botLevel]} bot`}
+                        className="shrink-0 rounded-full bg-white/15 px-1 text-[9px] font-black uppercase text-white/70"
+                      >
+                        {BOT_LEVEL_LABELS[player.botLevel][0]}
+                      </span>
+                    )}
                   </p>
                   <HomePips home={home} color={color} />
                 </div>
@@ -776,6 +794,7 @@ function LudoPage() {
                         : game.mode === "teams"
                           ? `${LUDO_COLORS[seat].label} · Team ${getTeamOfSeat(seat) + 1}`
                           : LUDO_COLORS[seat].label}
+                      {player.isBot && player.botLevel && ` · ${BOT_LEVEL_LABELS[player.botLevel]} bot`}
                     </p>
                   </div>
                   <HomePips home={home} color={color} />

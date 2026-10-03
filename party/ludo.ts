@@ -1,7 +1,9 @@
 import type * as Party from "partykit/server"
 import { withRoomCleanup } from "./shared/cleanup"
+import { isBotLevel, type BotLevel } from "../src/lib/botLevel"
 import {
   chooseBestMove,
+  chooseBotMove,
   diceForRoll,
   getAllySeats,
   getPlayableMoves,
@@ -42,6 +44,7 @@ export interface Player {
   seat: number | null
   tokens: number[]
   isBot?: boolean
+  botLevel?: BotLevel
 }
 
 export interface WinnerSnapshot {
@@ -109,6 +112,7 @@ export interface PublicPlayer {
   seat: number | null
   tokens: number[]
   isBot?: boolean
+  botLevel?: BotLevel
 }
 
 export interface PublicGameState {
@@ -138,6 +142,7 @@ export type ClientMessage =
   | { type: "start" }
   | { type: "add-bot" }
   | { type: "remove-player"; playerId: unknown }
+  | { type: "set-bot-level"; playerId: unknown; level: unknown }
   | { type: "set-mode"; mode: unknown }
   | { type: "roll"; roundId: unknown }
   | { type: "move"; moveId: unknown; roundId: unknown }
@@ -228,6 +233,7 @@ class LudoParty implements Party.Server {
           seat: player.seat,
           tokens: [...player.tokens],
           isBot: player.isBot,
+          botLevel: player.isBot ? player.botLevel ?? "normal" : undefined,
         },
       ]),
     )
@@ -730,6 +736,7 @@ class LudoParty implements Party.Server {
             seat: null,
             tokens: freshTokens(),
             isBot: true,
+            botLevel: "normal",
           }
           await this.saveState()
           this.broadcastState()
@@ -754,6 +761,29 @@ class LudoParty implements Party.Server {
             return
           }
           delete this.state.players[target.id]
+          await this.saveState()
+          this.broadcastState()
+          return
+        }
+
+        case "set-bot-level": {
+          if (this.state.status !== "waiting") {
+            this.send(sender, { type: "error", message: "Game already started" })
+            return
+          }
+          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
+            this.send(sender, { type: "error", message: "Only the host can change bots" })
+            return
+          }
+          const bot =
+            typeof data.playerId === "string"
+              ? this.state.players[data.playerId]
+              : undefined
+          if (!bot?.isBot || !isBotLevel(data.level)) {
+            this.send(sender, { type: "error", message: "Only bots have a level" })
+            return
+          }
+          bot.botLevel = data.level
           await this.saveState()
           this.broadcastState()
           return
@@ -961,10 +991,17 @@ class LudoParty implements Party.Server {
     if (this.state.dice === null) {
       this.rollForCurrentSeat()
     } else if (this.state.legalMoves.length > 0) {
-      this.applyMove(
-        chooseBestMove(this.state.legalMoves) ?? this.state.legalMoves[0],
-        true,
-      )
+      // Timed-out humans get the normal pick; bots play at their level.
+      const actor = this.seatPlayer(this.state.turnSeat)
+      const move = actor?.isBot
+        ? chooseBotMove(
+            this.state.legalMoves,
+            actor.botLevel ?? "normal",
+            this.allTokens(),
+            this.allySeats(this.state.turnSeat),
+          )
+        : chooseBestMove(this.state.legalMoves)
+      this.applyMove(move ?? this.state.legalMoves[0], true)
     } else {
       this.finishRoll()
     }

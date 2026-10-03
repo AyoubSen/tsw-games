@@ -9,6 +9,7 @@ import {
   type HandResult,
 } from "../src/lib/poker/handEvaluator"
 import { calculatePots, type PotContribution } from "../src/lib/poker/potCalculator"
+import { isBotLevel, type BotLevel } from "../src/lib/botLevel"
 import {
   getGameNightResultMatch,
   validateGameNightConnection,
@@ -83,6 +84,7 @@ export interface Player {
   isDealer: boolean
   lastAction: SeatAction | null
   isBot?: boolean
+  botLevel?: BotLevel
   rebuys: number
   sittingOut: boolean
 }
@@ -147,6 +149,7 @@ export interface PublicPlayer {
   holeCards: number[] | null
   lastAction: SeatAction | null
   isBot?: boolean
+  botLevel?: BotLevel
   rebuys: number
   sittingOut: boolean
   /** Cards shown voluntarily, by hole card position; null for a card kept hidden. */
@@ -189,6 +192,7 @@ export type ClientMessage =
   | { type: "start-game" }
   | { type: "add-bot" }
   | { type: "remove-bot"; playerId: string }
+  | { type: "set-bot-level"; playerId: string; level: BotLevel }
   | { type: "fold" }
   | { type: "check" }
   | { type: "call" }
@@ -365,6 +369,7 @@ class PokerParty implements Party.Server {
         holeCards: showCards ? p.holeCards : null,
         lastAction: p.lastAction,
         isBot: p.isBot,
+        botLevel: p.isBot ? p.botLevel ?? "normal" : undefined,
         rebuys: p.rebuys,
         sittingOut: p.sittingOut,
         shownCards: shown?.length ? [0, 1].map((index) => (shown.includes(index) ? p.holeCards[index] ?? null : null)) : null,
@@ -1164,26 +1169,48 @@ class PokerParty implements Party.Server {
     return strength
   }
 
+  /**
+   * Bet up to `amount` on top of the highest bet, in big-blind steps. When that would take the
+   * whole stack, only shove for real with a hand stronger than `shoveAt`.
+   */
+  botRaise(p: Player, strength: number, amount: number, shoveAt: number) {
+    const s = this.state!
+    const highest = getHighestBet(s)
+    const toCall = Math.min(highest - p.currentBet, p.chips)
+    const bigBlind = s.settings.smallBlind * 2
+    const maxTotal = p.currentBet + p.chips
+    const target = highest + Math.max(s.minRaise, Math.round(amount / bigBlind) * bigBlind)
+    if (target >= maxTotal || toCall >= p.chips) {
+      if (strength > shoveAt || maxTotal <= highest + s.minRaise) this.handleAllIn(p.id)
+      else if (toCall > 0) this.handleCall(p.id)
+      else this.handleCheck(p.id)
+      return
+    }
+    this.handleRaise(p.id, target)
+  }
+
+  /** 0 for the first to act after the dealer, 1 for the button, among players still in the hand. */
+  botLateness(p: Player): number {
+    const s = this.state!
+    const n = s.seatOrder.length
+    const live: string[] = []
+    for (let i = 1; i <= n; i++) {
+      const other = s.players[s.seatOrder[(s.dealerIndex + i) % n]]
+      if (other && !other.folded && other.holeCards.length > 0) live.push(other.id)
+    }
+    return live.length <= 1 ? 1 : Math.max(0, live.indexOf(p.id)) / (live.length - 1)
+  }
+
   botAct(p: Player) {
+    if (p.botLevel === "easy") return this.botActEasy(p)
+    if (p.botLevel === "hard") return this.botActHard(p)
     const s = this.state!
     const highest = getHighestBet(s)
     const toCall = Math.min(highest - p.currentBet, p.chips)
     const bigBlind = s.settings.smallBlind * 2
     const potOdds = toCall > 0 ? toCall / (s.pot + toCall) : 0
     const strength = Math.min(1, this.botStrength(p) + (Math.random() - 0.5) * 0.12)
-    const maxTotal = p.currentBet + p.chips
-
-    const raiseTo = (fraction: number) => {
-      const target = highest + Math.max(s.minRaise, Math.round(((s.pot + toCall) * fraction) / bigBlind) * bigBlind)
-      if (target >= maxTotal || toCall >= p.chips) {
-        // Only shove for real when the hand is worth the whole stack.
-        if (strength > 0.8 || maxTotal <= highest + s.minRaise) this.handleAllIn(p.id)
-        else if (toCall > 0) this.handleCall(p.id)
-        else this.handleCheck(p.id)
-        return
-      }
-      this.handleRaise(p.id, target)
-    }
+    const raiseTo = (fraction: number) => this.botRaise(p, strength, (s.pot + toCall) * fraction, 0.8)
 
     // Monsters raise, sometimes slow-playing with a call.
     if (strength > 0.8) {
@@ -1212,6 +1239,111 @@ class PokerParty implements Party.Server {
       return
     }
     this.handleFold(p.id)
+  }
+
+  /** A loose calling station: misreads its hand, chases anything, bets random sizes and sometimes folds for free. */
+  botActEasy(p: Player) {
+    const s = this.state!
+    const highest = getHighestBet(s)
+    const toCall = Math.min(highest - p.currentBet, p.chips)
+    const strength = Math.max(0, Math.min(1, this.botStrength(p) + (Math.random() - 0.5) * 0.4))
+    const raiseTo = (fraction: number) => this.botRaise(p, strength, (s.pot + toCall) * fraction, 0.55)
+
+    if (toCall === 0) {
+      if (Math.random() < 0.04) this.handleFold(p.id)
+      else if (strength > 0.75 || Math.random() < 0.2) raiseTo(0.25 + Math.random() * 1.2)
+      else this.handleCheck(p.id)
+      return
+    }
+    if (strength > 0.85 && Math.random() < 0.6) {
+      raiseTo(0.3 + Math.random() * 1.2)
+      return
+    }
+    if (toCall >= p.chips) {
+      if (strength > 0.45 || Math.random() < 0.2) this.handleAllIn(p.id)
+      else this.handleFold(p.id)
+      return
+    }
+    if (strength > 0.2 || Math.random() < 0.5) this.handleCall(p.id)
+    else this.handleFold(p.id)
+  }
+
+  /**
+   * Tight and positional: opens fewer hands up front and more on the button, sizes bets to the
+   * pot and the hand, bluffs rarely and only heads-up in position, and lets marginal hands go to big bets.
+   */
+  botActHard(p: Player) {
+    const s = this.state!
+    const highest = getHighestBet(s)
+    const toCall = Math.min(highest - p.currentBet, p.chips)
+    const bigBlind = s.settings.smallBlind * 2
+    const pot = s.pot + toCall
+    const potOdds = toCall > 0 ? toCall / pot : 0
+    const late = this.botLateness(p)
+    const opponents = s.seatOrder.filter((id) => id !== p.id && s.players[id] && !s.players[id].folded && s.players[id].holeCards.length > 0).length
+    const preflop = s.communityCards.length < 3
+    const river = s.communityCards.length === 5
+    let strength = Math.min(1, this.botStrength(p) + (Math.random() - 0.5) * 0.05)
+    // Medium hands lose value against a crowd.
+    if (!preflop && strength < 0.8) strength -= 0.04 * Math.max(0, opponents - 1)
+    const stackShare = toCall / Math.max(1, p.chips + p.currentBet)
+    const bet = (amount: number) => this.botRaise(p, strength, amount, 0.85)
+
+    if (preflop) {
+      const openAt = 0.64 - late * 0.16
+      if (highest <= bigBlind) {
+        // Unopened or limped: raise to about three big blinds plus one per limper, else see it cheaply from the blinds.
+        const limpers = s.seatOrder.filter((id) => id !== p.id && !s.players[id]?.folded && s.players[id]?.currentBet === highest).length
+        if (strength >= openAt) bet(bigBlind * (2 + Math.max(0, limpers - 1)))
+        else if (toCall === 0) this.handleCheck(p.id)
+        else if (p.currentBet > 0 && strength >= openAt - 0.1) this.handleCall(p.id)
+        else this.handleFold(p.id)
+        return
+      }
+      // Facing a raise: re-raise the best, call with hands that can stand the price, fold the rest.
+      if (strength >= 0.8) {
+        bet(highest * 2)
+        return
+      }
+      if (toCall >= p.chips) {
+        if (strength >= 0.75) this.handleAllIn(p.id)
+        else this.handleFold(p.id)
+        return
+      }
+      if (strength >= 0.58 - late * 0.06 + stackShare * 0.5) this.handleCall(p.id)
+      else this.handleFold(p.id)
+      return
+    }
+
+    if (toCall === 0) {
+      if (strength >= 0.7) bet(pot * (0.6 + Math.random() * 0.15))
+      else if (strength >= 0.5 && (late >= 0.5 || opponents <= 1) && Math.random() < 0.6) bet(pot * (0.4 + Math.random() * 0.1))
+      // Semi-bluff a draw from late position.
+      else if (!river && strength >= 0.36 && late >= 0.5 && Math.random() < 0.4) bet(pot * 0.5)
+      else if (opponents === 1 && late === 1 && Math.random() < 0.08) bet(pot * 0.5)
+      else this.handleCheck(p.id)
+      return
+    }
+
+    if (strength >= 0.85) {
+      if (!river && toCall < p.chips && Math.random() < 0.2) this.handleCall(p.id)
+      else bet(toCall * 1.5 + pot * 0.5)
+      return
+    }
+    if (toCall >= p.chips) {
+      if (strength >= 0.72) this.handleAllIn(p.id)
+      else this.handleFold(p.id)
+      return
+    }
+    if (strength >= 0.7 && stackShare < 0.5 && Math.random() < 0.3) {
+      bet(toCall * 1.5 + pot * 0.5)
+      return
+    }
+    const needs = stackShare > 0.5 ? 0.7 : potOdds + 0.05
+    // Draws still have cards to come, so they can call a fair price.
+    const drawing = !river && strength >= 0.36 && strength < 0.55 && potOdds <= 0.3
+    if (strength >= needs || drawing) this.handleCall(p.id)
+    else this.handleFold(p.id)
   }
 
   // ─── Party.Server Methods ───────────────────────────────────────────────
@@ -1432,6 +1564,7 @@ class PokerParty implements Party.Server {
             isDealer: false,
             lastAction: null,
             isBot: true,
+            botLevel: "normal",
             rebuys: 0,
             sittingOut: false,
           }
@@ -1459,6 +1592,23 @@ class PokerParty implements Party.Server {
           this.state.seatOrder.forEach((id, index) => {
             this.state!.players[id].seatIndex = index
           })
+          await this.saveState()
+          this.broadcastState()
+          break
+        }
+
+        case "set-bot-level": {
+          if (sender.id !== this.state.hostId) {
+            this.send(sender, { type: "error", message: "Only the host can change bots" })
+            return
+          }
+          if (this.state.status !== "waiting") {
+            this.send(sender, { type: "error", message: "Game already started" })
+            return
+          }
+          const bot = this.state.players[data.playerId]
+          if (!bot?.isBot || !isBotLevel(data.level)) return
+          bot.botLevel = data.level
           await this.saveState()
           this.broadcastState()
           break

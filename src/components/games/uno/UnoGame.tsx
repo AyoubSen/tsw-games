@@ -11,6 +11,7 @@ import {
   type UnoColor,
   type UnoRules,
 } from "@/lib/uno"
+import { BOT_LEVEL_LABELS, type BotLevel } from "@/lib/botLevel"
 import { cn } from "@/lib/utils"
 import type { PublicUnoGameState, UnoAction } from "../../../../party/uno"
 import { cardLabel, COLOR_HEX, COLOR_NAME, UnoCardDefs, UnoCardView, valueLabel } from "./UnoCardArt"
@@ -643,6 +644,7 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
               isHost={id === state.hostId}
               offline={player.connected === false}
               bot={Boolean(player.isBot)}
+              botLevel={player.isBot ? player.botLevel : undefined}
               exposed={exposed.includes(id)}
               onCatch={canCatch(id) ? () => onCatch(id) : null}
               tag={seatTag(id)}
@@ -884,7 +886,7 @@ function ColorPicker({ label, onPick, extra }: { label: string; onPick: (color: 
   )
 }
 
-function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline, bot, exposed, onCatch, tag }: {
+function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline, bot, botLevel, exposed, onCatch, tag }: {
   refCallback: (element: HTMLDivElement | null) => void
   name: string
   x: number
@@ -895,6 +897,7 @@ function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline
   isHost: boolean
   offline: boolean
   bot: boolean
+  botLevel?: BotLevel
   exposed: boolean
   onCatch: (() => void) | null
   tag: string | null
@@ -940,6 +943,7 @@ function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline
       <p className={cn("flex max-w-full items-center gap-1 truncate text-xs font-bold", isTurn ? "text-amber-100" : "text-white/85")}>
         {isHost && <Crown className="size-3 shrink-0 text-amber-300" />}
         <span className="truncate">{name}</span>
+        {botLevel && <span title={`${BOT_LEVEL_LABELS[botLevel]} bot`} className="shrink-0 rounded-full bg-white/15 px-1 text-[9px] font-black uppercase text-white/70">{compact ? BOT_LEVEL_LABELS[botLevel][0] : BOT_LEVEL_LABELS[botLevel]}</span>}
         {offline && <WifiOff className="size-3 shrink-0" />}
       </p>
       {onCatch ? (

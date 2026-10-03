@@ -10,6 +10,7 @@ import {
   leavePartySocket,
   PARTYKIT_HOST,
 } from "@/lib/partykit"
+import type { BotLevel } from "@/lib/botLevel"
 import type { PublicGameState, ServerMessage } from "../../../../party/ludo"
 
 export type ConnectionStatus =
@@ -180,6 +181,8 @@ export function useMultiplayerLudo() {
     addBot: () => isHost && sendNow({ type: "add-bot" }),
     removePlayer: (playerId: string) =>
       isHost && sendNow({ type: "remove-player", playerId }),
+    setBotLevel: (playerId: string, level: BotLevel) =>
+      isHost && sendNow({ type: "set-bot-level", playerId, level }),
     setMode: (mode: "classic" | "teams") =>
       isHost && sendNow({ type: "set-mode", mode }),
     restartGame: () => isHost && sendNow({ type: "restart" }),

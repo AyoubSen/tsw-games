@@ -6,6 +6,7 @@ import { useGameNightGameBridge } from "@/components/game-night/useGameNightGame
 import { UnoGame } from "@/components/games/uno/UnoGame"
 import { useMultiplayerUno } from "@/components/games/uno/useMultiplayerUno"
 import { Button } from "@/components/ui/button"
+import { BotLevelPicker } from "@/components/multiplayer/BotLevelPicker"
 import { GameTopBar, MultiplayerLobby, MultiplayerSetupCard } from "@/components/multiplayer/shared"
 import { UNO_RULE_INFO } from "@/lib/uno"
 import { cn } from "@/lib/utils"
@@ -101,7 +102,10 @@ function UnoPage() {
       {bots.length === 0 ? <p className="mt-2 text-muted-foreground">Fill empty seats with bots to start without a full table.</p> : <ul className="mt-2 space-y-1">
         {bots.map((bot) => <li key={bot.id} className="flex items-center justify-between gap-2">
           <span className="flex items-center gap-2"><Bot className="h-3.5 w-3.5 text-muted-foreground" />{bot.name}</span>
-          {multiplayer.isHost && <Button size="sm" variant="ghost" onClick={() => multiplayer.removePlayer(bot.id)}>Remove</Button>}
+          <span className="flex items-center gap-1">
+            <BotLevelPicker name={bot.name} level={bot.botLevel} disabled={!multiplayer.isHost} onChange={(level) => multiplayer.setBotLevel(bot.id, level)} />
+            {multiplayer.isHost && <Button size="sm" variant="ghost" onClick={() => multiplayer.removePlayer(bot.id)}>Remove</Button>}
+          </span>
         </li>)}
       </ul>}
     </div>

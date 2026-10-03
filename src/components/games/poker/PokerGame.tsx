@@ -1,5 +1,6 @@
 import { ArrowLeft, ArrowRight, Bot, Coffee, Crown, Flag, Pause, Play, RefreshCw, ScrollText, WifiOff, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
+import { BOT_LEVEL_LABELS } from "@/lib/botLevel"
 import { evaluateBestHand } from "@/lib/poker/handEvaluator"
 import { calculatePots } from "@/lib/poker/potCalculator"
 import { cn } from "@/lib/utils"
@@ -264,6 +265,11 @@ function SeatPlate({ player, isMe, active, winner, compact, deadline, total, off
         <div className="flex items-center gap-1">
           <span className={cn("truncate font-semibold text-white/90", compact ? "text-[10px]" : "text-xs")}>{isMe ? "You" : player.name}</span>
           {!player.connected && <WifiOff className="h-3 w-3 shrink-0 text-rose-400" />}
+          {player.isBot && player.botLevel && (
+            <span title={`${BOT_LEVEL_LABELS[player.botLevel]} bot`} className="shrink-0 rounded-full bg-white/10 px-1 text-[9px] font-bold uppercase text-white/60">
+              {compact ? BOT_LEVEL_LABELS[player.botLevel][0] : BOT_LEVEL_LABELS[player.botLevel]}
+            </span>
+          )}
           {player.sittingOut && <Coffee aria-label="Sitting out" className="h-3 w-3 shrink-0 text-sky-300" />}
           {player.rebuys > 0 && (
             <span title={`Rebought ${player.rebuys}×`} className="flex shrink-0 items-center gap-px rounded-full bg-white/10 px-1 font-mono text-[9px] font-bold text-white/60">

@@ -2,6 +2,7 @@
  * Parcheesi (US rules). The game keeps its original "ludo" ids for routes,
  * party names and saved sessions.
  */
+import type { BotLevel } from "./botLevel"
 export const LUDO_COLORS = [
   { id: "red", label: "Red", hex: "#ef4444" },
   { id: "green", label: "Green", hex: "#22c55e" },
@@ -346,6 +347,74 @@ export function chooseBestMove(moves: LudoMove[]): LudoMove | null {
     if (move.finishes) score += 800
     if (move.from === LUDO_BASE) score += 500
     if (move.to >= LUDO_HOME_ENTRY) score += 200
+    if (score > bestScore) {
+      bestScore = score
+      best = move
+    }
+  }
+  return best
+}
+
+/** Opponent pawns that could land on `seat`'s step `relative` next roll, with one die or both. */
+function threatsTo(seat: number, relative: number, allTokens: number[][], allySeats: number[]): number {
+  if (!isOnTrack(relative)) return 0
+  const cell = toAbsoluteCell(seat, relative)
+  if (LUDO_SAFE_CELLS.has(cell)) {
+    // Only a pawn coming out of its nest captures on a safe square - its own entry square.
+    const owner = (LUDO_ENTRY_INDEX as readonly number[]).indexOf(cell)
+    return owner >= 0 && !allySeats.includes(owner) && allTokens[owner]?.includes(LUDO_BASE) ? 1 : 0
+  }
+  let threats = 0
+  allTokens.forEach((tokens, other) => {
+    if (allySeats.includes(other)) return
+    for (const position of tokens) {
+      if (!isOnTrack(position)) continue
+      const gap = (cell - toAbsoluteCell(other, position) + LUDO_TRACK_LENGTH) % LUDO_TRACK_LENGTH
+      if (gap >= 1 && gap <= 12 && position + gap < LUDO_HOME_ENTRY) threats++
+    }
+  })
+  return threats
+}
+
+/** Pawns of `seat` sharing its step `relative` with another of its own - a blockade nobody can hit. */
+function inBlockade(seat: number, relative: number, allTokens: number[][]): boolean {
+  return isOnTrack(relative) && occupantsAt(seat, relative, allTokens).filter((occupant) => occupant.seat === seat).length >= 2
+}
+
+/**
+ * A bot's pick at its difficulty. Easy mostly moves a random pawn; normal is `chooseBestMove`;
+ * hard weighs captures, blockades, safe squares and which pawns opponents can reach next roll.
+ */
+export function chooseBotMove(
+  moves: LudoMove[],
+  level: BotLevel,
+  allTokens: number[][],
+  allySeats: number[],
+): LudoMove | null {
+  if (moves.length === 0) return null
+  if (level === "easy" && Math.random() < 0.6) return moves[Math.floor(Math.random() * moves.length)]
+  if (level !== "hard") return chooseBestMove(moves)
+
+  let best: LudoMove | null = null
+  let bestScore = Number.NEGATIVE_INFINITY
+  for (const move of moves) {
+    const after = applyToTokens(allTokens, move)
+    let score = move.to - Math.max(0, move.from)
+    // Knocking out a pawn that has come further sets its owner back more.
+    if (move.captured) score += 1000 + Math.max(0, allTokens[move.captured.seat][move.captured.tokenIndex])
+    if (move.finishes) score += 800
+    if (move.from === LUDO_BASE) score += 450
+    if (!move.finishes && move.to >= LUDO_HOME_ENTRY) score += 250
+    if (inBlockade(move.seat, move.to, after)) score += 200
+    else {
+      if (isOnTrack(move.to) && LUDO_SAFE_CELLS.has(toAbsoluteCell(move.seat, move.to))) score += 120
+      score -= Math.min(3, threatsTo(move.seat, move.to, after, allySeats)) * 250
+    }
+    if (move.from !== LUDO_BASE) {
+      if (inBlockade(move.seat, move.from, allTokens)) score -= 80
+      // Pull a pawn out of reach.
+      else score += Math.min(3, threatsTo(move.seat, move.from, allTokens, allySeats)) * 150
+    }
     if (score > bestScore) {
       bestScore = score
       best = move

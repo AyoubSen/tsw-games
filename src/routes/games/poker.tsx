@@ -157,6 +157,7 @@ function PokerPage() {
           onStartGame={multiplayer.startGame}
           onAddBot={multiplayer.addBot}
           onRemoveBot={multiplayer.removeBot}
+          onSetBotLevel={multiplayer.setBotLevel}
           onSetRebuys={multiplayer.setRebuys}
           onLeave={handleLeaveMultiplayer}
         />

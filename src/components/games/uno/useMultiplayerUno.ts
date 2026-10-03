@@ -10,6 +10,7 @@ import {
   leavePartySocket,
   PARTYKIT_HOST,
 } from "@/lib/partykit"
+import type { BotLevel } from "@/lib/botLevel"
 import type { UnoColor, UnoRules } from "@/lib/uno"
 import type { PublicUnoGameState, ServerMessage } from "../../../../party/uno"
 
@@ -127,6 +128,7 @@ export function useMultiplayerUno() {
     restartGame: () => isHost && send({ type: "restart" }),
     addBot: () => isHost && send({ type: "add-bot" }),
     removePlayer: (playerId: string) => isHost && send({ type: "remove-player", playerId }),
+    setBotLevel: (playerId: string, level: BotLevel) => isHost && send({ type: "set-bot-level", playerId, level }),
     disconnect,
     abandonReconnect,
   }

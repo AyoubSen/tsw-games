@@ -10,6 +10,7 @@ import {
   getPersistentPlayerToken,
   leavePartySocket,
 } from "@/lib/partykit"
+import type { BotLevel } from "@/lib/botLevel"
 import type {
   ServerMessage,
   PublicGameState,
@@ -253,6 +254,10 @@ export function useMultiplayerPoker() {
     if (state.isHost) sendNow({ type: "remove-bot", playerId })
   }, [sendNow, state.isHost])
 
+  const setBotLevel = useCallback((playerId: string, level: BotLevel) => {
+    if (state.isHost) sendNow({ type: "set-bot-level", playerId, level })
+  }, [sendNow, state.isHost])
+
   const fold = useCallback(() => {
     sendNow({ type: "fold" })
   }, [sendNow])
@@ -320,6 +325,7 @@ export function useMultiplayerPoker() {
     startGame,
     addBot,
     removeBot,
+    setBotLevel,
     fold,
     check,
     call,

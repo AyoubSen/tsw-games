@@ -16,6 +16,7 @@ import {
   type UnoColor,
   type UnoRules,
 } from "../src/lib/uno"
+import { isBotLevel, type BotLevel } from "../src/lib/botLevel"
 import { canControlGame, markConnected, markDisconnected, nextHost, presentCount } from "./shared/presence"
 import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight"
 
@@ -28,6 +29,8 @@ const BOT_THINK_MS = 700
 const BOT_JUMP_MS = 350
 /** Chance a bot challenges a +4 it can't stack on. */
 const BOT_CHALLENGE_ODDS = 0.35
+/** Chance an easy bot forgets to call UNO. */
+const EASY_BOT_FORGETS_UNO = 0.4
 const BOT_NAMES = ["Ada", "Baxter", "Cleo", "Dodge", "Echo", "Fern", "Gus"]
 
 export interface UnoPlayer {
@@ -38,6 +41,7 @@ export interface UnoPlayer {
   connected?: boolean
   disconnectedAt?: number | null
   isBot?: boolean
+  botLevel?: BotLevel
 }
 
 export interface PublicUnoPlayer {
@@ -47,6 +51,7 @@ export interface PublicUnoPlayer {
   joinedAt: number
   connected?: boolean
   isBot?: boolean
+  botLevel?: BotLevel
 }
 
 /** What happened, in order, so clients can replay and explain it. Drawn cards are private to the drawer. */
@@ -158,6 +163,7 @@ type ClientAction =
   | { type: "leave" }
   | { type: "add-bot" }
   | { type: "remove-player"; playerId: string }
+  | { type: "set-bot-level"; playerId: string; level: BotLevel }
   | { type: "uno" }
   | { type: "catch"; playerId: string }
   | { type: "challenge" }
@@ -174,6 +180,7 @@ function parseAction(message: string): ClientAction | null {
   if (data.type === "start" || data.type === "draw" || data.type === "pass" || data.type === "restart" || data.type === "leave" || data.type === "add-bot" || data.type === "uno" || data.type === "challenge") return { type: data.type }
   if (data.type === "set-rule") return isUnoRule(data.rule) && typeof data.enabled === "boolean" ? { type: "set-rule", rule: data.rule, enabled: data.enabled } : null
   if (data.type === "catch") return typeof data.playerId === "string" ? { type: "catch", playerId: data.playerId } : null
+  if (data.type === "set-bot-level") return typeof data.playerId === "string" && isBotLevel(data.level) ? { type: "set-bot-level", playerId: data.playerId, level: data.level } : null
   if (data.type === "remove-player") return typeof data.playerId === "string" ? { type: "remove-player", playerId: data.playerId } : null
   if (data.type !== "play" || typeof data.cardId !== "string" || !parseUnoCardId(data.cardId)) return null
   if (data.color !== undefined && !isUnoColor(data.color)) return null
@@ -206,16 +213,44 @@ interface BotSwapInfo {
   incomingCount: number
 }
 
-/** Plain-colored cards before wilds, punish a short next hand, and keep the color it holds most of. */
-function chooseBotPlay(hand: UnoCard[], playable: UnoCard[], nextCount: number, swap: BotSwapInfo | null): { card: UnoCard; color?: UnoColor; targetId?: string } {
+/** Who is closest to going out, seen from the bot's seat. */
+interface BotThreat {
+  /** The opponent with the fewest cards plays right after the bot. */
+  nextIsLeader: boolean
+  /** ...or right before it, so a reverse would hand them the turn. */
+  previousIsLeader: boolean
+  fewestCount: number
+}
+
+/**
+ * Plain-colored cards before wilds, punish a short next hand, and keep the color it holds most of.
+ * Easy plays any legal card; hard saves its wilds and aims its action cards at whoever is closest to winning.
+ */
+function chooseBotPlay(hand: UnoCard[], playable: UnoCard[], nextCount: number, swap: BotSwapInfo | null, level: BotLevel = "normal", threat?: BotThreat): { card: UnoCard; color?: UnoColor; targetId?: string } {
   const counts = new Map<UnoColor, number>()
   for (const card of hand) if (card.color) counts.set(card.color, (counts.get(card.color) ?? 0) + 1)
+  if (level === "easy") {
+    const card = playable[Math.floor(Math.random() * playable.length)]!
+    if (card.color) return { card, ...(swap && card.value === "7" && { targetId: swap.fewestId }) }
+    const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+    return { card, color: best && Math.random() < 0.5 ? best : UNO_COLORS[Math.floor(Math.random() * UNO_COLORS.length)]! }
+  }
   const attack = (card: UnoCard) => card.value === "skip" || card.value === "reverse" || card.value === "draw-two" || card.value === "wild-draw-four"
+  const hardScore = (card: UnoCard) => {
+    if (level !== "hard" || !threat) return 0
+    let bonus = 0
+    // Wilds always play, so keep them for when nothing else does.
+    if (card.color === null && hand.length > 2) bonus -= card.value === "wild-draw-four" ? 30 : 20
+    if (attack(card) && threat.nextIsLeader && threat.fewestCount <= 4) bonus += 15 + (5 - threat.fewestCount) * 4
+    if (card.value === "reverse" && threat.previousIsLeader && !threat.nextIsLeader) bonus -= 15
+    return bonus
+  }
   const score = (card: UnoCard) =>
     (card.color === null ? -10 : 0) +
     (card.value === "wild-draw-four" ? -5 : 0) +
     (nextCount <= 2 && attack(card) ? 20 : 0) +
     (card.color ? counts.get(card.color) ?? 0 : 0) +
+    hardScore(card) +
     (swap && card.value === "7" ? swapGain(swap.fewestCount) : 0) +
     (swap && card.value === "0" ? swapGain(swap.incomingCount) : 0)
   // Positive when trading the hand left after this card for a smaller one.
@@ -310,7 +345,7 @@ class UnoParty implements Party.Server {
     if (!state || !top || state.status !== "playing" || !state.rules.jumpIn || state.pendingDraw || !this.humansConnected()) return null
     for (const id of state.seatOrder) {
       const bot = state.players[id]
-      if (!bot?.isBot || id === state.currentPlayerId || id === state.topPlayerId) continue
+      if (!bot?.isBot || bot.botLevel === "easy" || id === state.currentPlayerId || id === state.topPlayerId) continue
       const card = bot.hand.find((candidate) => canJumpInUno(candidate, top))
       if (card) return { bot, card }
     }
@@ -326,6 +361,16 @@ class UnoParty implements Party.Server {
     const index = order.indexOf(bot.id)
     const giver = this.state.players[order[(index - this.state.direction + order.length) % order.length]!]!
     return { fewestId: fewest.id, fewestCount: fewest.hand.length, incomingCount: giver.hand.length }
+  }
+
+  botThreat(bot: UnoPlayer): BotThreat {
+    const order = this.state!.seatOrder.filter((id) => this.state!.players[id])
+    const others = order.filter((id) => id !== bot.id).map((id) => this.state!.players[id]!)
+    const fewestCount = Math.min(...others.map((player) => player.hand.length))
+    const index = order.indexOf(bot.id)
+    const isLeader = (id: string | null | undefined) => Boolean(id && id !== bot.id && this.state!.players[id]?.hand.length === fewestCount)
+    const previous = order[(index - this.state!.direction + order.length) % order.length]
+    return { nextIsLeader: isLeader(this.nextPlayer(bot.id)), previousIsLeader: others.length > 1 && isLeader(previous), fewestCount }
   }
 
   jumpIn(player: UnoPlayer, card: UnoCard, color?: UnoColor, targetId?: string, callUno = false) {
@@ -367,8 +412,9 @@ class UnoParty implements Party.Server {
     const top = this.state.discardPile.at(-1)
     const color = this.state.activeColor
     if (!bot?.isBot || !top || !color) return
-    // Bots open their turn by catching anyone who forgot to call UNO.
-    const forgot = this.state.unoExposed?.find((entry) => entry.playerId !== bot.id && Date.now() >= entry.catchableAt)
+    const level = bot.botLevel ?? "normal"
+    // Bots open their turn by catching anyone who forgot to call UNO; easy ones don't notice.
+    const forgot = level !== "easy" && this.state.unoExposed?.find((entry) => entry.playerId !== bot.id && Date.now() >= entry.catchableAt)
     if (forgot && this.catchUno(bot, forgot.playerId)) return
     const drawnId = this.state.drawnCardId
     const pending = this.state.pendingDraw
@@ -376,12 +422,18 @@ class UnoParty implements Party.Server {
     const honest = { ...this.state.rules, challenge: false }
     const playable = bot.hand.filter((card) => (!drawnId || card.id === drawnId) && canPlayUnoTurn(card, top, color, bot.hand, honest, pending))
     if (pending && !playable.length) {
-      if (this.state.pendingChallenge && Math.random() < BOT_CHALLENGE_ODDS) this.challenge(bot)
+      if (this.state.pendingChallenge && Math.random() < (level === "easy" ? 0.5 : BOT_CHALLENGE_ODDS)) this.challenge(bot)
       else this.takePenalty(bot)
     } else if (playable.length) {
       const next = this.state.players[this.nextPlayer(bot.id) ?? ""]
-      const choice = chooseBotPlay(bot.hand, playable, next?.hand.length ?? 7, this.botSwapInfo(bot))
-      this.playCard(bot, choice.card, choice.color, true, choice.targetId)
+      const threat = this.botThreat(bot)
+      // Hard bots draw rather than spend their only playable wild while nobody is close to winning.
+      if (level === "hard" && !pending && !drawnId && bot.hand.length > 3 && threat.fewestCount > 2 && playable.every((card) => card.color === null)) {
+        this.drawCard(bot)
+        return
+      }
+      const choice = chooseBotPlay(bot.hand, playable, next?.hand.length ?? 7, this.botSwapInfo(bot), level, threat)
+      this.playCard(bot, choice.card, choice.color, level !== "easy" || Math.random() >= EASY_BOT_FORGETS_UNO, choice.targetId)
     } else if (drawnId) {
       this.record({ type: "pass", playerId: bot.id, name: bot.name })
       this.advance()
@@ -472,7 +524,7 @@ class UnoParty implements Party.Server {
       roomCode: this.state.roomCode,
       hostId: this.state.hostId,
       players: Object.fromEntries(Object.entries(this.state.players).map(([id, item]) => [id, {
-        id: item.id, name: item.name, cardCount: item.hand.length, joinedAt: item.joinedAt, connected: item.connected, isBot: item.isBot,
+        id: item.id, name: item.name, cardCount: item.hand.length, joinedAt: item.joinedAt, connected: item.connected, isBot: item.isBot, botLevel: item.isBot ? item.botLevel ?? "normal" : undefined,
       }])),
       seatOrder: [...this.state.seatOrder],
       maxPlayers: this.state.maxPlayers,
@@ -736,6 +788,15 @@ class UnoParty implements Party.Server {
       await this.save(); this.broadcast(); return
     }
 
+    if (action.type === "set-bot-level") {
+      if (this.state.status !== "waiting") return this.error(sender, "Game already started")
+      if (!canControlGame(this.state.players, this.state.hostId, sender.id)) return this.error(sender, "Only the host can change bots")
+      const bot = this.state.players[action.playerId]
+      if (!bot?.isBot) return this.error(sender, "Only bots have a level")
+      bot.botLevel = action.level
+      await this.save(); this.broadcast(); return
+    }
+
     if (action.type === "add-bot" || action.type === "remove-player") {
       if (this.state.status !== "waiting") return this.error(sender, "Game already started")
       if (!canControlGame(this.state.players, this.state.hostId, sender.id)) return this.error(sender, "Only the host can change bots")
@@ -748,7 +809,7 @@ class UnoParty implements Party.Server {
         const taken = new Set(Object.values(this.state.players).map((player) => player.name))
         const id = `bot-${crypto.randomUUID().slice(0, 8)}`
         const name = BOT_NAMES.find((candidate) => !taken.has(candidate)) ?? `Bot ${this.state.seatOrder.length + 1}`
-        this.state.players[id] = { id, name, hand: [], joinedAt: Date.now(), connected: true, disconnectedAt: null, isBot: true }
+        this.state.players[id] = { id, name, hand: [], joinedAt: Date.now(), connected: true, disconnectedAt: null, isBot: true, botLevel: "normal" }
         this.state.seatOrder.push(id)
       }
       await this.save(); this.broadcast(); return

@@ -2,7 +2,9 @@ import { useState } from "react"
 import { Copy, Check, Crown, Users, LogOut, Play, Coins, Clock, TrendingUp, Bot, X, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { BotLevelPicker } from "@/components/multiplayer/BotLevelPicker"
 import { getInviteLink } from "@/lib/inviteLinks"
+import type { BotLevel } from "@/lib/botLevel"
 import type { PublicGameState } from "../../../../party/poker"
 
 const REBUY_CAPS = [1, 2, 3, 5, 0]
@@ -14,6 +16,7 @@ interface MultiplayerLobbyProps {
   onStartGame: () => void
   onAddBot: () => void
   onRemoveBot: (playerId: string) => void
+  onSetBotLevel: (playerId: string, level: BotLevel) => void
   onSetRebuys: (enabled: boolean, cap: number) => void
   onLeave: () => void
 }
@@ -25,6 +28,7 @@ export function MultiplayerLobby({
   onStartGame,
   onAddBot,
   onRemoveBot,
+  onSetBotLevel,
   onSetRebuys,
   onLeave,
 }: MultiplayerLobbyProps) {
@@ -186,16 +190,26 @@ export function MultiplayerLobby({
                   {player.id === gameState.hostId && (
                     <Crown className="w-4 h-4 text-yellow-500" />
                   )}
-                  {player.isBot && isHost && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => onRemoveBot(player.id)}
-                      aria-label={`Remove ${player.name}`}
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
+                  {player.isBot && (
+                    <div className="flex items-center gap-1">
+                      <BotLevelPicker
+                        name={player.name}
+                        level={player.botLevel}
+                        disabled={!isHost}
+                        onChange={(level) => onSetBotLevel(player.id, level)}
+                      />
+                      {isHost && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => onRemoveBot(player.id)}
+                          aria-label={`Remove ${player.name}`}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
                   )}
                 </div>
               ))}

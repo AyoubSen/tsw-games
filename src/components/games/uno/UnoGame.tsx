@@ -508,14 +508,16 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
   const opponents = (myIndex < 0 ? order : [...order.slice(myIndex + 1), ...order.slice(0, myIndex)]).filter((id) => state.players[id])
   const centerX = table.w / 2
   const centerY = table.h * (compact ? 0.54 : 0.52)
+  const tableRy = table.h * (compact ? 0.4 : 0.42)
+  const tableRx = Math.min(table.w * 0.44, tableRy * 2.3)
   const seatSpots = new Map<string, { x: number; y: number }>()
   const span = opponents.length <= 1 ? 0 : Math.min(220, 70 * (opponents.length - 1))
   opponents.forEach((id, index) => {
     const degrees = opponents.length <= 1 ? 90 : 90 + span / 2 - (span * index) / (opponents.length - 1)
-    const radians = (degrees * Math.PI) / 180
+    const spot = squirclePoint(centerX, centerY, tableRx, tableRy, -degrees)
     const margin = compact ? 44 : 80
-    const x = Math.min(table.w - margin, Math.max(margin, centerX + table.w * 0.44 * Math.cos(radians)))
-    const y = Math.max(compact ? 52 : 70, centerY - table.h * (compact ? 0.4 : 0.42) * Math.sin(radians))
+    const x = Math.min(table.w - margin, Math.max(margin, spot.x))
+    const y = Math.max(compact ? 52 : 70, spot.y)
     seatSpots.set(id, { x, y })
   })
   const turnTarget = view.currentPlayerId === playerId ? { x: centerX, y: table.h + 120 } : view.currentPlayerId ? seatSpots.get(view.currentPlayerId) : undefined
@@ -685,26 +687,18 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
     <div
       ref={rootRef}
       className="relative h-[calc(100dvh-73px)] min-h-[560px] w-full select-none overflow-hidden text-white"
-      style={{ background: "radial-gradient(120% 95% at 50% 45%, #22364d 0%, #132133 46%, #060b13 100%)" }}
+      style={{ background: "radial-gradient(110% 90% at 50% 45%, #1a2433 0%, #0e141e 50%, #05070b 100%)" }}
     >
       <UnoCardDefs />
-      {/* Felt grain and the active-color glow. */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-40 mix-blend-overlay" style={{ backgroundImage: "repeating-radial-gradient(circle at 30% 20%, rgba(255,255,255,0.05) 0 1px, transparent 1px 3px)" }} />
-      {UNO_COLORS.map((color) => (
-        <div
-          key={color}
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 transition-opacity duration-700"
-          style={{ opacity: view.activeColor === color ? 1 : 0, background: `radial-gradient(48% 46% at 50% 46%, ${COLOR_HEX[color].base}40, transparent 72%)` }}
-        />
-      ))}
+      {/* Overhead lamp. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0" style={{ background: "radial-gradient(50% 40% at 50% 0%, rgba(255,226,170,0.10), transparent 70%)" }} />
       <div aria-hidden="true" className={cn("pointer-events-none absolute inset-x-0 bottom-0 h-72 transition-opacity duration-500", myTurn ? "opacity-100" : "opacity-0")} style={{ background: "radial-gradient(60% 100% at 50% 100%, #fde68a33, transparent 70%)" }} />
 
       {/* Table: opponents around the piles. */}
       <div ref={tableRef} className="absolute inset-x-0 top-20" style={{ bottom: bottomReserve }}>
-        <div aria-hidden="true" className="pointer-events-none absolute inset-x-[4%] inset-y-[2%] rounded-[50%] border border-white/[0.06] shadow-[inset_0_0_120px_rgb(0_0_0/.35)]" />
+        {table.w > 0 && <UnoTable cx={centerX} cy={centerY} rx={tableRx} ry={tableRy} rail={compact ? 14 : 24} activeColor={view.activeColor} />}
         {table.w > 0 && !reduced && action?.type === "play" && action.card.value === "reverse" && action.reversed && !beforeLanding && (
-          <ReverseSweep key={action.id} cx={centerX} cy={centerY} rx={table.w * 0.44} ry={table.h * (compact ? 0.4 : 0.42)} clockwise={view.direction !== -1} hex={COLOR_HEX[action.color].base} />
+          <ReverseSweep key={action.id} cx={centerX} cy={centerY} rx={tableRx * 0.9} ry={tableRy * 0.84} clockwise={view.direction !== -1} hex={COLOR_HEX[action.color].base} />
         )}
         {table.w > 0 && opponents.map((id) => {
           const player = state.players[id]!
@@ -1105,6 +1099,80 @@ function ColorWheel({ color, size }: { color: UnoColor; size: number }) {
 }
 
 /** A comet that laps the table in the new direction of play. */
+/** Point on the table's squircle rim; degrees run clockwise from the right. */
+function squirclePoint(cx: number, cy: number, rx: number, ry: number, degrees: number) {
+  const radians = (degrees * Math.PI) / 180
+  const c = Math.cos(radians)
+  const s = Math.sin(radians)
+  const p = 2 / 3.4
+  return { x: cx + rx * Math.sign(c) * Math.abs(c) ** p, y: cy + ry * Math.sign(s) * Math.abs(s) ** p }
+}
+
+function squirclePath(cx: number, cy: number, rx: number, ry: number) {
+  const points = Array.from({ length: 120 }, (_, index) => squirclePoint(cx, cy, rx, ry, index * 3))
+  return `M${points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join("L")}Z`
+}
+
+/** The arena: padded rail, a rim inlay lit in the active color, and felt. */
+function UnoTable({ cx, cy, rx, ry, rail, activeColor }: { cx: number; cy: number; rx: number; ry: number; rail: number; activeColor: UnoColor | null | undefined }) {
+  const outer = squirclePath(cx, cy, rx, ry)
+  const felt = squirclePath(cx, cy, rx - rail, ry - rail)
+  const rim = activeColor ? COLOR_HEX[activeColor].base : TURN_GOLD
+  return (
+    <svg aria-hidden="true" className="pointer-events-none absolute inset-0 size-full overflow-visible">
+      <defs>
+        <linearGradient id="uno-rail" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#3a3f4b" />
+          <stop offset="0.45" stopColor="#1a1d24" />
+          <stop offset="1" stopColor="#0a0b0e" />
+        </linearGradient>
+        <radialGradient id="uno-felt" cx="0.5" cy="0.42" r="0.62">
+          <stop offset="0" stopColor="#235a82" />
+          <stop offset="0.5" stopColor="#17405f" />
+          <stop offset="0.88" stopColor="#0e2a41" />
+          <stop offset="1" stopColor="#0a1f31" />
+        </radialGradient>
+        <radialGradient id="uno-felt-light" cx="0.5" cy="0.3" r="0.5">
+          <stop offset="0" stopColor="#fff3d6" stopOpacity="0.13" />
+          <stop offset="1" stopColor="#fff3d6" stopOpacity="0" />
+        </radialGradient>
+        {UNO_COLORS.map((color) => (
+          <radialGradient key={color} id={`uno-glow-${color}`} cx="0.5" cy="0.5" r="0.5">
+            <stop offset="0" stopColor={COLOR_HEX[color].base} stopOpacity="0.3" />
+            <stop offset="1" stopColor={COLOR_HEX[color].base} stopOpacity="0" />
+          </radialGradient>
+        ))}
+        <filter id="uno-grain" x="0" y="0" width="100%" height="100%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" />
+          <feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.07 0" />
+        </filter>
+        <filter id="uno-shadow" x="-20%" y="-20%" width="140%" height="160%">
+          <feGaussianBlur stdDeviation="28" />
+        </filter>
+        <clipPath id="uno-felt-clip"><path d={felt} /></clipPath>
+      </defs>
+
+      <path d={outer} fill="#000" opacity="0.7" transform="translate(0 30)" filter="url(#uno-shadow)" />
+      {/* Rail, with a lit edge, stitching and the color inlay. */}
+      <path d={outer} fill="url(#uno-rail)" stroke="rgba(255,255,255,0.12)" strokeWidth="1.5" />
+      <path d={squirclePath(cx, cy, rx - rail * 0.45, ry - rail * 0.45)} fill="none" stroke="rgba(255,255,255,0.09)" strokeWidth="1" strokeDasharray="3 4" />
+      <path d={squirclePath(cx, cy, rx - rail + 2, ry - rail + 2)} fill="none" stroke={rim} strokeWidth="2.5" strokeOpacity="0.7" className="transition-[stroke] duration-700" style={{ filter: `drop-shadow(0 0 4px ${rim})` }} />
+
+      <g clipPath="url(#uno-felt-clip)">
+        <path d={felt} fill="url(#uno-felt)" />
+        <rect x={cx - rx} y={cy - ry} width={rx * 2} height={ry * 2} filter="url(#uno-grain)" />
+        {UNO_COLORS.map((color) => (
+          <ellipse key={color} cx={cx} cy={cy} rx={rx * 0.7} ry={ry * 0.85} fill={`url(#uno-glow-${color})`} className="transition-opacity duration-700" style={{ opacity: activeColor === color ? 1 : 0 }} />
+        ))}
+        <path d={felt} fill="url(#uno-felt-light)" />
+        <path d={squirclePath(cx, cy, (rx - rail) * 0.8, (ry - rail) * 0.74)} fill="none" stroke="rgba(255,255,255,0.09)" strokeWidth="1.5" />
+        {/* Shade where the felt tucks under the rail. */}
+        <path d={felt} fill="none" stroke="rgba(0,0,0,0.55)" strokeWidth={rail * 1.6} style={{ filter: "blur(10px)" }} />
+      </g>
+    </svg>
+  )
+}
+
 function ReverseSweep({ cx, cy, rx, ry, clockwise, hex }: { cx: number; cy: number; rx: number; ry: number; clockwise: boolean; hex: string }) {
   // Starts at the bottom (your seat); both arcs run clockwise on screen.
   const d = `M ${cx} ${cy + ry} A ${rx} ${ry} 0 1 1 ${cx} ${cy - ry} A ${rx} ${ry} 0 1 1 ${cx} ${cy + ry}`

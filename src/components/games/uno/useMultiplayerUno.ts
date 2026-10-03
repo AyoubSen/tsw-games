@@ -120,7 +120,11 @@ export function useMultiplayerUno() {
     playCard: (cardId: string, color?: UnoColor) => send({ type: "play", cardId, ...(color && { color }) }),
     drawCard: () => send({ type: "draw" }),
     pass: () => send({ type: "pass" }),
+    callUno: () => send({ type: "uno" }),
+    catchUno: (playerId: string) => send({ type: "catch", playerId }),
     restartGame: () => isHost && send({ type: "restart" }),
+    addBot: () => isHost && send({ type: "add-bot" }),
+    removePlayer: (playerId: string) => isHost && send({ type: "remove-player", playerId }),
     disconnect,
     abandonReconnect,
   }

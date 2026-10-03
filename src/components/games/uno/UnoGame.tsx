@@ -1,4 +1,4 @@
-import { ArrowLeft, Crown, Layers, RotateCcw, Trophy, WifiOff, X } from "lucide-react"
+import { ArrowLeft, Bot, Crown, Layers, RotateCcw, Trophy, WifiOff, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import {
   canPlayUnoCard,
@@ -22,6 +22,8 @@ export interface UnoGameProps {
   onPlayCard: (cardId: string, color?: UnoColor) => void
   onDrawCard: () => void
   onPass: () => void
+  onCallUno: () => void
+  onCatch: (playerId: string) => void
   onRestart: () => void
   onLeave: () => void
 }
@@ -68,6 +70,10 @@ function timeline(action: UnoAction, me: string, reduced: boolean) {
     const mine = action.playerId === me
     return { land, settle: land, release: land + (mine ? (action.playable ? 250 : 1500) : action.playable ? 400 : 800) }
   }
+  if (action.type === "catch") {
+    const settle = ((action.drawCount - 1) * 150 + 520) * motion + 150
+    return { land: 0, settle, release: settle + 1500 }
+  }
   if (action.type === "pass") return { land: 0, settle: 0, release: 900 }
   if (action.type === "deal") return { land: 0, settle: 0, release: 600 }
   return { land: 0, settle: 0, release: 1400 }
@@ -88,7 +94,7 @@ function storyOf(action: UnoAction, me: string): Story {
       const skipped = action.skippedId === me ? "You" : action.skippedName
       const colorNote = wild ? ` · color is ${COLOR_NAME[action.color]}` : ""
       if (action.cardsLeft === 0) return { ...base, stamp: "Out!", sub: `${actor} played ${you ? "your" : "their"} last card` }
-      const unoNote = action.cardsLeft === 1 ? ` · ${verb(actor, "have", "has")} UNO!` : ""
+      const unoNote = action.cardsLeft !== 1 ? "" : action.unoCalled ? ` · ${verb(actor, "call", "calls")} UNO!` : ` · ${verb(actor, "have", "has")} one card left`
       switch (action.card.value) {
         case "draw-two":
         case "wild-draw-four":
@@ -100,7 +106,8 @@ function storyOf(action: UnoAction, me: string): Story {
         case "wild":
           return { ...base, stamp: "Wild", sub: `Color is now ${COLOR_NAME[action.color]}${unoNote}` }
         default:
-          return action.cardsLeft === 1 ? { ...base, stamp: "UNO!", sub: `${verb(actor, "have", "has")} one card left` } : base
+          if (action.cardsLeft !== 1) return base
+          return action.unoCalled ? { ...base, stamp: "UNO!", sub: `${verb(actor, "have", "has")} one card left` } : { ...base, sub: `${verb(actor, "have", "has")} one card left` }
       }
     }
     case "draw":
@@ -108,6 +115,10 @@ function storyOf(action: UnoAction, me: string): Story {
       return { line: `${actor} drew a card${action.playable ? "" : " and passed"}` }
     case "pass":
       return { line: `${actor} kept the drawn card` }
+    case "catch": {
+      const victim = action.victimId === me ? "You" : action.victimName
+      return { line: `${actor} caught ${victim === "You" ? "you" : victim}`, stamp: "Caught!", sub: `${verb(victim, "draw", "draws")} ${action.drawCount} for not calling UNO` }
+    }
     case "timeout":
       return { line: `${actor} ran out of time` }
     case "leave":
@@ -142,7 +153,7 @@ function useReducedMotion() {
   return reduced
 }
 
-export function UnoGame({ state, playerId, isHost, roomLabel, message, connected, onPlayCard, onDrawCard, onPass, onRestart, onLeave }: UnoGameProps) {
+export function UnoGame({ state, playerId, isHost, roomLabel, message, connected, onPlayCard, onDrawCard, onPass, onCallUno, onCatch, onRestart, onLeave }: UnoGameProps) {
   const reduced = useReducedMotion()
   const rootRef = useRef<HTMLDivElement>(null)
   const [tableRef, table] = useElementSize<HTMLDivElement>()
@@ -242,6 +253,11 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
       for (let index = 0; victimPose && index < (action.drawCount ?? 0); index++) {
         added.push({ id: `v${action.id}-${index}`, card: null, flip: false, fade: true, from: deckPose, to: victimPose, w, h, delay: land + 300 + index * 150, duration: 520 })
       }
+    } else if (action.type === "catch") {
+      const victimPose = seatPose(action.victimId)
+      for (let index = 0; victimPose && index < action.drawCount; index++) {
+        added.push({ id: `c${action.id}-${index}`, card: null, flip: false, fade: true, from: deckPose, to: victimPose, w, h, delay: index * 150, duration: 520 })
+      }
     } else if (action.type === "draw") {
       const to = seatPose(action.playerId)
       if (to) added.push({ id: `d${action.id}`, card: action.card ?? null, flip: Boolean(action.card), fade: true, from: deckPose, to, w, h, delay: 0, duration: land })
@@ -264,7 +280,7 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
     drawnCardId: snapshot ? snapshot.drawnCardId : state.drawnCardId,
     deckCount: beforeLanding ? snapshot!.deckCount : state.deckCount,
   }
-  const victimId = action?.type === "play" ? action.victimId : undefined
+  const victimId = action?.type === "play" || action?.type === "catch" ? action.victimId : undefined
   const countOf = (id: string) => {
     const live = state.players[id]?.cardCount ?? 0
     if (!snapshot) return live
@@ -365,6 +381,11 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
     setPending({ cardId: null })
     onPass()
   }
+  // You can call during your own play's replay; others can catch once it has played out.
+  const exposed = state.status === "playing" ? state.unoExposedIds : []
+  const mustCall = connected && exposed.includes(playerId)
+  const canCatch = (id: string) => connected && exposed.includes(id) && !(action?.type === "play" && action.playerId === id)
+
   const pick = (card: UnoCard) => {
     if (!canAct || view.drawnCardId) return
     setSelectedId((current) => (current === card.id ? null : card.id))
@@ -412,6 +433,7 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
         : `${nameOf(view.currentPlayerId)}'s turn`
   const turnHex = myTurn ? TURN_GOLD : view.activeColor ? COLOR_HEX[view.activeColor].base : "#94a3b8"
   const seatTag = (id: string) => {
+    if (action?.type === "catch" && action.victimId === id) return `+${action.drawCount}`
     if (!action || action.type !== "play" || beforeLanding) return null
     if (action.victimId === id) return `+${action.drawCount ?? 0}`
     if (action.skippedId === id) return "Skipped"
@@ -556,6 +578,9 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
               isTurn={!finished && view.currentPlayerId === id}
               isHost={id === state.hostId}
               offline={player.connected === false}
+              bot={Boolean(player.isBot)}
+              exposed={exposed.includes(id)}
+              onCatch={canCatch(id) ? () => onCatch(id) : null}
               tag={seatTag(id)}
             />
           )
@@ -695,8 +720,17 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
           <div className={cn("items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold", tray ? "hidden sm:flex" : "flex", myTurn ? "border-amber-200/80 bg-amber-300 text-[#1a1406]" : "border-white/10 bg-black/45 text-white/80 backdrop-blur")}>
             <span>{myTurn ? "Your turn" : "You"}</span>
             <span className={cn("rounded-full px-1.5", myTurn ? "bg-black/15" : "bg-white/10")}>{rawHand.length}</span>
-            {rawHand.length === 1 && <span className="rounded bg-[#ef3b33] px-1 italic text-[#ffd23f]">UNO!</span>}
+            {rawHand.length === 1 && !mustCall && <span className="rounded bg-[#ef3b33] px-1 italic text-[#ffd23f]">UNO!</span>}
           </div>
+          {mustCall && (
+            <button
+              type="button"
+              onClick={onCallUno}
+              className="uno-bob pointer-events-auto rounded-xl border-[3px] border-[#ffd23f] bg-[#ef3b33] px-4 py-1.5 text-lg font-black italic uppercase tracking-tight text-[#ffd23f] shadow-[0_0_24px_#ef3b33cc] transition hover:scale-105 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-200"
+            >
+              UNO!
+            </button>
+          )}
           {tray && (
             <div className={cn(GLASS, "uno-rise flex min-h-11 max-w-[calc(100vw-24px)] items-center overflow-x-auto px-2 py-1.5 sm:max-w-[calc(100vw-180px)]")}>{tray}</div>
           )}
@@ -777,7 +811,7 @@ function ColorPicker({ label, onPick, extra }: { label: string; onPick: (color: 
   )
 }
 
-function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline, tag }: {
+function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline, bot, exposed, onCatch, tag }: {
   refCallback: (element: HTMLDivElement | null) => void
   name: string
   x: number
@@ -787,6 +821,9 @@ function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline
   isTurn: boolean
   isHost: boolean
   offline: boolean
+  bot: boolean
+  exposed: boolean
+  onCatch: (() => void) | null
   tag: string | null
 }) {
   const shown = Math.min(count, compact ? 7 : 10)
@@ -822,17 +859,21 @@ function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline
             boxShadow: isTurn ? `0 0 24px ${TURN_GOLD}aa` : "none",
           }}
         >
-          {name.slice(0, 1).toUpperCase()}
+          {bot ? <Bot className={compact ? "size-4" : "size-5"} /> : name.slice(0, 1).toUpperCase()}
         </span>
         <span className="absolute -bottom-1 -right-2 min-w-[22px] rounded-full bg-[#fbf8f1] px-1.5 text-center text-[11px] font-black leading-[18px] text-[#141416] shadow">{count}</span>
-        {count === 1 && <span className="uno-bob absolute -left-5 -top-2 -rotate-12 rounded-md bg-[#ef3b33] px-1.5 text-[10px] font-black italic leading-4 text-[#ffd23f] ring-2 ring-[#ffd23f]">UNO!</span>}
+        {count === 1 && !exposed && <span className="uno-bob absolute -left-5 -top-2 -rotate-12 rounded-md bg-[#ef3b33] px-1.5 text-[10px] font-black italic leading-4 text-[#ffd23f] ring-2 ring-[#ffd23f]">UNO!</span>}
       </div>
       <p className={cn("flex max-w-full items-center gap-1 truncate text-xs font-bold", isTurn ? "text-amber-100" : "text-white/85")}>
         {isHost && <Crown className="size-3 shrink-0 text-amber-300" />}
         <span className="truncate">{name}</span>
         {offline && <WifiOff className="size-3 shrink-0" />}
       </p>
-      {tag ? (
+      {onCatch ? (
+        <button type="button" onClick={onCatch} className="uno-bob rounded-full bg-[#ffd23f] px-2.5 py-0.5 text-[11px] font-black uppercase tracking-wide text-[#141416] shadow-[0_0_16px_#ffd23faa] transition hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+          Catch!
+        </button>
+      ) : tag ? (
         <span className="uno-tag rounded-full bg-[#ef3b33] px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-white shadow">{tag}</span>
       ) : isTurn ? (
         <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-[#1a1406]">Playing</span>

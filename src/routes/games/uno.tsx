@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { Users } from "lucide-react"
+import { Bot, Users } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useGameNight } from "@/components/game-night/GameNightProvider"
 import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge"
 import { UnoGame } from "@/components/games/uno/UnoGame"
 import { useMultiplayerUno } from "@/components/games/uno/useMultiplayerUno"
+import { Button } from "@/components/ui/button"
 import { GameTopBar, MultiplayerLobby, MultiplayerSetupCard } from "@/components/multiplayer/shared"
 import { getGameNightInviteLink, getInviteLink, parseInviteSearch } from "@/lib/inviteLinks"
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
@@ -43,6 +44,7 @@ function UnoPage() {
 
   const players = useMemo(() => multiplayer.gameState?.seatOrder.map((id) => multiplayer.gameState!.players[id]).filter(Boolean) ?? [], [multiplayer.gameState])
   const connectedPlayers = players.filter((player) => player.connected !== false)
+  const bots = players.filter((player) => player.isBot)
   const create = () => {
     if (!name.trim()) return setMessage("Enter your name first.")
     const code = multiplayer.createGame(name.trim())
@@ -68,11 +70,25 @@ function UnoPage() {
   if (session.isResuming && view === "select") return <div className="flex min-h-[calc(100vh-73px)] items-center justify-center text-muted-foreground">Rejoining your Uno game...</div>
   if ((view === "select" || view === "lobby") && !multiplayer.gameState) return <div className="min-h-[calc(100vh-73px)] bg-gradient-to-b from-red-500/10 via-background to-background">
     <GameTopBar title="Uno" subtitle="Match colors, numbers, and action cards" />
-    <main className="mx-auto max-w-xl px-4 py-10"><MultiplayerSetupCard title="Multiplayer Uno" description="Create a private table for 2-8 players." icon={<Users className="h-5 w-5 text-red-500" />} playerName={name} roomCode={roomCode} createLabel="Create Uno Room" onPlayerNameChange={setName} onRoomCodeChange={setRoomCode} onJoin={join} onCreate={create} message={message}>
+    <main className="mx-auto max-w-xl px-4 py-10"><MultiplayerSetupCard title="Multiplayer Uno" description="Create a private table for 2-8 players, or fill seats with bots." icon={<Users className="h-5 w-5 text-red-500" />} playerName={name} roomCode={roomCode} createLabel="Create Uno Room" onPlayerNameChange={setName} onRoomCodeChange={setRoomCode} onJoin={join} onCreate={create} message={message}>
       <div className="rounded-2xl bg-muted/60 p-4 text-sm text-muted-foreground">Draw one card, play matching colors or values, and empty your hand first. No stacking or challenges.</div>
     </MultiplayerSetupCard></main>
   </div>
-  if (view === "lobby" && multiplayer.gameState && multiplayer.playerId) return <MultiplayerLobby title="Uno" subtitle="The first player out of cards wins" onBack={leave} players={players} hostId={multiplayer.gameState.hostId} currentPlayerId={multiplayer.playerId} playerDescription={`${connectedPlayers.length} of 8 players`} settings={<div className="rounded-2xl border bg-red-500/5 p-4 text-sm"><p className="font-bold">Classic deck</p><p className="text-muted-foreground">7-card hands, automatic Uno, no stacking.</p></div>} roomCode={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode} copiedRoomCode={copied} onCopyRoomCode={copyInvite} onStart={multiplayer.startGame} onLeave={leave} canStart={connectedPlayers.length >= 2} isHost={multiplayer.isHost} message={message} startLabel="Deal Cards" />
-  if (view === "game" && multiplayer.gameState && multiplayer.playerId) return <UnoGame state={multiplayer.gameState} playerId={multiplayer.playerId} isHost={multiplayer.isHost} roomLabel={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode} message={message} connected={multiplayer.connectionStatus === "connected"} onPlayCard={multiplayer.playCard} onDrawCard={multiplayer.drawCard} onPass={multiplayer.pass} onRestart={multiplayer.restartGame} onLeave={leave} />
+  if (view === "lobby" && multiplayer.gameState && multiplayer.playerId) return <MultiplayerLobby title="Uno" subtitle="The first player out of cards wins" onBack={leave} players={players} hostId={multiplayer.gameState.hostId} currentPlayerId={multiplayer.playerId} playerDescription={`${connectedPlayers.length} of 8 players`} settings={<div className="space-y-3">
+    <div className="rounded-2xl border bg-red-500/5 p-4 text-sm"><p className="font-bold">Classic deck</p><p className="text-muted-foreground">7-card hands, call UNO at one card or get caught for +2, no stacking.</p></div>
+    <div className="rounded-2xl border bg-red-500/5 p-4 text-sm">
+      <div className="flex items-center justify-between gap-2">
+        <p className="font-bold">Bots</p>
+        <Button size="sm" variant="outline" disabled={!multiplayer.isHost || players.length >= multiplayer.gameState.maxPlayers} onClick={multiplayer.addBot}><Bot className="mr-1 h-3.5 w-3.5" />Add bot</Button>
+      </div>
+      {bots.length === 0 ? <p className="mt-2 text-muted-foreground">Fill empty seats with bots to start without a full table.</p> : <ul className="mt-2 space-y-1">
+        {bots.map((bot) => <li key={bot.id} className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2"><Bot className="h-3.5 w-3.5 text-muted-foreground" />{bot.name}</span>
+          {multiplayer.isHost && <Button size="sm" variant="ghost" onClick={() => multiplayer.removePlayer(bot.id)}>Remove</Button>}
+        </li>)}
+      </ul>}
+    </div>
+  </div>} roomCode={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode} copiedRoomCode={copied} onCopyRoomCode={copyInvite} onStart={multiplayer.startGame} onLeave={leave} canStart={connectedPlayers.length >= 2} isHost={multiplayer.isHost} message={message} startLabel="Deal Cards" />
+  if (view === "game" && multiplayer.gameState && multiplayer.playerId) return <UnoGame state={multiplayer.gameState} playerId={multiplayer.playerId} isHost={multiplayer.isHost} roomLabel={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode} message={message} connected={multiplayer.connectionStatus === "connected"} onPlayCard={multiplayer.playCard} onDrawCard={multiplayer.drawCard} onPass={multiplayer.pass} onCallUno={multiplayer.callUno} onCatch={multiplayer.catchUno} onRestart={multiplayer.restartGame} onLeave={leave} />
   return null
 }

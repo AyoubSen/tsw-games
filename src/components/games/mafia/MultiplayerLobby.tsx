@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Copy, Check, Crown, Users, LogOut, Play, Clock, MessageSquare, Moon } from "lucide-react"
+import { Copy, Check, Crown, Users, LogOut, Play, Clock, MessageSquare, Moon, Bot, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { getInviteLink } from "@/lib/inviteLinks"
@@ -10,6 +10,8 @@ interface MultiplayerLobbyProps {
   playerId: string
   isHost: boolean
   onStartGame: () => void
+  onAddBot: () => void
+  onRemoveBot: (playerId: string) => void
   onLeave: () => void
 }
 
@@ -18,6 +20,8 @@ export function MultiplayerLobby({
   playerId,
   isHost,
   onStartGame,
+  onAddBot,
+  onRemoveBot,
   onLeave,
 }: MultiplayerLobbyProps) {
   const [copied, setCopied] = useState(false)
@@ -93,10 +97,18 @@ export function MultiplayerLobby({
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Users className="w-5 h-5" />
-              Players ({players.length}/12)
-            </CardTitle>
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Users className="w-5 h-5" />
+                Players ({players.length}/12)
+              </CardTitle>
+              {isHost && (
+                <Button size="sm" variant="outline" disabled={players.length >= 12} onClick={onAddBot}>
+                  <Bot className="w-3.5 h-3.5 mr-1" />
+                  Add bot
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
@@ -111,7 +123,7 @@ export function MultiplayerLobby({
                 >
                   <div className="flex items-center gap-2">
                     <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-sm font-medium">
-                      {player.name.charAt(0).toUpperCase()}
+                      {player.isBot ? <Bot className="w-4 h-4 text-muted-foreground" /> : player.name.charAt(0).toUpperCase()}
                     </div>
                     <span className="font-medium">{player.name}</span>
                     {!player.connected && (
@@ -123,6 +135,11 @@ export function MultiplayerLobby({
                   </div>
                   {player.id === gameState.hostId && (
                     <Crown className="w-4 h-4 text-yellow-500" />
+                  )}
+                  {player.isBot && isHost && (
+                    <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Remove ${player.name}`} onClick={() => onRemoveBot(player.id)}>
+                      <X className="w-4 h-4" />
+                    </Button>
                   )}
                 </div>
               ))}
@@ -167,7 +184,7 @@ export function MultiplayerLobby({
         </div>
 
         <p className="text-xs text-muted-foreground text-center">
-          Need at least 5 players to start. Roles are assigned based on player count.
+          Need at least 5 players to start. Roles are assigned based on player count. Bots fill empty seats and play at random.
         </p>
       </div>
     </div>

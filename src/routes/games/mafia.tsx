@@ -8,7 +8,7 @@ import { getGameNightInviteLink, parseInviteSearch } from '@/lib/inviteLinks'
 import { useMultiplayerSession } from '@/lib/multiplayerSession'
 import { GameModeSelector } from '@/components/games/mafia/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/mafia/MultiplayerLobby'
-import { MultiplayerGame } from '@/components/games/mafia/MultiplayerGame'
+import { MafiaGame } from '@/components/games/mafia/MafiaGame'
 import { useMultiplayerMafia, type MafiaSettings } from '@/components/games/mafia/useMultiplayerMafia'
 
 export const Route = createFileRoute('/games/mafia')({
@@ -150,6 +150,8 @@ function MafiaPage() {
           playerId={multiplayer.playerId}
           isHost={multiplayer.isHost}
           onStartGame={multiplayer.startGame}
+          onAddBot={multiplayer.addBot}
+          onRemoveBot={multiplayer.removeBot}
           onLeave={handleLeaveMultiplayer}
         />
         </div>
@@ -159,29 +161,22 @@ function MafiaPage() {
 
   if (effectiveView === 'game' && multiplayer.gameState && multiplayer.playerId) {
     return (
-      <div className="min-h-[calc(100vh-73px)] bg-[#0a0d14]">
-        <div className="px-4 py-3 flex items-center justify-between border-b border-zinc-800 bg-[#0a0d14]">
-          <Button variant="ghost" size="sm" onClick={handleLeaveMultiplayer} className="text-zinc-400 hover:text-white">
-            <ArrowLeft className="w-4 h-4 mr-1" />
-            Leave
-          </Button>
-          <h1 className="text-lg font-bold text-white">Mafia</h1>
-          <div className="w-[60px]" />
-        </div>
-        <MultiplayerGame
-          gameState={multiplayer.gameState}
-          playerId={multiplayer.playerId}
-          isHost={multiplayer.isHost}
-          onNightAction={multiplayer.sendNightAction}
-          onWitchAction={multiplayer.sendWitchAction}
-          onCupidAction={multiplayer.sendCupidAction}
-          onHunterKill={multiplayer.sendHunterKill}
-          onDayVote={multiplayer.sendDayVote}
-          onChat={multiplayer.sendChat}
-          onLeave={handleLeaveMultiplayer}
-          error={multiplayer.error}
-        />
-      </div>
+      <MafiaGame
+        state={multiplayer.gameState}
+        playerId={multiplayer.playerId}
+        roomLabel={gameNightConnection ? bridge.publicRoomCode : multiplayer.gameState.roomCode}
+        connected={multiplayer.connectionStatus === 'connected'}
+        error={multiplayer.error}
+        reactions={multiplayer.reactions}
+        onReact={multiplayer.react}
+        onNightAction={multiplayer.sendNightAction}
+        onWitchAction={multiplayer.sendWitchAction}
+        onCupidAction={multiplayer.sendCupidAction}
+        onHunterKill={multiplayer.sendHunterKill}
+        onDayVote={multiplayer.sendDayVote}
+        onChat={multiplayer.sendChat}
+        onLeave={handleLeaveMultiplayer}
+      />
     )
   }
 

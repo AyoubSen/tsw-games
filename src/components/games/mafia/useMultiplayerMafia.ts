@@ -10,10 +10,13 @@ import {
   getPersistentPlayerToken,
   leavePartySocket,
 } from "@/lib/partykit"
+import type { Reaction } from "@/lib/reactions"
+import { useReactionBubbles } from "@/components/multiplayer/Reactions"
 import type {
   ServerMessage,
   PublicGameState,
   MafiaSettings,
+  ChatChannel,
 } from "../../../../party/mafia"
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
@@ -37,6 +40,7 @@ export function useMultiplayerMafia() {
     isHost: false,
   })
 
+  const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles()
   const socketRef = useRef<PartySocket | null>(null)
   const roomCodeRef = useRef("")
 
@@ -120,6 +124,10 @@ export function useMultiplayerMafia() {
 
   const handleMessage = useCallback((message: ServerMessage) => {
     switch (message.type) {
+      case "reaction":
+        receiveReaction(message)
+        break
+
       case "state":
         setState((prev) => ({
           ...prev,
@@ -180,9 +188,10 @@ export function useMultiplayerMafia() {
         }, 3000)
         break
     }
-  }, [])
+  }, [receiveReaction])
 
   const disconnect = useCallback(() => {
+    clearReactions()
     const socket = socketRef.current
     socketRef.current = null
     if (socket) leavePartySocket(socket, { type: "leave" })
@@ -198,7 +207,7 @@ export function useMultiplayerMafia() {
       error: null,
       isHost: false,
     })
-  }, [])
+  }, [clearReactions])
 
   const abandonReconnect = useCallback(() => {
     const socket = socketRef.current
@@ -261,8 +270,20 @@ export function useMultiplayerMafia() {
     sendNow({ type: "day-vote", targetId })
   }, [sendNow])
 
-  const sendChat = useCallback((text: string) => {
-    sendNow({ type: "chat", text })
+  const sendChat = useCallback((text: string, channel: ChatChannel = "day") => {
+    sendNow({ type: "chat", text, channel })
+  }, [sendNow])
+
+  const react = useCallback((reaction: Reaction) => {
+    sendNow({ type: "react", reaction })
+  }, [sendNow])
+
+  const addBot = useCallback(() => {
+    sendNow({ type: "add-bot" })
+  }, [sendNow])
+
+  const removeBot = useCallback((playerId: string) => {
+    sendNow({ type: "remove-bot", playerId })
   }, [sendNow])
 
   useEffect(() => {
@@ -284,6 +305,10 @@ export function useMultiplayerMafia() {
     sendHunterKill,
     sendDayVote,
     sendChat,
+    react,
+    reactions,
+    addBot,
+    removeBot,
     disconnect,
     abandonReconnect,
   }

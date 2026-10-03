@@ -5,6 +5,7 @@ import {
   validateGameNightConnection,
   type GameNightMember,
 } from "./shared/gameNight"
+import { isReaction, takeReactionSlot, type Reaction, type ReactionMessage } from "../src/lib/reactions"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -52,7 +53,10 @@ export interface Player {
   role: MafiaRole
   alive: boolean
   connected: boolean
+  isBot?: boolean
 }
+
+export type ChatChannel = "day" | "wolf" | "ghost"
 
 export interface ChatMessage {
   id: string
@@ -60,6 +64,7 @@ export interface ChatMessage {
   playerName: string
   text: string
   timestamp: number
+  dayNumber: number
 }
 
 export interface EventLogEntry {
@@ -68,6 +73,30 @@ export interface EventLogEntry {
   phase: GamePhase
   dayNumber: number
   timestamp: number
+}
+
+export type DeathCause = "night" | "vote" | "hunter" | "heartbreak"
+
+/** One step of a server-paced reveal; every client shows the same beat at the same time. */
+export type RevealBeat =
+  | { kind: "sunrise" }
+  | { kind: "peaceful" }
+  | { kind: "death"; playerId: string; cause: DeathCause; byId?: string }
+  | { kind: "tally"; eliminatedId: string | null }
+  | { kind: "spared"; tie: boolean }
+  | { kind: "win"; winner: Exclude<WinCondition, null> }
+
+export interface Reveal {
+  beats: RevealBeat[]
+  index: number
+  beatEndsAt: number
+}
+
+export interface PublicReveal {
+  beat: RevealBeat
+  index: number
+  total: number
+  endsAt: number
 }
 
 export interface GameState {
@@ -86,6 +115,7 @@ export interface GameState {
   werewolfTarget: string | null
   seerTarget: string | null
   seerResult: boolean | null                  // true = werewolf
+  seerChecks: Record<string, boolean>         // every inspection so far
   doctorTarget: string | null
   doctorLastTarget: string | null             // can't repeat
   witchHealUsed: boolean
@@ -99,11 +129,15 @@ export interface GameState {
   // Day actions
   dayVotes: Record<string, string>            // voterId -> targetId or "abstain"
   eliminatedToday: string | null
-  chat: ChatMessage[]
+  chat: ChatMessage[]                         // village chat, every day
+  wolfChat: ChatMessage[]
+  ghostChat: ChatMessage[]
 
   // Hunter
   hunterPendingKill: boolean
   hunterPlayerId: string | null
+  /** Where play resumes after the hunter's shot. */
+  hunterReturn: "day" | "night"
 
   // Game result
   winner: WinCondition
@@ -112,10 +146,15 @@ export interface GameState {
   // Events
   events: EventLogEntry[]
   nightKills: string[]                        // player ids killed this night (for dawn reveal)
+  reveal: Reveal | null
 
   // Timer
   phaseEndTime: number | null                 // timestamp when current phase ends
   playerTokens: Record<string, string>
+
+  // Bots
+  botAt: number | null
+  botFor: string | null
 }
 
 export interface PublicPlayer {
@@ -124,6 +163,7 @@ export interface PublicPlayer {
   alive: boolean
   connected: boolean
   role: MafiaRole | null                      // only revealed if dead or game over
+  isBot?: boolean
 }
 
 export interface PublicGameState {
@@ -144,9 +184,11 @@ export interface PublicGameState {
   nightSubPhase: NightSubPhase
   werewolfVotes: Record<string, string> | null    // only for werewolves
   seerResult: { targetId: string; isWerewolf: boolean } | null // only for seer
+  seerChecks: Record<string, boolean> | null       // only for seer
   doctorLastTarget: string | null                  // only for doctor
   witchHealUsed: boolean                           // only for witch
   witchKillUsed: boolean                           // only for witch
+  witchActed: boolean
   witchWerewolfTarget: string | null               // only for witch (who wolves targeted)
   cupidLovers: [string, string] | null             // only for cupid & the lovers themselves
   isLover: boolean
@@ -154,10 +196,13 @@ export interface PublicGameState {
   // Day info
   dayVotes: Record<string, string>
   chat: ChatMessage[]
+  wolfChat: ChatMessage[] | null                   // wolves, or everyone once the game is over
+  ghostChat: ChatMessage[] | null                  // the dead, or everyone once the game is over
   eliminatedToday: string | null
 
   // Hunter
   hunterPendingKill: boolean
+  hunterId: string | null
   isHunterRevenge: boolean                         // true if this player is the hunter needing to pick
 
   // Game result
@@ -166,6 +211,7 @@ export interface PublicGameState {
 
   // Events & timer
   events: EventLogEntry[]
+  reveal: PublicReveal | null
   phaseEndTime: number | null
 }
 
@@ -173,18 +219,50 @@ export type ClientMessage =
   | { type: "join"; name: string }
   | { type: "leave" }
   | { type: "start-game" }
+  | { type: "add-bot" }
+  | { type: "remove-bot"; playerId: string }
   | { type: "night-action"; targetId: string }
   | { type: "witch-action"; heal: boolean; killTargetId: string | null }
   | { type: "cupid-action"; lover1: string; lover2: string }
   | { type: "hunter-kill"; targetId: string }
   | { type: "day-vote"; targetId: string }          // "abstain" for abstain
-  | { type: "chat"; text: string }
+  | { type: "chat"; text: string; channel?: ChatChannel }
+  | { type: "react"; reaction: Reaction }
 
 export type ServerMessage =
   | { type: "state"; state: PublicGameState }
   | { type: "player-joined"; player: PublicPlayer }
   | { type: "player-left"; playerId: string }
   | { type: "error"; message: string }
+  | ReactionMessage
+
+// ─── Pacing ─────────────────────────────────────────────────────────────────
+
+/** How long each reveal beat holds. MafiaGame.tsx times its in-beat animation (death at 1.4s, role flip at 2.4s) against these. */
+const BEAT_MS: Record<RevealBeat["kind"], number> = {
+  sunrise: 2600,
+  peaceful: 3800,
+  death: 5200,
+  tally: 4200,
+  spared: 3400,
+  win: 5500,
+}
+const ROLE_REVEAL_SECONDS = 10
+const HUNTER_SECONDS = 20
+const MIN_PLAYERS = 5
+const MAX_PLAYERS = 12
+const BOT_NAMES = ["Ada", "Baxter", "Cleo", "Dodge", "Echo", "Fern", "Gus", "Hazel", "Ivo", "June", "Kit", "Lark"]
+
+const ROLE_NAME: Record<MafiaRole, string> = {
+  werewolf: "a Werewolf",
+  villager: "a Villager",
+  seer: "the Seer",
+  doctor: "the Doctor",
+  hunter: "the Hunter",
+  witch: "the Witch",
+  cupid: "Cupid",
+  jester: "the Jester",
+}
 
 // ─── Role Distribution ──────────────────────────────────────────────────────
 
@@ -194,29 +272,24 @@ function getRoleDistribution(playerCount: number): MafiaRole[] {
   if (playerCount <= 5) {
     roles.push("werewolf")
     roles.push("seer", "doctor")
-    while (roles.length < playerCount) roles.push("villager")
   } else if (playerCount === 6) {
     roles.push("werewolf", "werewolf")
     roles.push("seer", "doctor")
-    while (roles.length < playerCount) roles.push("villager")
   } else if (playerCount === 7) {
     roles.push("werewolf", "werewolf")
     roles.push("seer", "doctor", "hunter")
-    while (roles.length < playerCount) roles.push("villager")
   } else if (playerCount === 8) {
     roles.push("werewolf", "werewolf")
     roles.push("seer", "doctor", "hunter", "witch")
-    while (roles.length < playerCount) roles.push("villager")
   } else if (playerCount === 9) {
     roles.push("werewolf", "werewolf")
     roles.push("seer", "doctor", "hunter", "witch", "cupid")
-    while (roles.length < playerCount) roles.push("villager")
   } else {
     // 10+
     roles.push("werewolf", "werewolf", "werewolf")
     roles.push("seer", "doctor", "hunter", "witch", "cupid", "jester")
-    while (roles.length < playerCount) roles.push("villager")
   }
+  while (roles.length < playerCount) roles.push("villager")
 
   return roles
 }
@@ -228,6 +301,14 @@ function shuffleArray<T>(arr: T[]): T[] {
     ;[a[i], a[j]] = [a[j], a[i]]
   }
   return a
+}
+
+function pick<T>(items: T[]): T | undefined {
+  return items[Math.floor(Math.random() * items.length)]
+}
+
+function between(min: number, max: number) {
+  return min + Math.random() * (max - min)
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -258,6 +339,7 @@ class MafiaParty implements Party.Server {
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
   gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
+  reactedAt = new Map<string, number>()
 
   async onStart() {
     const stored = await this.room.storage.get<string>("state")
@@ -265,9 +347,16 @@ class MafiaParty implements Party.Server {
       try {
         const parsed = JSON.parse(stored) as GameState
         parsed.playerTokens ??= {}
+        parsed.wolfChat ??= []
+        parsed.ghostChat ??= []
+        parsed.seerChecks ??= {}
+        parsed.reveal ??= null
+        parsed.hunterReturn ??= "night"
+        parsed.botAt = null
+        parsed.botFor = null
         this.state = parsed
         for (const player of Object.values(this.state.players)) {
-          player.connected = false
+          if (!player.isBot) player.connected = false
         }
         await this.saveState()
       } catch {
@@ -276,16 +365,26 @@ class MafiaParty implements Party.Server {
     }
   }
 
+  /** Persists state and points the single storage alarm at the next reveal beat, phase deadline or bot move. */
   async saveState() {
-    if (this.state) {
-      await this.room.storage.put("state", JSON.stringify(this.state))
-    }
+    const s = this.state
+    if (!s) return
+    this.syncBots()
+    await this.room.storage.put("state", JSON.stringify(s))
+    const deadlines = [s.reveal ? s.reveal.beatEndsAt : s.phaseEndTime, s.botAt]
+      .filter((deadline): deadline is number => typeof deadline === "number")
+    if (deadlines.length) await this.room.storage.setAlarm(Math.min(...deadlines))
+    else await this.room.storage.deleteAlarm()
   }
 
   isAuthenticated(conn: Party.Connection): boolean {
     if (!this.state) return false
     const token = this.connectionTokens.get(conn)
     return Boolean(token && this.state.playerTokens[conn.id] === token)
+  }
+
+  humansConnected(): boolean {
+    return Boolean(this.state && Object.values(this.state.players).some((p) => !p.isBot && p.connected))
   }
 
   getPublicState(playerId: string): PublicGameState {
@@ -303,6 +402,7 @@ class MafiaParty implements Party.Server {
         alive: p.alive,
         connected: p.connected,
         role: (!p.alive || isGameOver) ? p.role : null,
+        isBot: p.isBot,
       }
     }
 
@@ -313,6 +413,17 @@ class MafiaParty implements Party.Server {
           players[id].role = "werewolf"
         }
       }
+    }
+
+    // Deaths the reveal hasn't reached yet still look alive.
+    if (s.reveal) {
+      s.reveal.beats.forEach((beat, index) => {
+        if (index <= s.reveal!.index || beat.kind !== "death") return
+        const shown = players[beat.playerId]
+        if (!shown) return
+        shown.alive = true
+        if (!(myRole === "werewolf" && s.players[beat.playerId].role === "werewolf")) shown.role = null
+      })
     }
 
     const isLover = s.cupidLovers
@@ -337,6 +448,11 @@ class MafiaParty implements Party.Server {
       cupidLovers = null
     }
 
+    const reveal: PublicReveal | null = s.reveal
+      ? { beat: s.reveal.beats[s.reveal.index], index: s.reveal.index, total: s.reveal.beats.length, endsAt: s.reveal.beatEndsAt }
+      : null
+    const iAmDead = Boolean(me && !players[playerId]?.alive && s.status !== "waiting")
+
     return {
       roomCode: s.roomCode,
       hostId: s.hostId,
@@ -351,22 +467,28 @@ class MafiaParty implements Party.Server {
       nightSubPhase: s.nightSubPhase,
       werewolfVotes: myRole === "werewolf" ? s.werewolfVotes : null,
       seerResult,
+      seerChecks: myRole === "seer" ? s.seerChecks : null,
       doctorLastTarget: myRole === "doctor" ? s.doctorLastTarget : null,
       witchHealUsed: s.witchHealUsed,
       witchKillUsed: s.witchKillUsed,
+      witchActed: myRole === "witch" && s.witchActed,
       witchWerewolfTarget,
       cupidLovers,
       isLover,
       dayVotes: s.dayVotes,
       chat: s.chat,
+      wolfChat: myRole === "werewolf" || isGameOver ? s.wolfChat : null,
+      ghostChat: iAmDead || isGameOver ? s.ghostChat : null,
       eliminatedToday: s.eliminatedToday,
       hunterPendingKill: s.hunterPendingKill,
+      hunterId: s.phase === "hunter-revenge" ? s.hunterPlayerId : null,
       isHunterRevenge:
-        s.hunterPendingKill && s.hunterPlayerId === playerId,
+        s.hunterPendingKill && s.hunterPlayerId === playerId && !s.reveal,
       winner: s.winner,
       winningPlayerIds: s.winningPlayerIds,
       events: s.events,
-      phaseEndTime: s.phaseEndTime,
+      reveal,
+      phaseEndTime: s.reveal ? null : s.phaseEndTime,
     }
   }
 
@@ -395,25 +517,20 @@ class MafiaParty implements Party.Server {
   }
 
   // ─── Phase Transitions ──────────────────────────────────────────────────
+  // Transitions only mutate state; the message/alarm handler broadcasts and saves once.
 
-  async setPhase(phase: GamePhase, timerSeconds?: number) {
+  setPhase(phase: GamePhase, timerSeconds?: number) {
     if (!this.state) return
     this.state.phase = phase
-
-    if (timerSeconds && timerSeconds > 0) {
-      this.state.phaseEndTime = Date.now() + timerSeconds * 1000
-      await this.room.storage.setAlarm(Date.now() + timerSeconds * 1000)
-    } else {
-      this.state.phaseEndTime = null
-    }
+    this.state.phaseEndTime = timerSeconds && timerSeconds > 0 ? Date.now() + timerSeconds * 1000 : null
   }
 
-  async startGame() {
+  startGame() {
     if (!this.state) return
     const playerIds = this.state.playerOrder
     const count = playerIds.length
 
-    if (count < 5) return
+    if (count < MIN_PLAYERS) return
 
     // Assign roles
     const roles = shuffleArray(getRoleDistribution(count))
@@ -426,50 +543,145 @@ class MafiaParty implements Party.Server {
 
     this.addEvent("The village falls asleep... roles are being revealed.")
 
-    await this.setPhase("role-reveal", 8)
-    this.broadcastState()
-    await this.saveState()
+    this.setPhase("role-reveal", ROLE_REVEAL_SECONDS)
   }
 
-  async onAlarm() {
+  /** The current phase's timer ran out (no reveal is playing). */
+  onPhaseTimeout() {
     if (!this.state) return
-
     switch (this.state.phase) {
       case "role-reveal":
-        await this.startNight(true)
+        this.startNight(true)
         break
       case "first-night":
       case "night":
         // Auto-skip current night sub-phase
-        await this.advanceNightSubPhase()
-        break
-      case "dawn":
-        await this.startDayDiscussion()
+        this.advanceNightSubPhase()
         break
       case "day-discussion":
-        await this.startDayVoting()
+        this.startDayVoting()
         break
       case "day-voting":
-        await this.resolveDayVotes()
-        break
-      case "day-elimination":
-        await this.afterElimination()
+        this.resolveDayVotes()
         break
       case "hunter-revenge":
         // Hunter didn't pick, auto-skip
         if (this.state.hunterPendingKill) {
+          this.addEvent(`${this.state.players[this.state.hunterPlayerId!]?.name ?? "The Hunter"} lowered their weapon.`)
           this.state.hunterPendingKill = false
           this.state.hunterPlayerId = null
-          await this.checkWinConditionAndProceed()
         }
+        this.finishHunter()
         break
+    }
+  }
+
+  async onAlarm() {
+    const s = this.state
+    if (!s) return
+    const now = Date.now() + 50
+
+    if (s.reveal) {
+      if (now >= s.reveal.beatEndsAt) this.advanceReveal()
+    } else if (s.phaseEndTime && now >= s.phaseEndTime) {
+      s.phaseEndTime = null
+      this.onPhaseTimeout()
+    }
+
+    if (this.state?.botAt && now >= this.state.botAt) {
+      this.state.botAt = null
+      this.botStep()
     }
 
     this.broadcastState()
     await this.saveState()
   }
 
-  async startNight(isFirst: boolean) {
+  // ─── Reveals ────────────────────────────────────────────────────────────
+
+  startReveal(beats: RevealBeat[]) {
+    if (!this.state || beats.length === 0) return
+    this.state.phaseEndTime = null
+    this.state.reveal = { beats, index: 0, beatEndsAt: Date.now() + BEAT_MS[beats[0].kind] }
+    this.logBeat(beats[0])
+  }
+
+  advanceReveal() {
+    const s = this.state
+    if (!s?.reveal) return
+    const reveal = s.reveal
+    if (reveal.index + 1 < reveal.beats.length) {
+      reveal.index++
+      const beat = reveal.beats[reveal.index]
+      reveal.beatEndsAt = Date.now() + BEAT_MS[beat.kind]
+      this.logBeat(beat)
+      return
+    }
+    s.reveal = null
+    switch (s.phase) {
+      case "dawn":
+        this.startDayDiscussion()
+        break
+      case "day-elimination":
+        this.afterElimination()
+        break
+      case "hunter-revenge":
+        this.finishHunter()
+        break
+    }
+  }
+
+  /** Log entries are written as each beat plays, so the log never spoils a reveal. */
+  logBeat(beat: RevealBeat) {
+    const s = this.state
+    if (!s) return
+    const name = (id: string | undefined) => (id && s.players[id]?.name) || "Someone"
+    switch (beat.kind) {
+      case "peaceful":
+        this.addEvent("The village wakes peacefully. No one was killed last night.")
+        break
+      case "death": {
+        const role = ROLE_NAME[s.players[beat.playerId]?.role ?? "villager"]
+        const line = {
+          night: `${name(beat.playerId)} was found dead.`,
+          vote: `${name(beat.playerId)} was voted out.`,
+          hunter: `${name(beat.byId)} the Hunter took down ${name(beat.playerId)}.`,
+          heartbreak: `${name(beat.playerId)} died of a broken heart.`,
+        }[beat.cause]
+        this.addEvent(`${line} They were ${role}.`)
+        break
+      }
+      case "spared":
+        this.addEvent(beat.tie ? "The vote was tied. No one is eliminated." : "The village held back. No one is eliminated.")
+        break
+    }
+  }
+
+  loverOf(id: string): string | null {
+    const lovers = this.state?.cupidLovers
+    if (!lovers || !lovers.includes(id)) return null
+    return lovers[0] === id ? lovers[1] : lovers[0]
+  }
+
+  /** Kills a player (and a grieving lover), arming the Hunter's revenge; returns the death beats in order. */
+  killPlayer(id: string, cause: DeathCause, byId?: string): RevealBeat[] {
+    const s = this.state
+    const player = s?.players[id]
+    if (!s || !player?.alive) return []
+    player.alive = false
+    const beats: RevealBeat[] = [{ kind: "death", playerId: id, cause, ...(byId ? { byId } : {}) }]
+    if (player.role === "hunter" && !s.hunterPendingKill && cause !== "hunter") {
+      s.hunterPendingKill = true
+      s.hunterPlayerId = id
+    }
+    const lover = this.loverOf(id)
+    if (lover) beats.push(...this.killPlayer(lover, "heartbreak"))
+    return beats
+  }
+
+  // ─── Night ──────────────────────────────────────────────────────────────
+
+  startNight(isFirst: boolean) {
     if (!this.state) return
 
     if (isFirst) {
@@ -488,12 +700,13 @@ class MafiaParty implements Party.Server {
     this.state.witchKillTarget = null
     this.state.witchActed = false
     this.state.nightKills = []
+    this.state.dayVotes = {}
 
     const hasCupid = hasAliveRole(this.state, "cupid") && !this.state.cupidActed
     const phase = isFirst && hasCupid ? "first-night" : "night"
 
     this.addEvent(`Night ${this.state.dayNumber} falls... the village sleeps.`)
-    await this.setPhase(phase)
+    this.setPhase(phase, this.state.settings.nightTime)
 
     // Determine first night sub-phase
     if (isFirst && hasCupid) {
@@ -502,17 +715,9 @@ class MafiaParty implements Party.Server {
       this.state.nightSubPhase = "werewolves"
       // Skip if no werewolves alive
       if (!hasAliveRole(this.state, "werewolf")) {
-        await this.advanceNightSubPhaseFrom("werewolves")
-        return
+        this.advanceNightSubPhaseFrom("werewolves")
       }
     }
-
-    // Set night timer
-    await this.room.storage.setAlarm(Date.now() + this.state.settings.nightTime * 1000)
-    this.state.phaseEndTime = Date.now() + this.state.settings.nightTime * 1000
-
-    this.broadcastState()
-    await this.saveState()
   }
 
   getNextNightSubPhase(current: NightSubPhase): NightSubPhase {
@@ -532,191 +737,115 @@ class MafiaParty implements Party.Server {
     return "done"
   }
 
-  async advanceNightSubPhaseFrom(current: NightSubPhase) {
+  advanceNightSubPhaseFrom(current: NightSubPhase) {
     if (!this.state) return
+    if (current === "werewolves") this.state.werewolfTarget = this.wolfMajority()
     const next = this.getNextNightSubPhase(current)
     this.state.nightSubPhase = next
 
     if (next === "done") {
-      await this.resolveNight()
+      this.resolveNight()
     } else {
       // Reset timer for each sub-phase
-      await this.room.storage.setAlarm(Date.now() + this.state.settings.nightTime * 1000)
       this.state.phaseEndTime = Date.now() + this.state.settings.nightTime * 1000
-      this.broadcastState()
-      await this.saveState()
     }
   }
 
-  async advanceNightSubPhase() {
+  advanceNightSubPhase() {
     if (!this.state) return
-    await this.advanceNightSubPhaseFrom(this.state.nightSubPhase)
+    this.advanceNightSubPhaseFrom(this.state.nightSubPhase)
   }
 
-  async resolveNight() {
-    if (!this.state) return
+  /** The pack's target: most votes, earliest vote breaking ties. */
+  wolfMajority(): string | null {
+    if (!this.state) return null
+    const voteCounts: Record<string, number> = {}
+    for (const target of Object.values(this.state.werewolfVotes)) {
+      voteCounts[target] = (voteCounts[target] || 0) + 1
+    }
+    let maxVotes = 0
+    let target: string | null = null
+    for (const [t, count] of Object.entries(voteCounts)) {
+      if (count > maxVotes) {
+        maxVotes = count
+        target = t
+      }
+    }
+    return target
+  }
 
-    const kills: string[] = []
+  resolveNight() {
+    const s = this.state
+    if (!s) return
+
     let savedPlayer: string | null = null
+    s.werewolfTarget = this.wolfMajority()
 
-    // 1. Determine werewolf target (majority vote among wolves)
-    const wolfVotes = Object.values(this.state.werewolfVotes)
-    if (wolfVotes.length > 0) {
-      const voteCounts: Record<string, number> = {}
-      for (const target of wolfVotes) {
-        voteCounts[target] = (voteCounts[target] || 0) + 1
-      }
-      let maxVotes = 0
-      let target: string | null = null
-      for (const [t, count] of Object.entries(voteCounts)) {
-        if (count > maxVotes) {
-          maxVotes = count
-          target = t
-        }
-      }
-      this.state.werewolfTarget = target
+    // Doctor save
+    if (s.doctorTarget && s.doctorTarget === s.werewolfTarget) {
+      savedPlayer = s.doctorTarget
     }
 
-    // 2. Doctor save
-    if (this.state.doctorTarget && this.state.doctorTarget === this.state.werewolfTarget) {
-      savedPlayer = this.state.doctorTarget
+    // Witch heal
+    if (s.witchHealTarget && s.witchHealTarget === s.werewolfTarget) {
+      savedPlayer = s.witchHealTarget
     }
 
-    // 3. Witch heal
-    if (this.state.witchHealTarget && this.state.witchHealTarget === this.state.werewolfTarget) {
-      savedPlayer = this.state.witchHealTarget
-    }
+    const beats: RevealBeat[] = []
+    // Werewolf kill (if not saved), then the witch's poison
+    if (s.werewolfTarget && s.werewolfTarget !== savedPlayer) beats.push(...this.killPlayer(s.werewolfTarget, "night"))
+    if (s.witchKillTarget) beats.push(...this.killPlayer(s.witchKillTarget, "night"))
 
-    // 4. Werewolf kill (if not saved)
-    if (this.state.werewolfTarget && this.state.werewolfTarget !== savedPlayer) {
-      kills.push(this.state.werewolfTarget)
-    }
+    s.nightKills = beats.flatMap((beat) => (beat.kind === "death" ? [beat.playerId] : []))
 
-    // 5. Witch kill
-    if (this.state.witchKillTarget && !kills.includes(this.state.witchKillTarget)) {
-      kills.push(this.state.witchKillTarget)
-    }
-
-    // 6. Process kills with lover chain
-    const allKills = new Set<string>()
-    const hunterTriggered: string[] = []
-
-    const processKill = (targetId: string) => {
-      if (allKills.has(targetId)) return
-      const target = this.state!.players[targetId]
-      if (!target || !target.alive) return
-
-      allKills.add(targetId)
-
-      // Check lover chain
-      if (this.state!.cupidLovers) {
-        const [l1, l2] = this.state!.cupidLovers
-        if (targetId === l1 && this.state!.players[l2]?.alive && !allKills.has(l2)) {
-          allKills.add(l2)
-          // Check if the other lover is a hunter
-          if (this.state!.players[l2].role === "hunter") {
-            hunterTriggered.push(l2)
-          }
-        } else if (targetId === l2 && this.state!.players[l1]?.alive && !allKills.has(l1)) {
-          allKills.add(l1)
-          if (this.state!.players[l1].role === "hunter") {
-            hunterTriggered.push(l1)
-          }
-        }
-      }
-
-      // Check if target is hunter
-      if (target.role === "hunter" && !hunterTriggered.includes(targetId)) {
-        hunterTriggered.push(targetId)
-      }
-    }
-
-    for (const targetId of kills) {
-      processKill(targetId)
-    }
-
-    // Apply kills
-    for (const id of allKills) {
-      this.state.players[id].alive = false
-    }
-
-    this.state.nightKills = Array.from(allKills)
-
-    // Dawn phase - reveal who died
     this.addEvent("Dawn breaks over the village...")
-    await this.setPhase("dawn", 5)
-
-    if (allKills.size === 0) {
-      this.addEvent("The village wakes peacefully. No one was killed last night.")
-    } else {
-      for (const id of allKills) {
-        const p = this.state.players[id]
-        this.addEvent(`${p.name} was found dead. They were a ${p.role}.`)
-      }
-    }
-
-    // Check for hunter revenge (handled after dawn timer)
-    // Store first triggered hunter for after dawn
-    if (hunterTriggered.length > 0) {
-      this.state.hunterPendingKill = true
-      this.state.hunterPlayerId = hunterTriggered[0]
-    }
-
-    this.broadcastState()
-    await this.saveState()
+    this.setPhase("dawn")
+    this.startReveal([{ kind: "sunrise" }, ...(beats.length ? beats : [{ kind: "peaceful" } as RevealBeat])])
   }
 
-  async startDayDiscussion() {
+  // ─── Day ────────────────────────────────────────────────────────────────
+
+  startDayDiscussion() {
     if (!this.state) return
 
-    // Check win condition first
-    const winner = this.checkWinCondition()
-    if (winner) {
-      await this.endGame(winner)
+    // The Hunter's shot comes before anything else
+    if (this.state.hunterPendingKill && this.state.hunterPlayerId) {
+      this.startHunterRevenge("day")
       return
     }
 
-    // Handle hunter revenge from night
-    if (this.state.hunterPendingKill && this.state.hunterPlayerId) {
-      await this.setPhase("hunter-revenge", 15)
-      this.addEvent(`${this.state.players[this.state.hunterPlayerId].name} the Hunter takes aim...`)
-      this.broadcastState()
-      await this.saveState()
+    const winner = this.checkWinCondition()
+    if (winner) {
+      this.endGame(winner)
       return
     }
 
     this.state.dayVotes = {}
     this.state.eliminatedToday = null
-    this.state.chat = []
 
     this.addEvent(`Day ${this.state.dayNumber} begins. The village gathers to discuss.`)
-    await this.setPhase("day-discussion", this.state.settings.discussionTime)
-    this.broadcastState()
-    await this.saveState()
+    this.setPhase("day-discussion", this.state.settings.discussionTime)
   }
 
-  async startDayVoting() {
+  startDayVoting() {
     if (!this.state) return
 
     this.state.dayVotes = {}
     this.addEvent("Time to vote! Choose who to eliminate or abstain.")
-    await this.setPhase("day-voting", this.state.settings.votingTime)
-    this.broadcastState()
-    await this.saveState()
+    this.setPhase("day-voting", this.state.settings.votingTime)
   }
 
-  async resolveDayVotes() {
-    if (!this.state) return
+  resolveDayVotes() {
+    const s = this.state
+    if (!s) return
 
     const voteCounts: Record<string, number> = {}
-
-    for (const targetId of Object.values(this.state.dayVotes)) {
+    for (const targetId of Object.values(s.dayVotes)) {
       if (targetId !== "abstain") {
         voteCounts[targetId] = (voteCounts[targetId] || 0) + 1
       }
     }
 
-    // Find max votes
     let maxVotes = 0
     let eliminated: string | null = null
     let isTie = false
@@ -731,115 +860,65 @@ class MafiaParty implements Party.Server {
       }
     }
 
-    // Need majority (more than half of alive voters) or at least plurality with no tie
+    // Plurality with no tie
     if (isTie || maxVotes === 0) {
       eliminated = null
     }
 
-    if (eliminated) {
-      const player = this.state.players[eliminated]
-
-      // Jester check - instant win
-      if (player.role === "jester") {
-        this.addEvent(`${player.name} was voted out... they were the Jester! They win!`)
-        player.alive = false
-        this.state.eliminatedToday = eliminated
-
-        // Lover chain for jester
-        if (this.state.cupidLovers) {
-          const [l1, l2] = this.state.cupidLovers
-          if (eliminated === l1 && this.state.players[l2]?.alive) {
-            this.state.players[l2].alive = false
-            this.addEvent(`${this.state.players[l2].name} dies of heartbreak (lover).`)
-          } else if (eliminated === l2 && this.state.players[l1]?.alive) {
-            this.state.players[l1].alive = false
-            this.addEvent(`${this.state.players[l1].name} dies of heartbreak (lover).`)
-          }
-        }
-
-        await this.endGame("jester", [eliminated])
-        return
-      }
-
-      player.alive = false
-      this.state.eliminatedToday = eliminated
-      this.addEvent(`${player.name} was voted out. They were a ${player.role}.`)
-
-      // Lover chain
-      if (this.state.cupidLovers) {
-        const [l1, l2] = this.state.cupidLovers
-        if (eliminated === l1 && this.state.players[l2]?.alive) {
-          this.state.players[l2].alive = false
-          this.addEvent(`${this.state.players[l2].name} dies of heartbreak (lover).`)
-        } else if (eliminated === l2 && this.state.players[l1]?.alive) {
-          this.state.players[l1].alive = false
-          this.addEvent(`${this.state.players[l1].name} dies of heartbreak (lover).`)
-        }
-      }
-
-      // Hunter revenge
-      if (player.role === "hunter") {
-        this.state.hunterPendingKill = true
-        this.state.hunterPlayerId = eliminated
-        await this.setPhase("day-elimination", 3)
-        this.broadcastState()
-        await this.saveState()
-        return
-      }
-
-      await this.setPhase("day-elimination", 3)
-    } else {
-      this.addEvent("The vote was inconclusive. No one is eliminated.")
-      await this.setPhase("day-elimination", 3)
-    }
-
-    this.broadcastState()
-    await this.saveState()
+    s.eliminatedToday = eliminated
+    this.setPhase("day-elimination")
+    const beats: RevealBeat[] = [{ kind: "tally", eliminatedId: eliminated }]
+    if (eliminated) beats.push(...this.killPlayer(eliminated, "vote"))
+    else beats.push({ kind: "spared", tie: isTie })
+    this.startReveal(beats)
   }
 
-  async afterElimination() {
-    if (!this.state) return
+  afterElimination() {
+    const s = this.state
+    if (!s) return
 
-    // Hunter revenge from day elimination
-    if (this.state.hunterPendingKill && this.state.hunterPlayerId) {
-      await this.setPhase("hunter-revenge", 15)
-      this.addEvent(`${this.state.players[this.state.hunterPlayerId].name} the Hunter takes aim...`)
-      this.broadcastState()
-      await this.saveState()
+    const eliminated = s.eliminatedToday ? s.players[s.eliminatedToday] : null
+    if (eliminated?.role === "jester") {
+      this.endGame("jester", [eliminated.id])
       return
     }
 
-    await this.checkWinConditionAndProceed()
-  }
-
-  async handleHunterKill(hunterId: string, targetId: string) {
-    if (!this.state) return
-    if (!this.state.hunterPendingKill || this.state.hunterPlayerId !== hunterId) return
-
-    const target = this.state.players[targetId]
-    if (!target || !target.alive) return
-
-    target.alive = false
-    this.state.hunterPendingKill = false
-    this.state.hunterPlayerId = null
-
-    this.addEvent(`${this.state.players[hunterId].name} the Hunter takes down ${target.name}!`)
-
-    // Lover chain from hunter kill
-    if (this.state.cupidLovers) {
-      const [l1, l2] = this.state.cupidLovers
-      if (targetId === l1 && this.state.players[l2]?.alive) {
-        this.state.players[l2].alive = false
-        this.addEvent(`${this.state.players[l2].name} dies of heartbreak (lover).`)
-      } else if (targetId === l2 && this.state.players[l1]?.alive) {
-        this.state.players[l1].alive = false
-        this.addEvent(`${this.state.players[l1].name} dies of heartbreak (lover).`)
-      }
+    if (s.hunterPendingKill && s.hunterPlayerId) {
+      this.startHunterRevenge("night")
+      return
     }
 
-    await this.checkWinConditionAndProceed()
-    this.broadcastState()
-    await this.saveState()
+    this.checkWinConditionAndProceed()
+  }
+
+  // ─── Hunter ─────────────────────────────────────────────────────────────
+
+  startHunterRevenge(returnTo: "day" | "night") {
+    if (!this.state?.hunterPlayerId) return
+    this.state.hunterReturn = returnTo
+    this.setPhase("hunter-revenge", HUNTER_SECONDS)
+    this.addEvent(`${this.state.players[this.state.hunterPlayerId].name} the Hunter takes aim...`)
+  }
+
+  handleHunterKill(hunterId: string, targetId: string) {
+    const s = this.state
+    if (!s || s.phase !== "hunter-revenge" || s.reveal) return
+    if (!s.hunterPendingKill || s.hunterPlayerId !== hunterId) return
+
+    const target = s.players[targetId]
+    if (!target || !target.alive) return
+
+    s.hunterPendingKill = false
+    this.startReveal(this.killPlayer(targetId, "hunter", hunterId))
+  }
+
+  /** After the shot (or a missed chance), resume where the Hunter interrupted. */
+  finishHunter() {
+    if (!this.state) return
+    this.state.hunterPlayerId = null
+    this.state.hunterPendingKill = false
+    if (this.state.hunterReturn === "day") this.startDayDiscussion()
+    else this.checkWinConditionAndProceed()
   }
 
   // ─── Win Conditions ─────────────────────────────────────────────────────
@@ -872,19 +951,16 @@ class MafiaParty implements Party.Server {
     return null
   }
 
-  async checkWinConditionAndProceed() {
-    if (!this.state) return
-
+  checkWinConditionAndProceed() {
     const winner = this.checkWinCondition()
     if (winner) {
-      await this.endGame(winner)
+      this.endGame(winner)
     } else {
-      // Continue to next night
-      await this.startNight(false)
+      this.startNight(false)
     }
   }
 
-  async endGame(winner: WinCondition, specificWinners?: string[]) {
+  endGame(winner: Exclude<WinCondition, null>, specificWinners?: string[]) {
     if (!this.state) return
 
     let winningIds: string[] = specificWinners || []
@@ -917,16 +993,15 @@ class MafiaParty implements Party.Server {
       lovers: "The Lovers win! They are the last ones standing.",
       jester: "The Jester wins! They fooled the village into voting them out.",
     }
-    this.addEvent(winText[winner!] || "The game is over.")
+    this.addEvent(winText[winner] || "The game is over.")
 
-    await this.setPhase("game-over")
-    this.broadcastState()
-    await this.saveState()
+    this.setPhase("game-over")
+    this.startReveal([{ kind: "win", winner }])
   }
 
   // ─── Night Action Handlers ──────────────────────────────────────────────
 
-  async handleWerewolfVote(playerId: string, targetId: string) {
+  handleWerewolfVote(playerId: string, targetId: string) {
     if (!this.state) return
     if (this.state.nightSubPhase !== "werewolves") return
 
@@ -943,14 +1018,11 @@ class MafiaParty implements Party.Server {
     const allVoted = aliveWolves.every((w) => this.state!.werewolfVotes[w.id])
 
     if (allVoted) {
-      await this.advanceNightSubPhaseFrom("werewolves")
+      this.advanceNightSubPhaseFrom("werewolves")
     }
-
-    this.broadcastState()
-    await this.saveState()
   }
 
-  async handleSeerInspect(playerId: string, targetId: string) {
+  handleSeerInspect(playerId: string, targetId: string) {
     if (!this.state) return
     if (this.state.nightSubPhase !== "seer") return
 
@@ -962,13 +1034,12 @@ class MafiaParty implements Party.Server {
 
     this.state.seerTarget = targetId
     this.state.seerResult = target.role === "werewolf"
+    this.state.seerChecks[targetId] = this.state.seerResult
 
-    await this.advanceNightSubPhaseFrom("seer")
-    this.broadcastState()
-    await this.saveState()
+    this.advanceNightSubPhaseFrom("seer")
   }
 
-  async handleDoctorProtect(playerId: string, targetId: string) {
+  handleDoctorProtect(playerId: string, targetId: string) {
     if (!this.state) return
     if (this.state.nightSubPhase !== "doctor") return
 
@@ -984,12 +1055,10 @@ class MafiaParty implements Party.Server {
     this.state.doctorTarget = targetId
     this.state.doctorLastTarget = targetId
 
-    await this.advanceNightSubPhaseFrom("doctor")
-    this.broadcastState()
-    await this.saveState()
+    this.advanceNightSubPhaseFrom("doctor")
   }
 
-  async handleWitchAction(playerId: string, heal: boolean, killTargetId: string | null) {
+  handleWitchAction(playerId: string, heal: boolean, killTargetId: string | null) {
     if (!this.state) return
     if (this.state.nightSubPhase !== "witch") return
     if (this.state.witchActed) return
@@ -1011,12 +1080,10 @@ class MafiaParty implements Party.Server {
     }
 
     this.state.witchActed = true
-    await this.advanceNightSubPhaseFrom("witch")
-    this.broadcastState()
-    await this.saveState()
+    this.advanceNightSubPhaseFrom("witch")
   }
 
-  async handleCupidAction(playerId: string, lover1: string, lover2: string) {
+  handleCupidAction(playerId: string, lover1: string, lover2: string) {
     if (!this.state) return
     if (this.state.nightSubPhase !== "cupid") return
     if (this.state.cupidActed) return
@@ -1033,9 +1100,7 @@ class MafiaParty implements Party.Server {
 
     this.addEvent("Cupid has linked two lovers...")
 
-    await this.advanceNightSubPhaseFrom("cupid")
-    this.broadcastState()
-    await this.saveState()
+    this.advanceNightSubPhaseFrom("cupid")
   }
 
   // ─── Day Action Handlers ────────────────────────────────────────────────
@@ -1054,52 +1119,164 @@ class MafiaParty implements Party.Server {
 
     this.state.dayVotes[playerId] = targetId
 
-    // Check if all alive players have voted
+    // Resolve as soon as every living player has voted
     const alive = getAlivePlayers(this.state)
-    const allVoted = alive.every((p) => this.state!.dayVotes[p.id])
-
-    if (allVoted) {
-      // Resolve immediately
+    if (alive.every((p) => this.state!.dayVotes[p.id])) {
       this.resolveDayVotes()
-      return
     }
-
-    this.broadcastState()
-    this.saveState()
   }
 
-  handleChat(playerId: string, text: string) {
-    if (!this.state) return
-    if (this.state.phase !== "day-discussion" && this.state.phase !== "day-voting") return
+  handleChat(playerId: string, text: string, channel: ChatChannel): boolean {
+    const s = this.state
+    if (!s || s.status !== "playing") return false
 
-    const player = this.state.players[playerId]
-    if (!player || !player.alive) return
+    const player = s.players[playerId]
+    if (!player) return false
+
+    const night = s.phase === "night" || s.phase === "first-night"
+    const allowed = {
+      day: player.alive && (s.phase === "day-discussion" || s.phase === "day-voting"),
+      wolf: player.alive && player.role === "werewolf" && night,
+      ghost: !player.alive,
+    }[channel]
+    if (!allowed) return false
 
     const trimmed = text.trim().slice(0, 200)
-    if (!trimmed) return
+    if (!trimmed) return false
+
+    const key = channel === "day" ? "chat" : channel === "wolf" ? "wolfChat" : "ghostChat"
+    const messages = s[key]
 
     // Rate limit: max 1 message per second per player
     const now = Date.now()
-    const recentFromPlayer = this.state.chat.filter(
-      (m) => m.playerId === playerId && now - m.timestamp < 1000
-    )
-    if (recentFromPlayer.length > 0) return
+    if (messages.some((m) => m.playerId === playerId && now - m.timestamp < 1000)) return false
 
-    this.state.chat.push({
+    messages.push({
       id: generateId(),
       playerId,
       playerName: player.name,
       text: trimmed,
       timestamp: now,
+      dayNumber: s.dayNumber,
     })
 
-    // Keep last 100 messages
-    if (this.state.chat.length > 100) {
-      this.state.chat = this.state.chat.slice(-100)
+    // Keep the latest messages
+    if (messages.length > 300) s[key] = messages.slice(-300)
+    return true
+  }
+
+  react(playerId: string, reaction: Reaction) {
+    const s = this.state
+    const player = s?.players[playerId]
+    if (!s || !player || s.status === "waiting") return
+    // The dead stay silent until the game is over.
+    if (!player.alive && s.status !== "finished") return
+    if (!takeReactionSlot(this.reactedAt, playerId)) return
+    const message: ReactionMessage = { type: "reaction", playerId, reaction }
+    this.room.broadcast(JSON.stringify(message))
+  }
+
+  // ─── Bots ───────────────────────────────────────────────────────────────
+
+  /** Bots that owe a move right now, in seat order. */
+  botQueue(): Player[] {
+    const s = this.state
+    if (!s || s.status !== "playing" || s.reveal) return []
+    const night = s.phase === "night" || s.phase === "first-night"
+    return s.playerOrder
+      .map((id) => s.players[id])
+      .filter((bot): bot is Player => {
+        if (!bot?.isBot) return false
+        if (s.phase === "hunter-revenge") return s.hunterPendingKill && s.hunterPlayerId === bot.id
+        if (!bot.alive) return false
+        if (s.phase === "day-voting") return !s.dayVotes[bot.id]
+        if (!night) return false
+        switch (s.nightSubPhase) {
+          case "werewolves": return bot.role === "werewolf" && !s.werewolfVotes[bot.id]
+          case "seer": return bot.role === "seer"
+          case "doctor": return bot.role === "doctor"
+          case "witch": return bot.role === "witch" && !s.witchActed
+          case "cupid": return bot.role === "cupid" && !s.cupidActed
+          default: return false
+        }
+      })
+  }
+
+  /** One bot moves per alarm, after a short think, so votes trickle in; bots wait while no human is watching. */
+  syncBots() {
+    const s = this.state
+    if (!s) return
+    const key = `${s.phase}:${s.nightSubPhase}:${s.dayNumber}`
+    if (s.botFor !== key) {
+      s.botFor = key
+      s.botAt = null
+    }
+    if (!this.humansConnected() || this.botQueue().length === 0) {
+      s.botAt = null
+      return
+    }
+    s.botAt ??= Date.now() + (s.phase === "day-voting" ? between(1800, 4200) : between(1600, 3400))
+  }
+
+  botStep() {
+    const s = this.state
+    const bot = this.botQueue()[0]
+    if (!s || !bot) return
+    const others = getAlivePlayers(s).filter((p) => p.id !== bot.id)
+
+    if (s.phase === "hunter-revenge") {
+      const target = pick(others)
+      if (target) this.handleHunterKill(bot.id, target.id)
+      return
     }
 
-    this.broadcastState()
-    this.saveState()
+    if (s.phase === "day-voting") {
+      const wolf = bot.role === "werewolf"
+      const choices = others.filter((p) => !(wolf && p.role === "werewolf"))
+      const counts: Record<string, number> = {}
+      for (const target of Object.values(s.dayVotes)) if (target !== "abstain") counts[target] = (counts[target] ?? 0) + 1
+      const leader = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0]
+      const roll = Math.random()
+      let target = "abstain"
+      if (roll >= 0.2) {
+        const follow = roll < 0.65 && leader && choices.some((p) => p.id === leader)
+        target = follow ? leader! : pick(choices)?.id ?? "abstain"
+      }
+      this.handleDayVote(bot.id, target)
+      return
+    }
+
+    switch (s.nightSubPhase) {
+      case "werewolves": {
+        // Follow whoever in the pack already chose; otherwise pick a victim.
+        const packChoice = Object.values(s.werewolfVotes).find((id) => s.players[id]?.alive && s.players[id].role !== "werewolf")
+        const target = packChoice ?? pick(others.filter((p) => p.role !== "werewolf"))?.id
+        if (target) this.handleWerewolfVote(bot.id, target)
+        break
+      }
+      case "seer": {
+        const unchecked = others.filter((p) => !(p.id in s.seerChecks))
+        const target = pick(unchecked.length ? unchecked : others)
+        if (target) this.handleSeerInspect(bot.id, target.id)
+        break
+      }
+      case "doctor": {
+        const target = pick(getAlivePlayers(s).filter((p) => p.id !== s.doctorLastTarget))
+        if (target) this.handleDoctorProtect(bot.id, target.id)
+        break
+      }
+      case "witch": {
+        const heal = !s.witchHealUsed && Boolean(s.werewolfTarget) && Math.random() < 0.5
+        const poison = !s.witchKillUsed && Math.random() < 0.15 ? pick(others)?.id ?? null : null
+        this.handleWitchAction(bot.id, heal, poison)
+        break
+      }
+      case "cupid": {
+        const [a, b] = shuffleArray(getAlivePlayers(s))
+        if (a && b) this.handleCupidAction(bot.id, a.id, b.id)
+        break
+      }
+    }
   }
 
   // ─── Connection Handlers ────────────────────────────────────────────────
@@ -1139,6 +1316,7 @@ class MafiaParty implements Party.Server {
         werewolfTarget: null,
         seerTarget: null,
         seerResult: null,
+        seerChecks: {},
         doctorTarget: null,
         doctorLastTarget: null,
         witchHealUsed: false,
@@ -1151,14 +1329,20 @@ class MafiaParty implements Party.Server {
         dayVotes: {},
         eliminatedToday: null,
         chat: [],
+        wolfChat: [],
+        ghostChat: [],
         hunterPendingKill: false,
         hunterPlayerId: null,
+        hunterReturn: "night",
         winner: null,
         winningPlayerIds: [],
         events: [],
         nightKills: [],
+        reveal: null,
         phaseEndTime: null,
         playerTokens: {},
+        botAt: null,
+        botFor: null,
       }
       await this.saveState()
     }
@@ -1209,8 +1393,8 @@ class MafiaParty implements Party.Server {
             this.sendError(sender, "Game already in progress")
             return
           }
-          if (Object.keys(this.state.players).length >= 12) {
-            this.sendError(sender, "Game is full (max 12 players)")
+          if (Object.keys(this.state.players).length >= MAX_PLAYERS) {
+            this.sendError(sender, `Game is full (max ${MAX_PLAYERS} players)`)
             return
           }
 
@@ -1245,11 +1429,41 @@ class MafiaParty implements Party.Server {
 
           this.broadcastState()
           await this.saveState()
-          break
+          return
         }
 
         case "leave": {
-          this.handlePlayerLeave(sender.id)
+          await this.handlePlayerLeave(sender.id)
+          return
+        }
+
+        case "react": {
+          if (isReaction(msg.reaction)) this.react(sender.id, msg.reaction)
+          return
+        }
+
+        case "add-bot":
+        case "remove-bot": {
+          if (sender.id !== this.state.hostId) {
+            this.sendError(sender, "Only the host can change bots")
+            return
+          }
+          if (this.state.status !== "waiting") return
+          if (msg.type === "remove-bot") {
+            if (!this.state.players[msg.playerId]?.isBot) return
+            delete this.state.players[msg.playerId]
+            this.state.playerOrder = this.state.playerOrder.filter((id) => id !== msg.playerId)
+          } else {
+            if (this.state.playerOrder.length >= MAX_PLAYERS) {
+              this.sendError(sender, `Game is full (max ${MAX_PLAYERS} players)`)
+              return
+            }
+            const taken = new Set(Object.values(this.state.players).map((p) => p.name))
+            const id = `bot-${crypto.randomUUID().slice(0, 8)}`
+            const name = BOT_NAMES.find((candidate) => !taken.has(candidate)) ?? `Bot ${this.state.playerOrder.length + 1}`
+            this.state.players[id] = { id, name, role: "villager", alive: true, connected: true, isBot: true }
+            this.state.playerOrder.push(id)
+          }
           break
         }
 
@@ -1258,8 +1472,9 @@ class MafiaParty implements Party.Server {
             this.sendError(sender, "Only the host can start the game")
             return
           }
-          if (Object.values(this.state.players).filter((player) => player.connected).length < 5) {
-            this.sendError(sender, "Need at least 5 players to start")
+          if (this.state.status !== "waiting") return
+          if (Object.values(this.state.players).filter((player) => player.connected).length < MIN_PLAYERS) {
+            this.sendError(sender, `Need at least ${MIN_PLAYERS} players to start`)
             return
           }
           for (const player of Object.values(this.state.players)) {
@@ -1271,7 +1486,7 @@ class MafiaParty implements Party.Server {
           this.state.playerOrder = this.state.playerOrder.filter(
             (playerId) => this.state!.players[playerId],
           )
-          await this.startGame()
+          this.startGame()
           break
         }
 
@@ -1281,30 +1496,30 @@ class MafiaParty implements Party.Server {
 
           switch (player.role) {
             case "werewolf":
-              await this.handleWerewolfVote(sender.id, msg.targetId)
+              this.handleWerewolfVote(sender.id, msg.targetId)
               break
             case "seer":
-              await this.handleSeerInspect(sender.id, msg.targetId)
+              this.handleSeerInspect(sender.id, msg.targetId)
               break
             case "doctor":
-              await this.handleDoctorProtect(sender.id, msg.targetId)
+              this.handleDoctorProtect(sender.id, msg.targetId)
               break
           }
           break
         }
 
         case "witch-action": {
-          await this.handleWitchAction(sender.id, msg.heal, msg.killTargetId)
+          this.handleWitchAction(sender.id, msg.heal, msg.killTargetId)
           break
         }
 
         case "cupid-action": {
-          await this.handleCupidAction(sender.id, msg.lover1, msg.lover2)
+          this.handleCupidAction(sender.id, msg.lover1, msg.lover2)
           break
         }
 
         case "hunter-kill": {
-          await this.handleHunterKill(sender.id, msg.targetId)
+          this.handleHunterKill(sender.id, msg.targetId)
           break
         }
 
@@ -1314,10 +1529,17 @@ class MafiaParty implements Party.Server {
         }
 
         case "chat": {
-          this.handleChat(sender.id, msg.text)
+          const channel: ChatChannel = msg.channel === "wolf" || msg.channel === "ghost" ? msg.channel : "day"
+          if (!this.handleChat(sender.id, msg.text, channel)) return
           break
         }
+
+        default:
+          return
       }
+
+      this.broadcastState()
+      await this.saveState()
     } catch (e) {
       console.error("Failed to process message:", e)
     }
@@ -1331,12 +1553,14 @@ class MafiaParty implements Party.Server {
       delete this.state.players[playerId]
       this.state.playerOrder = this.state.playerOrder.filter((id) => id !== playerId)
 
+      const humans = this.state.playerOrder.filter((id) => !this.state!.players[id]?.isBot)
+
       // Transfer host
-      if (playerId === this.state.hostId && this.state.playerOrder.length > 0) {
-        this.state.hostId = this.state.playerOrder[0]
+      if (playerId === this.state.hostId && humans.length > 0) {
+        this.state.hostId = humans[0]
       }
 
-	  if (this.state.playerOrder.length === 0) {
+	  if (humans.length === 0) {
 		this.state = null
 		await this.room.storage.delete("state")
 		await this.room.storage.deleteAlarm()
@@ -1356,7 +1580,7 @@ class MafiaParty implements Party.Server {
       // Transfer host
       if (playerId === this.state.hostId) {
         const connected = this.state.playerOrder.find(
-          (id) => id !== playerId && this.state!.players[id]?.connected
+          (id) => id !== playerId && this.state!.players[id]?.connected && !this.state!.players[id]?.isBot
         )
         if (connected) {
           this.state.hostId = connected
@@ -1396,7 +1620,7 @@ class MafiaParty implements Party.Server {
       return Response.json({
         finished,
         scored: true,
-        winnerIds: finished ? this.state!.winningPlayerIds : [],
+        winnerIds: finished ? this.state!.winningPlayerIds.filter((id) => !this.state!.players[id]?.isBot) : [],
       })
     } catch {
       return new Response("Not found", { status: 404 })

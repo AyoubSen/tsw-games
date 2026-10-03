@@ -354,6 +354,72 @@ html[data-home-layout="cards"] .home-layout-grid {
   .poker-muck { animation-duration: 1ms !important; }
 }
 
+/* Mafia village motion */
+@keyframes mafia-spot {
+  0%, 100% { box-shadow: 0 0 0 3px rgb(255 255 255 / 0.9), 0 0 24px 6px rgb(255 255 255 / 0.45); }
+  50% { box-shadow: 0 0 0 5px rgb(255 255 255 / 0.5), 0 0 40px 12px rgb(255 255 255 / 0.2); }
+}
+@keyframes mafia-die {
+  from { filter: none; opacity: 1; }
+  to { filter: grayscale(1) brightness(0.6); opacity: 0.65; }
+}
+@keyframes mafia-pop {
+  0% { opacity: 0; transform: scale(0.4); }
+  70% { opacity: 1; transform: scale(1.12); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes mafia-flip { from { transform: rotateY(180deg); } to { transform: rotateY(0deg); } }
+@keyframes mafia-arrow { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes mafia-bar { from { transform: scaleX(0); } to { transform: none; } }
+@keyframes mafia-late {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes mafia-twinkle {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.3; }
+}
+@keyframes mafia-flicker {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  40% { opacity: 1; transform: scale(1.06); }
+  70% { opacity: 0.75; transform: scale(0.97); }
+}
+@keyframes mafia-float {
+  0% { opacity: 0; transform: translateY(20px) scale(0.6); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-120px) scale(1.1); }
+}
+@keyframes mafia-wobble {
+  0%, 100% { transform: rotate(-8deg); }
+  50% { transform: rotate(8deg) scale(1.08); }
+}
+
+.mafia-spot { animation: mafia-spot 1.2s ease-in-out infinite; }
+.mafia-die { animation: mafia-die 700ms ease-out var(--d, 0ms) backwards; }
+.mafia-pop { animation: mafia-pop 420ms cubic-bezier(.2,.8,.2,1) var(--d, 0ms) backwards; }
+.mafia-flip { animation: mafia-flip 700ms cubic-bezier(.3,.7,.2,1) var(--d, 0ms) backwards; }
+.mafia-arrow { stroke-dasharray: 1; animation: mafia-arrow 520ms cubic-bezier(.2,.8,.2,1) backwards; }
+.mafia-bar { transform-origin: left; animation: mafia-bar 600ms cubic-bezier(.2,.8,.2,1) var(--d, 0ms) backwards; }
+.mafia-late { animation: mafia-late 360ms ease-out var(--d, 0ms) backwards; }
+.mafia-twinkle { animation: mafia-twinkle var(--t, 3s) ease-in-out var(--d, 0s) infinite; }
+.mafia-flicker { animation: mafia-flicker 1.8s ease-in-out infinite; }
+.mafia-float { animation: mafia-float 2.6s ease-out var(--d, 0s) infinite backwards; }
+.mafia-wobble { animation: mafia-wobble 1.1s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mafia-spot,
+  .mafia-die,
+  .mafia-pop,
+  .mafia-flip,
+  .mafia-arrow,
+  .mafia-bar,
+  .mafia-late,
+  .mafia-twinkle,
+  .mafia-flicker,
+  .mafia-float,
+  .mafia-wobble { animation: none !important; }
+}
+
 /* Wordle animations */
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
@@ -396,4 +462,43 @@ html[data-home-layout="cards"] .home-layout-grid {
 
 @media (prefers-reduced-motion: reduce) {
   .reaction-bubble { animation: none !important; }
+}
+
+/* Codenames table motion (durations come from the server's PACE_MS) */
+@keyframes cn-announce {
+  0% { opacity: 0; transform: scale(0.6); }
+  9% { opacity: 1; transform: scale(1.06); }
+  14% { transform: none; }
+  76% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translateY(-38vh) scale(0.3); }
+}
+@keyframes cn-sweep {
+  from { transform: translateX(var(--from)); }
+  to { transform: translateX(var(--to)); }
+}
+@keyframes cn-handoff {
+  0% { opacity: 0; transform: translateX(var(--dx)) scale(0.92); }
+  18% { opacity: 1; transform: none; }
+  78% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: scale(1.04); }
+}
+@keyframes cn-lock {
+  0%, 100% { transform: translateY(-4px) scale(1.06); }
+  50% { transform: translateY(-6px) scale(1.09); }
+}
+@keyframes cn-assassin {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.cn-announce { animation: cn-announce 2600ms cubic-bezier(.2,.8,.2,1) both; }
+.cn-sweep { animation: cn-sweep 1300ms cubic-bezier(.45,.05,.35,1) both; }
+.cn-handoff { animation: cn-handoff 1700ms ease-out both; }
+.cn-lock { animation: cn-lock 650ms ease-in-out infinite; }
+.cn-assassin { animation: cn-assassin 420ms ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cn-sweep { animation: none !important; opacity: 0; }
+  .cn-lock { animation: none !important; }
+  .cn-announce,
+  .cn-handoff { animation-name: cn-assassin !important; }
 }

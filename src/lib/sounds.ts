@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react"
 
 /** Table sound effects, synthesized with Web Audio so there are no files to load. */
-export type SoundName = "deal" | "flip" | "chip" | "pot" | "dice" | "capture" | "turn" | "win"
+export type SoundName = "deal" | "flip" | "chip" | "pot" | "dice" | "capture" | "turn" | "win" | "howl" | "dawn" | "toll" | "knock" | "shot" | "clue" | "correct" | "wrong" | "assassin" | "tick"
 
 const MUTE_KEY = "tsw-games-muted"
 const VOLUME = 0.22
@@ -147,6 +147,52 @@ const SOUNDS: Record<SoundName, (c: AudioContext, at: number) => void> = {
       tone(c, at + i * 0.11, { freq, type: "triangle", peak: last ? 0.4 : 0.3, decay: last ? 0.9 : 0.25 })
       if (last) tone(c, at + i * 0.11, { freq: freq * 2, peak: 0.08, decay: 0.7 })
     })
+  },
+  howl: (c, at) => {
+    tone(c, at, { freq: 330, type: "triangle", peak: 0.16, decay: 0.7, slideTo: 560 })
+    tone(c, at + 0.55, { freq: 560, type: "triangle", peak: 0.18, decay: 1.3, slideTo: 290 })
+    tone(c, at + 0.55, { freq: 1120, peak: 0.03, decay: 1.1, slideTo: 580 })
+  },
+  dawn: (c, at) => {
+    ;[392, 523.25, 659.25, 783.99].forEach((freq, i) => tone(c, at + i * 0.16, { freq, peak: 0.16, decay: 0.9 }))
+  },
+  toll: (c, at) => {
+    tone(c, at, { freq: 146.8, type: "triangle", peak: 0.5, decay: 2.2 })
+    tone(c, at, { freq: 293.7 * 1.19, peak: 0.12, decay: 1.6 })
+    tone(c, at, { freq: 587.3 * 1.5, peak: 0.05, decay: 0.9 })
+    burst(c, at, { type: "bandpass", freq: 900, q: 2, peak: 0.12, decay: 0.05 })
+  },
+  knock: (c, at) => {
+    tone(c, at, { freq: 190, type: "triangle", peak: 0.4, decay: 0.09, slideTo: 120 })
+    burst(c, at, { type: "lowpass", freq: 700, peak: 0.35, decay: 0.05 })
+  },
+  shot: (c, at) => {
+    burst(c, at, { type: "lowpass", freq: 2400, sweepTo: 300, peak: 0.8, decay: 0.35 })
+    tone(c, at, { freq: 130, type: "triangle", peak: 0.5, decay: 0.3, slideTo: 40 })
+  },
+  clue: (c, at) => {
+    burst(c, at, { type: "bandpass", freq: 2600, q: 3, peak: 0.25, decay: 0.03 })
+    tone(c, at + 0.02, { freq: 587.33, type: "triangle", peak: 0.26, decay: 0.35 })
+    tone(c, at + 0.16, { freq: 880, type: "triangle", peak: 0.3, decay: 0.7 })
+    tone(c, at + 0.16, { freq: 1760, peak: 0.05, decay: 0.5 })
+  },
+  correct: (c, at) => {
+    tone(c, at, { freq: 783.99, type: "triangle", peak: 0.28, decay: 0.22 })
+    tone(c, at + 0.09, { freq: 1174.66, type: "triangle", peak: 0.3, decay: 0.5 })
+  },
+  wrong: (c, at) => {
+    tone(c, at, { freq: 220, type: "sawtooth", peak: 0.12, decay: 0.32, slideTo: 150 })
+    tone(c, at + 0.02, { freq: 233, type: "square", peak: 0.06, decay: 0.3, slideTo: 155 })
+  },
+  assassin: (c, at) => {
+    tone(c, at, { freq: 98, type: "sawtooth", peak: 0.22, decay: 1.8, slideTo: 41 })
+    tone(c, at, { freq: 103.8, type: "triangle", peak: 0.3, decay: 1.6, slideTo: 44 })
+    burst(c, at + 0.05, { type: "lowpass", freq: 2000, sweepTo: 200, peak: 0.7, decay: 0.6 })
+    tone(c, at + 0.5, { freq: 1244.5, peak: 0.06, decay: 1.4, slideTo: 1174.7 })
+  },
+  tick: (c, at) => {
+    tone(c, at, { freq: 1500, type: "square", peak: 0.08, decay: 0.05 })
+    burst(c, at, { type: "highpass", freq: 4000, peak: 0.15, decay: 0.02 })
   },
 }
 

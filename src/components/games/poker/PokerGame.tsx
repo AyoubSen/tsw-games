@@ -13,6 +13,8 @@ import { PokerHandGuide } from "./v2/PokerHandGuideV2"
 
 import type { Reaction } from "@/lib/reactions"
 import { ReactionBubble, ReactionPicker, type ReactionBubbles } from "@/components/multiplayer/Reactions"
+import { SoundToggle } from "@/components/multiplayer/SoundToggle"
+import { playSound } from "@/lib/sounds"
 
 export interface PokerGameProps {
   state: PublicGameState
@@ -568,9 +570,43 @@ export function PokerGame({ state, history, playerId, isHost, spectating, watchi
     window.setTimeout(() => setGhosts((current) => current.filter((ghost) => !ids.has(ghost.id))), longest)
   }, [state, reduced])
 
+  // ---- Sounds: the deal, bets, the board, the pot moving ----
+  const heard = useRef(state)
+  const dealtAt = useRef(0)
+  useEffect(() => {
+    const prev = heard.current
+    heard.current = state
+    if (prev === state) return
+    if (prev.handNumber !== state.handNumber) {
+      if (!state.handInProgress) return
+      dealtAt.current = Date.now()
+      const dealt = state.seatOrder.filter((id) => state.players[id]?.hasCards).length
+      for (let index = 0; index < dealt * 2; index++) playSound("deal", index * DEAL_STEP_MS)
+      playSound("chip", 250)
+      return
+    }
+    const swept = prev.seatOrder.some((id) => (prev.players[id]?.currentBet ?? 0) > 0 && state.players[id]?.currentBet === 0)
+    if (swept) playSound("pot")
+    if (state.seatOrder.some((id) => (state.players[id]?.currentBet ?? 0) > (prev.players[id]?.currentBet ?? 0))) playSound("chip")
+    const boardDelay = swept ? SWEEP_MS : 0
+    for (let index = 0; index < state.communityCards.length - prev.communityCards.length; index++) playSound("flip", boardDelay + index * 160)
+    if (state.showdownPlayers.length > prev.showdownPlayers.length) playSound("flip", boardDelay)
+    if (prev.winners.length === 0 && state.winners.length > 0) {
+      const pushAt = swept ? SWEEP_MS + 120 : 250
+      playSound("pot", pushAt)
+      if (state.winners.some((w) => w.playerId === playerId)) playSound("win", pushAt + 350)
+    }
+  }, [state, playerId])
+
   // ---- Turn ----
   const isMyTurn = state.currentPlayerId === playerId
   const canAct = isMyTurn && state.handInProgress && !!me && !me.folded && !me.allIn && connected && !dealLock
+  const myTurnToAct = isMyTurn && state.handInProgress && !!me && !me.folded && !me.allIn
+  useEffect(() => {
+    // Wait out the deal when the hand opens on your turn.
+    if (myTurnToAct) playSound("turn", reduced ? 0 : Math.max(0, dealtAt.current + dealDuration - Date.now()))
+    // biome-ignore lint/correctness/useExhaustiveDependencies: chimes once as the turn arrives
+  }, [myTurnToAct])
 
   // ---- Advance actions, queued before your turn ----
   const [preAction, setPreAction] = useState<PreAction | null>(null)
@@ -1021,6 +1057,7 @@ export function PokerGame({ state, history, playerId, isHost, spectating, watchi
             </button>
           </div>
           {watching}
+          <SoundToggle className="size-[42px]" />
           {!spectating && <ReactionPicker onReact={onReact} disabled={!connected} side="bottom" align="end" className="size-[42px]" />}
           </div>
         </div>

@@ -14,6 +14,8 @@ import {
 import { BOT_LEVEL_LABELS, type BotLevel } from "@/lib/botLevel"
 import type { Reaction } from "@/lib/reactions"
 import { ReactionBubble, ReactionPicker, type ReactionBubbles, type ReactionBubbleState } from "@/components/multiplayer/Reactions"
+import { SoundToggle } from "@/components/multiplayer/SoundToggle"
+import { playSound } from "@/lib/sounds"
 import { cn } from "@/lib/utils"
 import type { PublicUnoGameState, UnoAction } from "../../../../party/uno"
 import { cardLabel, COLOR_HEX, COLOR_NAME, UnoCardDefs, UnoCardView, valueLabel } from "./UnoCardArt"
@@ -157,6 +159,21 @@ function storyOf(action: UnoAction, me: string, rules: UnoRules): Story {
   }
 }
 
+function playDeal(cards: number, spacing = 90) {
+  for (let index = 0; index < cards; index++) playSound("deal", index * spacing)
+}
+
+function playActionSound(action: UnoAction, land: number) {
+  if (action.type === "deal") playDeal(7)
+  else if (action.type === "play") {
+    playSound("flip", Math.max(0, land - 40))
+    for (let index = 0; index < (action.drawCount ?? 0); index++) playSound("deal", land + 300 + index * 150)
+  } else if (action.type === "draw") playSound("deal")
+  else if (action.type === "catch" || action.type === "penalty" || action.type === "challenge") {
+    for (let index = 0; index < action.drawCount; index++) playSound("deal", index * 150)
+  }
+}
+
 function useElementSize<T extends HTMLElement>() {
   const ref = useRef<T>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -244,6 +261,7 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
     const snapshot = previousState.current
     const times = timeline(action, playerId, reduced)
     setReveal({ action, snapshot, phase: "flying" })
+    playActionSound(action, times.land)
     if (!reduced) launchFlights(action, times.land)
     const advance = (phase: Phase) => setReveal((current) => current?.action.id === action.id ? { ...current, phase } : current)
     const timers = [
@@ -328,6 +346,7 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
 
   // ---- Side effects tied to what is shown ----
   useEffect(() => {
+    if (state.status === "playing" && latest?.type === "deal") playDeal(Math.min(state.myHand.length, 7), 150)
     const timer = window.setTimeout(() => setDealing(false), 1600)
     return () => window.clearTimeout(timer)
   }, [])
@@ -469,6 +488,12 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
   const lastStory = latest ? storyOf(latest, playerId, rules) : null
   const winner = state.winnerId
   const finished = view.status === "finished"
+  useEffect(() => {
+    if (myTurn) playSound("turn")
+  }, [myTurn])
+  useEffect(() => {
+    if (finished && winner === playerId) playSound("win")
+  }, [finished, winner, playerId])
   const matchText = view.topCard && view.activeColor
     ? view.topCard.color === null ? `${COLOR_NAME[view.activeColor]}` : `${COLOR_NAME[view.activeColor]} or ${valueLabel(view.topCard.value)}`
     : ""
@@ -771,6 +796,7 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
         {/* Above the finish screen, where the host seats spectators between hands. */}
         <div className="relative z-[60] ml-auto flex shrink-0 items-start gap-2">
           {watching}
+          <SoundToggle />
           {!spectating && <ReactionPicker onReact={onReact} disabled={!connected} side="bottom" align="end" />}
         </div>
       </div>

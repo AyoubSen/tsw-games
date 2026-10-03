@@ -20,6 +20,7 @@ import {
 import { useMultiplayerLudo } from "@/components/games/ludo/useMultiplayerLudo"
 import { BotLevelPicker } from "@/components/multiplayer/BotLevelPicker"
 import { ReactionBubble, ReactionPicker } from "@/components/multiplayer/Reactions"
+import { SoundToggle } from "@/components/multiplayer/SoundToggle"
 import { WatchingList, WatchingMenu } from "@/components/multiplayer/Spectators"
 import {
   GameTopBar,
@@ -49,6 +50,7 @@ import {
   type LudoMove,
 } from "@/lib/ludo"
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
+import { playSound } from "@/lib/sounds"
 
 export const Route = createFileRoute("/games/ludo")({
   validateSearch: parseInviteSearch,
@@ -153,6 +155,7 @@ function LudoPage() {
   const seenRollId = useRef<number | null>(null)
   const previousPositions = useRef<number[][]>([])
   const previousTurnSeat = useRef(0)
+  const rolledAt = useRef(0)
   useEffect(() => {
     if (!rollId) {
       seenRollId.current = null
@@ -168,6 +171,8 @@ function LudoPage() {
     }
     if (seenRollId.current === rollId) return
     seenRollId.current = rollId
+    rolledAt.current = Date.now()
+    playSound("dice")
 
     // A roll with no moves (or a third double) has already passed the turn -
     // hold the board and turn on the pre-roll state until the dice have
@@ -209,6 +214,49 @@ function LudoPage() {
   useEffect(() => {
     previousTurnSeat.current = liveTurnSeat
   }, [liveTurnSeat])
+
+  // Captures thud as the capturer lands, after any held roll has played out.
+  const lastMove = multiplayer.gameState?.lastMove ?? null
+  const seenMoveId = useRef<number | null>(null)
+  useEffect(() => {
+    if (!lastMove) return
+    const first = seenMoveId.current === null
+    if (seenMoveId.current === lastMove.moveId) return
+    seenMoveId.current = lastMove.moveId
+    if (first || !lastMove.captured) return
+    const hops = lastMove.to - lastMove.from
+    const travel =
+      lastMove.from === LUDO_BASE
+        ? 420 + lastMove.to * 170
+        : hops > 0
+          ? hops * (hops > 8 ? 105 : 160)
+          : 650
+    const held = Math.max(
+      0,
+      rolledAt.current + ROLL_TUMBLE_MS + ROLL_HOLD_MS - Date.now(),
+    )
+    playSound("capture", held + travel)
+  }, [lastMove])
+
+  const ownSeat = multiplayer.playerId
+    ? (multiplayer.gameState?.players[multiplayer.playerId]?.seat ?? null)
+    : null
+  const myTurnShown =
+    multiplayer.gameState?.status === "playing" &&
+    ownSeat !== null &&
+    ownSeat === (frozen?.turnSeat ?? multiplayer.gameState.turnSeat)
+  useEffect(() => {
+    if (myTurnShown) playSound("turn")
+  }, [myTurnShown])
+  const iWon =
+    multiplayer.gameState?.status === "finished" &&
+    Boolean(
+      multiplayer.playerId &&
+        multiplayer.gameState.winner?.ids.includes(multiplayer.playerId),
+    )
+  useEffect(() => {
+    if (iWon) playSound("win")
+  }, [iWon])
 
   const isPlaying = multiplayer.gameState?.status === "playing"
   useEffect(() => {
@@ -771,6 +819,7 @@ function LudoPage() {
           {/* Above the finish screen, where the host seats spectators. */}
           <div className="relative z-30 ml-auto flex shrink-0 items-start gap-2">
             {watching && <WatchingMenu {...watching} />}
+            <SoundToggle />
             {!spectating && (
               <ReactionPicker
                 onReact={multiplayer.react}

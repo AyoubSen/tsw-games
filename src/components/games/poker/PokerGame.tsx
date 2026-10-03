@@ -11,6 +11,9 @@ import { GameOverModal } from "./v2/GameOverModalV2"
 import { FlipCard, SuitIcon, cardRankLabel, cardSuitOf } from "./v2/PlayingCardV2"
 import { PokerHandGuide } from "./v2/PokerHandGuideV2"
 
+import type { Reaction } from "@/lib/reactions"
+import { ReactionBubble, ReactionPicker, type ReactionBubbles } from "@/components/multiplayer/Reactions"
+
 export interface PokerGameProps {
   state: PublicGameState
   history: PublicHandRecord[]
@@ -31,6 +34,8 @@ export interface PokerGameProps {
   onEndGame: () => void
   onShowCards: (cards: number[]) => void
   onMuck: () => void
+  reactions: ReactionBubbles
+  onReact: (reaction: Reaction) => void
   onLeave: () => void
 }
 
@@ -432,7 +437,7 @@ function SeatPlate({ player, isMe, active, winner, compact, deadline, total, off
   )
 }
 
-export function PokerGame({ state, history, playerId, isHost, roomLabel, error, connected, onFold, onCheck, onCall, onRaise, onAllIn, onNextHand, onToggleAutoDeal, onRebuy, onToggleSitOut, onEndGame, onShowCards, onMuck, onLeave }: PokerGameProps) {
+export function PokerGame({ state, history, playerId, isHost, roomLabel, error, connected, onFold, onCheck, onCall, onRaise, onAllIn, onNextHand, onToggleAutoDeal, onRebuy, onToggleSitOut, onEndGame, onShowCards, onMuck, reactions, onReact, onLeave }: PokerGameProps) {
   const reduced = useReducedMotion()
   const [stageRef, stage] = useElementSize<HTMLDivElement>()
   const geo = tableGeometry(stage.w || 1024, stage.h || 640)
@@ -935,6 +940,7 @@ export function PokerGame({ state, history, playerId, isHost, roomLabel, error, 
                     total={Math.max(turnTotal, (state.turnDeadline ?? 0) - (Date.now() + clockOffset.current))}
                     offset={clockOffset.current}
                   />
+                  <ReactionBubble bubble={reactions[id]} />
                   {player.lastAction && player.lastAction.kind !== "fold" && !handOver && (
                     <div
                       key={`${player.lastAction.kind}-${player.lastAction.amount ?? 0}`}
@@ -984,6 +990,7 @@ export function PokerGame({ state, history, playerId, isHost, roomLabel, error, 
             </div>
             {!connected && <span className="ml-2 rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold text-rose-200">Reconnecting…</span>}
           </div>
+          <div className="flex items-start gap-2">
           <div className={cn(GLASS, "flex items-center gap-0.5 p-1 [&>button]:text-white/60")}>
             <PokerHandGuide currentCategory={iHaveCards && state.communityCards.length >= 3 ? evaluateBestHand(myCards, state.communityCards).category : null} />
             <button
@@ -1008,6 +1015,8 @@ export function PokerGame({ state, history, playerId, isHost, roomLabel, error, 
               <HistoryIcon size={13} />
               <span>History</span>
             </button>
+          </div>
+          <ReactionPicker onReact={onReact} disabled={!connected} side="bottom" align="end" className="size-[42px]" />
           </div>
         </div>
 

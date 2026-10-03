@@ -1,6 +1,7 @@
 import type * as Party from "partykit/server"
 import { withRoomCleanup } from "./shared/cleanup"
 import { isBotLevel, type BotLevel } from "../src/lib/botLevel"
+import { isReaction, pickReaction, takeReactionSlot, type Reaction, type ReactionMessage } from "../src/lib/reactions"
 import {
   chooseBestMove,
   chooseBotMove,
@@ -152,10 +153,12 @@ export type ClientMessage =
   | { type: "move"; moveId: unknown; roundId: unknown }
   | { type: "restart" }
   | { type: "leave" }
+  | { type: "react"; reaction: unknown }
 
 export type ServerMessage =
   | { type: "state"; state: PublicGameState }
   | { type: "error"; message: string }
+  | ReactionMessage
 
 const DISCONNECTED_PLAYER_TTL_MS = 30 * 60 * 1000
 const TURN_TIMEOUT_MS = 45 * 1000
@@ -164,6 +167,8 @@ const BOT_TURN_MS = 3400
 /** Gap between a bot's moves within one roll, so each one can be followed. */
 const BOT_STEP_MS = 1300
 const BOT_NAMES = ["Ada", "Baxter", "Cleo", "Dodge"]
+/** Bots react once the pawn has finished sliding. */
+const BOT_REACT_MS = 1000
 
 function freshTokens(quick: boolean): number[] {
   return Array.from({ length: tokensPerPlayer(quick) }, () => LUDO_BASE)
@@ -175,6 +180,7 @@ class LudoParty implements Party.Server {
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
   gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
+  reactedAt = new Map<string, number>()
 
   async onStart() {
     const stored = await this.room.storage.get<GameState>("state")
@@ -294,6 +300,19 @@ class LudoParty implements Party.Server {
       delete this.state.players[id]
       delete this.state.playerTokens[id]
     }
+  }
+
+  react(playerId: string, reaction: Reaction, delayMs?: number) {
+    if (!takeReactionSlot(this.reactedAt, playerId)) return
+    const message: ReactionMessage = { type: "reaction", playerId, reaction, ...(delayMs ? { delayMs } : {}) }
+    this.room.broadcast(JSON.stringify(message))
+  }
+
+  /** Now and then a bot reacts to a big moment while someone is watching. */
+  botReact(player: Player | null | undefined, options: readonly Reaction[], odds: number) {
+    if (!player?.isBot || Math.random() >= odds) return
+    if (!Object.values(this.state?.players ?? {}).some((other) => !other.isBot && other.connected !== false)) return
+    this.react(player.id, pickReaction(options), BOT_REACT_MS)
   }
 
   send(connection: Party.Connection, message: ServerMessage) {
@@ -534,8 +553,17 @@ class LudoParty implements Party.Server {
       this.logEvent(`${moved} entered a pawn`)
     }
 
+    if (victim) {
+      this.botReact(victim, ["😤", "😱"], 0.6)
+      this.botReact(actor, ["😂", "🔥"], 0.3)
+    }
+
     const winner = this.findWinner()
     if (winner) {
+      const bots = Object.values(this.state.players).filter((other) => other.isBot && other.seat !== null)
+      const botWinner = bots.find((bot) => winner.ids.includes(bot.id))
+      if (botWinner) this.botReact(botWinner, ["GG", "🔥"], 0.7)
+      else this.botReact(bots[Math.floor(Math.random() * bots.length)], ["GG", "👏"], 0.7)
       this.state.status = "finished"
       this.state.dice = null
       this.state.legalMoves = []
@@ -936,6 +964,11 @@ class LudoParty implements Party.Server {
           await this.saveState()
           await this.refreshTurnAlarm()
           this.broadcastState()
+          return
+        }
+
+        case "react": {
+          if (this.state.players[sender.id] && isReaction(data.reaction)) this.react(sender.id, data.reaction)
           return
         }
 

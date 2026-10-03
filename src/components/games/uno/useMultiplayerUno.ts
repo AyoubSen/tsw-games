@@ -11,6 +11,8 @@ import {
   PARTYKIT_HOST,
 } from "@/lib/partykit"
 import type { BotLevel } from "@/lib/botLevel"
+import type { Reaction } from "@/lib/reactions"
+import { useReactionBubbles } from "@/components/multiplayer/Reactions"
 import type { UnoColor, UnoRules } from "@/lib/uno"
 import type { PublicUnoGameState, ServerMessage } from "../../../../party/uno"
 
@@ -26,6 +28,7 @@ export function useMultiplayerUno() {
   const [state, setState] = useState(INITIAL_STATE)
   const socketRef = useRef<PartySocket | null>(null)
   const roomCodeRef = useRef("")
+  const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles()
   const isHost = Boolean(state.gameState && state.playerId && state.gameState.hostId === state.playerId)
 
   const connect = useCallback((roomCode: string, hosting: boolean, name: string) => {
@@ -59,7 +62,8 @@ export function useMultiplayerUno() {
       if (socketRef.current !== socket) return
       try {
         const message = JSON.parse(event.data) as ServerMessage
-        if (message.type === "state") {
+        if (message.type === "reaction") receiveReaction(message)
+        else if (message.type === "state") {
           setState((previous) => ({ ...previous, connectionStatus: "connected", gameState: message.state, error: null, stateReceivedAt: Date.now() }))
         } else {
           setState((previous) => ({ ...previous, error: message.message }))
@@ -74,7 +78,7 @@ export function useMultiplayerUno() {
     }
     socket.addEventListener("close", reconnecting)
     socket.addEventListener("error", reconnecting)
-  }, [])
+  }, [receiveReaction])
 
   const send = useCallback((message: object) => {
     const socket = socketRef.current
@@ -92,8 +96,9 @@ export function useMultiplayerUno() {
       clearPersistentPlayerToken("uno", roomCodeRef.current)
     }
     roomCodeRef.current = ""
+    clearReactions()
     setState(INITIAL_STATE)
-  }, [])
+  }, [clearReactions])
 
   const abandonReconnect = useCallback(() => {
     socketRef.current?.close()
@@ -115,6 +120,7 @@ export function useMultiplayerUno() {
   return {
     ...state,
     isHost,
+    reactions,
     createGame,
     joinGame,
     startGame: () => isHost && send({ type: "start" }),
@@ -124,6 +130,7 @@ export function useMultiplayerUno() {
     callUno: () => send({ type: "uno" }),
     catchUno: (playerId: string) => send({ type: "catch", playerId }),
     challenge: () => send({ type: "challenge" }),
+    react: (reaction: Reaction) => send({ type: "react", reaction }),
     setRule: (rule: keyof UnoRules, enabled: boolean) => isHost && send({ type: "set-rule", rule, enabled }),
     restartGame: () => isHost && send({ type: "restart" }),
     addBot: () => isHost && send({ type: "add-bot" }),

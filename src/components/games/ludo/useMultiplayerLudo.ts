@@ -11,6 +11,8 @@ import {
   PARTYKIT_HOST,
 } from "@/lib/partykit"
 import type { BotLevel } from "@/lib/botLevel"
+import type { Reaction } from "@/lib/reactions"
+import { useReactionBubbles } from "@/components/multiplayer/Reactions"
 import type { PublicGameState, ServerMessage } from "../../../../party/ludo"
 
 export type ConnectionStatus =
@@ -39,6 +41,7 @@ export function useMultiplayerLudo() {
   const [state, setState] = useState<MultiplayerState>(INITIAL_STATE)
   const socketRef = useRef<PartySocket | null>(null)
   const roomCodeRef = useRef("")
+  const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles()
   const isHost = Boolean(
     state.gameState &&
       state.playerId &&
@@ -46,6 +49,10 @@ export function useMultiplayerLudo() {
   )
 
   const handleMessage = useCallback((message: ServerMessage) => {
+    if (message.type === "reaction") {
+      receiveReaction(message)
+      return
+    }
     if (message.type === "state") {
       const stateReceivedAt = Date.now()
       setState((previous) => ({
@@ -58,7 +65,7 @@ export function useMultiplayerLudo() {
       return
     }
     setState((previous) => ({ ...previous, error: message.message }))
-  }, [])
+  }, [receiveReaction])
 
   const connect = useCallback(
     (roomCode: string, hosting: boolean, playerName: string) => {
@@ -156,8 +163,9 @@ export function useMultiplayerLudo() {
       clearPersistentPlayerToken("ludo", roomCodeRef.current)
       roomCodeRef.current = ""
     }
+    clearReactions()
     setState(INITIAL_STATE)
-  }, [])
+  }, [clearReactions])
 
   const abandonReconnect = useCallback(() => {
     const socket = socketRef.current
@@ -172,6 +180,7 @@ export function useMultiplayerLudo() {
   return {
     ...state,
     isHost,
+    reactions,
     createGame,
     joinGame,
     startGame: () => isHost && sendNow({ type: "start" }),
@@ -188,6 +197,7 @@ export function useMultiplayerLudo() {
     setQuick: (quick: boolean) =>
       isHost && sendNow({ type: "set-quick", quick }),
     restartGame: () => isHost && sendNow({ type: "restart" }),
+    react: (reaction: Reaction) => sendNow({ type: "react", reaction }),
     disconnect,
     abandonReconnect,
   }

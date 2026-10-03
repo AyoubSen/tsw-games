@@ -19,6 +19,7 @@ import {
 } from "@/components/games/ludo/LudoBoard"
 import { useMultiplayerLudo } from "@/components/games/ludo/useMultiplayerLudo"
 import { BotLevelPicker } from "@/components/multiplayer/BotLevelPicker"
+import { ReactionBubble, ReactionPicker } from "@/components/multiplayer/Reactions"
 import {
   GameTopBar,
   MultiplayerLobby,
@@ -742,10 +743,18 @@ function LudoPage() {
               </span>
             )}
           </div>
+          <div className="ml-auto shrink-0">
+            <ReactionPicker
+              onReact={multiplayer.react}
+              disabled={multiplayer.connectionStatus !== "connected"}
+              side="bottom"
+              align="end"
+            />
+          </div>
         </div>
 
         {/* Players - chips on small screens */}
-        <div className="pointer-events-none absolute inset-x-3 top-[64px] flex gap-2 overflow-x-auto pb-1 lg:hidden">
+        <div className="pointer-events-none absolute inset-x-3 top-[64px] flex gap-2 overflow-x-auto pb-14 lg:hidden">
           {orderedSeats.map(({ player, seat }) => {
             const color = LUDO_COLORS[seat].hex
             const isTurn = seat === turnSeat && !isFinished
@@ -753,11 +762,12 @@ function LudoPage() {
             return (
               <div
                 key={player.id}
-                className={`${glass} flex h-12 shrink-0 items-center gap-2 px-2.5 transition-all ${
+                className={`${glass} relative flex h-12 shrink-0 items-center gap-2 px-2.5 transition-all ${
                   player.connected === false ? "opacity-60" : ""
                 }`}
                 style={isTurn ? { borderColor: color, boxShadow: `0 0 18px ${color}66` } : undefined}
               >
+                <ReactionBubble bubble={multiplayer.reactions[player.id]} side="bottom" />
                 <PlayerAvatar name={player.name} isBot={player.isBot} color={color} small />
                 <div className="min-w-0">
                   <p className="flex max-w-[88px] items-center gap-1 text-xs font-semibold">
@@ -791,7 +801,7 @@ function LudoPage() {
               return (
                 <div
                   key={player.id}
-                  className={`relative flex items-center gap-3 overflow-hidden rounded-xl border py-2.5 pl-3.5 pr-3 transition-all duration-300 ${
+                  className={`relative flex items-center gap-3 rounded-xl border py-2.5 pl-3.5 pr-3 transition-all duration-300 ${
                     isTurn ? "" : "border-transparent bg-white/5"
                   } ${player.connected === false ? "opacity-60" : ""}`}
                   style={
@@ -806,9 +816,10 @@ function LudoPage() {
                 >
                   <span
                     aria-hidden="true"
-                    className="absolute inset-y-0 left-0 w-1"
+                    className="absolute inset-y-0 left-0 w-1 rounded-l-xl"
                     style={{ background: color }}
                   />
+                  <ReactionBubble bubble={multiplayer.reactions[player.id]} side="right" className="ml-6" />
                   <PlayerAvatar name={player.name} isBot={player.isBot} color={color} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold">

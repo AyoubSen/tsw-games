@@ -12,6 +12,8 @@ import {
   type UnoRules,
 } from "@/lib/uno"
 import { BOT_LEVEL_LABELS, type BotLevel } from "@/lib/botLevel"
+import type { Reaction } from "@/lib/reactions"
+import { ReactionBubble, ReactionPicker, type ReactionBubbles, type ReactionBubbleState } from "@/components/multiplayer/Reactions"
 import { cn } from "@/lib/utils"
 import type { PublicUnoGameState, UnoAction } from "../../../../party/uno"
 import { cardLabel, COLOR_HEX, COLOR_NAME, UnoCardDefs, UnoCardView, valueLabel } from "./UnoCardArt"
@@ -29,6 +31,8 @@ export interface UnoGameProps {
   onCallUno: () => void
   onCatch: (playerId: string) => void
   onChallenge: () => void
+  reactions: ReactionBubbles
+  onReact: (reaction: Reaction) => void
   onRestart: () => void
   onLeave: () => void
 }
@@ -176,7 +180,7 @@ function useReducedMotion() {
   return reduced
 }
 
-export function UnoGame({ state, playerId, isHost, roomLabel, message, connected, onPlayCard, onDrawCard, onPass, onCallUno, onCatch, onChallenge, onRestart, onLeave }: UnoGameProps) {
+export function UnoGame({ state, playerId, isHost, roomLabel, message, connected, onPlayCard, onDrawCard, onPass, onCallUno, onCatch, onChallenge, reactions, onReact, onRestart, onLeave }: UnoGameProps) {
   const reduced = useReducedMotion()
   const rootRef = useRef<HTMLDivElement>(null)
   const [tableRef, table] = useElementSize<HTMLDivElement>()
@@ -648,6 +652,7 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
               exposed={exposed.includes(id)}
               onCatch={canCatch(id) ? () => onCatch(id) : null}
               tag={seatTag(id)}
+              reaction={reactions[id]}
             />
           )
         })}
@@ -759,6 +764,9 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
             <p className="self-center truncate px-3 text-[11px] text-white/50 xl:hidden">Last: {lastStory.line}</p>
           ) : null}
         </div>
+        <div className="ml-auto shrink-0">
+          <ReactionPicker onReact={onReact} disabled={!connected} side="bottom" align="end" />
+        </div>
       </div>
 
       {/* Active house rules. */}
@@ -791,7 +799,8 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
 
       {/* My hand and the option tray. */}
       <div className="absolute inset-x-0 bottom-0 flex flex-col items-center">
-        <div className="pointer-events-none flex min-h-12 w-full items-center justify-center gap-2 px-3">
+        <div className="pointer-events-none relative flex min-h-12 w-full items-center justify-center gap-2 px-3">
+          <ReactionBubble bubble={reactions[playerId]} />
           <div className={cn("items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold", tray ? "hidden sm:flex" : "flex", myTurn ? "border-amber-200/80 bg-amber-300 text-[#1a1406]" : "border-white/10 bg-black/45 text-white/80 backdrop-blur")}>
             <span>{myTurn ? "Your turn" : "You"}</span>
             <span className={cn("rounded-full px-1.5", myTurn ? "bg-black/15" : "bg-white/10")}>{rawHand.length}</span>
@@ -886,7 +895,7 @@ function ColorPicker({ label, onPick, extra }: { label: string; onPick: (color: 
   )
 }
 
-function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline, bot, botLevel, exposed, onCatch, tag }: {
+function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline, bot, botLevel, exposed, onCatch, tag, reaction }: {
   refCallback: (element: HTMLDivElement | null) => void
   name: string
   x: number
@@ -901,6 +910,7 @@ function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline
   exposed: boolean
   onCatch: (() => void) | null
   tag: string | null
+  reaction: ReactionBubbleState | undefined
 }) {
   const shown = Math.min(count, compact ? 7 : 10)
   const backW = compact ? 13 : 17
@@ -914,6 +924,7 @@ function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline
       className={cn("absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1 transition-opacity", offline && "opacity-55")}
       style={{ left: x, top: y, width: compact ? 84 : 120 }}
     >
+      <ReactionBubble bubble={reaction} />
       <div className="relative" style={{ width: fanW, height: backH + 4 }}>
         {Array.from({ length: shown }, (_, index) => (
           <span

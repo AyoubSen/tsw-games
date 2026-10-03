@@ -189,6 +189,8 @@ function PokerPage() {
         onEndGame={multiplayer.endGame}
         onShowCards={multiplayer.showCards}
         onMuck={multiplayer.muck}
+        reactions={multiplayer.reactions}
+        onReact={multiplayer.react}
         onLeave={handleLeaveMultiplayer}
       />
     )

@@ -339,3 +339,16 @@ html[data-home-layout="cards"] .home-layout-grid {
 .animate-fade-in {
   animation: fade-in 0.2s ease-out;
 }
+
+/* Table reactions */
+@keyframes reaction-bubble {
+  0% { opacity: 0; transform: translateY(8px) scale(0.6); }
+  12% { opacity: 1; transform: translateY(-2px) scale(1.08); }
+  20%, 85% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translateY(-10px); }
+}
+.reaction-bubble { animation: reaction-bubble 2600ms cubic-bezier(.2,.8,.2,1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reaction-bubble { animation: none !important; }
+}

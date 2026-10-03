@@ -11,6 +11,8 @@ import {
   leavePartySocket,
 } from "@/lib/partykit"
 import type { BotLevel } from "@/lib/botLevel"
+import type { Reaction } from "@/lib/reactions"
+import { useReactionBubbles } from "@/components/multiplayer/Reactions"
 import type {
   ServerMessage,
   PublicGameState,
@@ -44,6 +46,7 @@ export function useMultiplayerPoker() {
   const socketRef = useRef<PartySocket | null>(null)
   const roomCodeRef = useRef("")
   const playerNameRef = useRef<string>("")
+  const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles()
 
   const connect = useCallback(
     (roomCode: string, isHost: boolean, playerName: string, settings?: PokerSettings) => {
@@ -142,6 +145,10 @@ export function useMultiplayerPoker() {
         setState((prev) => ({ ...prev, history: message.hands }))
         break
 
+      case "reaction":
+        receiveReaction(message)
+        break
+
       case "player-joined":
         setState((prev) => {
           if (!prev.gameState) return prev
@@ -192,7 +199,7 @@ export function useMultiplayerPoker() {
         }, 3000)
         break
     }
-  }, [])
+  }, [receiveReaction])
 
   const disconnect = useCallback(() => {
     const socket = socketRef.current
@@ -203,6 +210,7 @@ export function useMultiplayerPoker() {
       clearPersistentPlayerToken("poker", roomCodeRef.current)
       roomCodeRef.current = ""
     }
+    clearReactions()
     setState({
       connectionStatus: "disconnected",
       gameState: null,
@@ -211,7 +219,7 @@ export function useMultiplayerPoker() {
       error: null,
       isHost: false,
     })
-  }, [])
+  }, [clearReactions])
 
   const abandonReconnect = useCallback(() => {
     const socket = socketRef.current
@@ -319,6 +327,10 @@ export function useMultiplayerPoker() {
     sendNow({ type: "muck" })
   }, [sendNow])
 
+  const react = useCallback((reaction: Reaction) => {
+    sendNow({ type: "react", reaction })
+  }, [sendNow])
+
   useEffect(() => {
     return () => {
       if (socketRef.current) {
@@ -348,6 +360,8 @@ export function useMultiplayerPoker() {
     endGame,
     showCards,
     muck,
+    react,
+    reactions,
     disconnect,
     abandonReconnect,
   }

@@ -17,6 +17,7 @@ import {
   type UnoRules,
 } from "../src/lib/uno"
 import { isBotLevel, type BotLevel } from "../src/lib/botLevel"
+import { isReaction, pickReaction, takeReactionSlot, type Reaction, type ReactionMessage } from "../src/lib/reactions"
 import { canControlGame, markConnected, markDisconnected, nextHost, presentCount } from "./shared/presence"
 import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight"
 
@@ -168,8 +169,9 @@ type ClientAction =
   | { type: "catch"; playerId: string }
   | { type: "challenge" }
   | { type: "set-rule"; rule: keyof UnoRules; enabled: boolean }
+  | { type: "react"; reaction: Reaction }
 
-export type ServerMessage = { type: "state"; state: PublicUnoGameState } | { type: "error"; message: string }
+export type ServerMessage = { type: "state"; state: PublicUnoGameState } | { type: "error"; message: string } | ReactionMessage
 
 function parseAction(message: string): ClientAction | null {
   let value: unknown
@@ -179,6 +181,7 @@ function parseAction(message: string): ClientAction | null {
   if (data.type === "join") return typeof data.name === "string" ? { type: "join", name: data.name } : null
   if (data.type === "start" || data.type === "draw" || data.type === "pass" || data.type === "restart" || data.type === "leave" || data.type === "add-bot" || data.type === "uno" || data.type === "challenge") return { type: data.type }
   if (data.type === "set-rule") return isUnoRule(data.rule) && typeof data.enabled === "boolean" ? { type: "set-rule", rule: data.rule, enabled: data.enabled } : null
+  if (data.type === "react") return isReaction(data.reaction) ? { type: "react", reaction: data.reaction } : null
   if (data.type === "catch") return typeof data.playerId === "string" ? { type: "catch", playerId: data.playerId } : null
   if (data.type === "set-bot-level") return typeof data.playerId === "string" && isBotLevel(data.level) ? { type: "set-bot-level", playerId: data.playerId, level: data.level } : null
   if (data.type === "remove-player") return typeof data.playerId === "string" ? { type: "remove-player", playerId: data.playerId } : null
@@ -269,6 +272,7 @@ class UnoParty implements Party.Server {
   state: UnoGameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
   gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
+  reactedAt = new Map<string, number>()
 
   async onStart() {
     this.state = await this.room.storage.get<UnoGameState>("state") ?? null
@@ -320,6 +324,7 @@ class UnoParty implements Party.Server {
     this.state.unoExposed = this.state.unoExposed!.filter((entry) => entry !== exposure)
     const drawn = this.drawCards(victim, 2).length
     this.record({ type: "catch", playerId: catcher.id, name: catcher.name, victimId: victim.id, victimName: victim.name, drawCount: drawn })
+    this.botReact(victim.id, ["😤", "😱"], 0.5)
     // Let the catch play out before a waiting bot moves.
     this.state.botDeadline = null
     return true
@@ -389,6 +394,7 @@ class UnoParty implements Party.Server {
     this.state.pendingDraw = 0
     this.state.pendingChallenge = null
     this.record({ type: "penalty", playerId: player.id, name: player.name, drawCount: drawn })
+    if (drawn >= 4) this.botReact(player.id, ["😱", "😤"], 0.6)
     this.advance()
   }
 
@@ -402,6 +408,7 @@ class UnoParty implements Party.Server {
     this.state.pendingDraw = 0
     this.state.pendingChallenge = null
     this.record({ type: "challenge", playerId: challenger.id, name: challenger.name, targetId: offender?.id ?? "", targetName: offender?.name ?? "Player", guilty, victimId: victim.id, victimName: victim.name, drawCount: drawn })
+    this.botReact(victim.id, ["😤", "😱"], 0.5)
     if (guilty) this.state.botDeadline = null
     else this.advance()
   }
@@ -474,7 +481,14 @@ class UnoParty implements Party.Server {
     }
     const played: Extract<NewUnoAction, { type: "play" }> = { type: "play", playerId: player.id, name: player.name, card, color: card.color ?? color!, cardsLeft: player.hand.length, ...handEffect, ...(jumpIn && { jumpIn: true }), ...(player.hand.length === 1 && callUno && { unoCalled: true }) }
     const stacks = (card.value === "draw-two" && rules.stacking) || (card.value === "wild-draw-four" && (rules.stacking || rules.challenge))
-    if (player.hand.length === 0) { this.record(played); this.finish(player.id) }
+    if (player.hand.length === 0) {
+      this.record(played)
+      this.finish(player.id)
+      // Before the winner screen covers the table.
+      const bots = this.state.seatOrder.filter((id) => id !== player.id && this.state!.players[id]?.isBot)
+      if (player.isBot) this.botReact(player.id, ["GG", "🔥"], 0.7, 600)
+      else this.botReact(bots[Math.floor(Math.random() * bots.length)], ["GG", "👏"], 0.7, 600)
+    }
     else if (stacks) {
       const facing = this.state.players[this.nextPlayer(player.id) ?? ""]
       this.state.pendingDraw += card.value === "draw-two" ? 2 : 4
@@ -503,6 +517,9 @@ class UnoParty implements Party.Server {
       const victim = victimId ? this.state.players[victimId] : undefined
       const drawn = victim ? this.drawCards(victim, card.value === "draw-two" ? 2 : 4).length : 0
       this.record({ ...played, ...(victim && { victimId: victim.id, victimName: victim.name, drawCount: drawn }) })
+      if (card.value === "wild-draw-four") this.botReact(victim?.id, ["😱", "😤"], 0.65)
+      else this.botReact(victim?.id, ["😤"], 0.25)
+      this.botReact(player.id, ["😂"], 0.2)
       this.advance(2)
     } else { this.record(played); this.advance() }
     if (player.hand.length === 1 && !callUno) {
@@ -511,6 +528,18 @@ class UnoParty implements Party.Server {
   }
 
   send(connection: Party.Connection, message: ServerMessage) { connection.send(JSON.stringify(message)) }
+
+  react(playerId: string, reaction: Reaction, delayMs?: number) {
+    if (!takeReactionSlot(this.reactedAt, playerId)) return
+    const message: ReactionMessage = { type: "reaction", playerId, reaction, ...(delayMs ? { delayMs } : {}) }
+    this.room.broadcast(JSON.stringify(message))
+  }
+
+  /** Now and then a bot reacts to a big moment, once the table has replayed it. */
+  botReact(playerId: string | undefined, options: readonly Reaction[], odds: number, delayMs?: number) {
+    if (!playerId || !this.state?.players[playerId]?.isBot || !this.humansConnected() || Math.random() >= odds) return
+    this.react(playerId, pickReaction(options), delayMs ?? revealMs(this.state.log.at(-1)) - 400)
+  }
 
   authenticated(connection: Party.Connection) {
     const token = this.connectionTokens.get(connection)
@@ -772,6 +801,11 @@ class UnoParty implements Party.Server {
       if (!canControlGame(this.state.players, this.state.hostId, sender.id)) return this.error(sender, "Only the host can change house rules")
       this.state.rules = { ...this.state.rules, [action.rule]: action.enabled }
       await this.save(); this.broadcast(); return
+    }
+
+    if (action.type === "react") {
+      if (this.state.players[sender.id]) this.react(sender.id, action.reaction)
+      return
     }
 
     if (action.type === "uno") {

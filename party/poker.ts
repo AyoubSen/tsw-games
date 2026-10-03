@@ -10,6 +10,7 @@ import {
 } from "../src/lib/poker/handEvaluator"
 import { calculatePots, type PotContribution } from "../src/lib/poker/potCalculator"
 import { isBotLevel, type BotLevel } from "../src/lib/botLevel"
+import { isReaction, pickReaction, takeReactionSlot, type Reaction, type ReactionMessage } from "../src/lib/reactions"
 import {
   getGameNightResultMatch,
   validateGameNightConnection,
@@ -61,6 +62,10 @@ const BOT_THINK_MS = 1300
 const BOT_THINK_JITTER_MS = 1100
 /** A short beat before dealing once a rebuy or sit-in makes a hand possible again. */
 const RESUME_DEAL_MS = 2000
+/** Bots react once a hand's winnings have swept to the winner. */
+const BOT_REACT_MS = 1100
+/** A pot of at least this many big blinds gets a reaction. */
+const BIG_POT_BLINDS = 20
 const BOT_NAMES = ["Ace", "Maverick", "Lucky", "Duchess", "Slim", "Rosie", "Tex", "Vegas"]
 
 export interface PokerSettings {
@@ -231,6 +236,7 @@ export type ClientMessage =
   | { type: "end-game" }
   | { type: "show-cards"; cards: number[] }
   | { type: "muck" }
+  | { type: "react"; reaction: Reaction }
 
 export type ServerMessage =
   | { type: "state"; state: PublicGameState }
@@ -242,6 +248,7 @@ export type ServerMessage =
   | { type: "hand-over"; winners: WinnerInfo[] }
   | { type: "history"; hands: PublicHandRecord[] }
   | { type: "error"; message: string }
+  | ReactionMessage
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -321,6 +328,7 @@ class PokerParty implements Party.Server {
   /** Bumped whenever a finished hand's record changes; each connection gets it once per version. */
   historyVersion = 0
   historySent = new WeakMap<Party.Connection, number>()
+  reactedAt = new Map<string, number>()
 
   async onStart() {
     const stored = await this.room.storage.get<string>("state")
@@ -484,6 +492,30 @@ class PokerParty implements Party.Server {
 
   send(conn: Party.Connection, message: ServerMessage) {
     conn.send(JSON.stringify(message))
+  }
+
+  react(playerId: string, reaction: Reaction, delayMs?: number) {
+    if (!takeReactionSlot(this.reactedAt, playerId)) return
+    this.broadcast({ type: "reaction", playerId, reaction, ...(delayMs ? { delayMs } : {}) })
+  }
+
+  /** Bots now and then react to a big pot: the winner gloats, a beaten (or watching) bot tips its hat or groans. */
+  botReactToPot(winners: WinnerInfo[], showdown: boolean) {
+    const s = this.state!
+    const pot = winners.reduce((sum, w) => sum + w.amount, 0)
+    if (pot < BIG_POT_BLINDS * s.settings.smallBlind * 2) return
+    if (!Object.values(s.players).some((p) => !p.isBot && p.connected)) return
+    const winnerIds = new Set(winners.map((w) => w.playerId))
+    const botWinner = winners.map((w) => s.players[w.playerId]).find((p) => p?.isBot)
+    if (botWinner && Math.random() < 0.6) this.react(botWinner.id, pickReaction(["🔥", "😂"]), BOT_REACT_MS)
+    const bots = s.seatOrder.map((id) => s.players[id]).filter((p): p is Player => Boolean(p?.isBot) && !winnerIds.has(p!.id))
+    const beaten = showdown ? bots.filter((p) => !p.folded && p.holeCards.length === 2) : []
+    const loser = beaten[Math.floor(Math.random() * beaten.length)]
+    if (loser && Math.random() < 0.6) {
+      this.react(loser.id, pickReaction(loser.chips <= 0 ? ["GG", "😤"] : ["😤", "😱", "Nice hand"]), BOT_REACT_MS + 500)
+    } else if (!botWinner && bots.length && Math.random() < 0.4) {
+      this.react(bots[Math.floor(Math.random() * bots.length)]!.id, pickReaction(["Nice hand", "👏", "😱"]), BOT_REACT_MS + 500)
+    }
   }
 
   // ─── Game Logic ──────────────────────────────────────────────────────────
@@ -1031,6 +1063,7 @@ class PokerParty implements Party.Server {
     const winners = this.showdownWinners()
     for (const w of winners) s.players[w.playerId].chips += w.amount
     this.finishHand(winners)
+    this.botReactToPot(winners, true)
   }
 
   /** Who takes each pot at showdown. Doesn't move any chips. */
@@ -1111,13 +1144,9 @@ class PokerParty implements Party.Server {
       return
     }
     winner.chips += s.pot
-    this.finishHand([{
-      playerId: winner.id,
-      playerName: winner.name,
-      amount: s.pot,
-      handResult: null,
-      potIndex: 0,
-    }])
+    const winners: WinnerInfo[] = [{ playerId: winner.id, playerName: winner.name, amount: s.pot, handResult: null, potIndex: 0 }]
+    this.finishHand(winners)
+    this.botReactToPot(winners, false)
 
     // The winner may show their cards; bots now and then show off a bluff.
     if (s.status !== "playing" || winner.holeCards.length !== 2) return
@@ -1895,6 +1924,12 @@ class PokerParty implements Party.Server {
           }
           await this.saveState()
           this.broadcastState()
+          break
+        }
+
+        case "react": {
+          if (!this.state.players[sender.id] || !isReaction(data.reaction)) return
+          this.react(sender.id, data.reaction)
           break
         }
 

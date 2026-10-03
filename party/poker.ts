@@ -19,7 +19,7 @@ import {
 
 export type GamePhase = "waiting" | "playing" | "finished"
 export type BettingRound = "pre-flop" | "flop" | "turn" | "river" | "showdown"
-export type PendingStep = "street" | "award" | "fold-win"
+export type PendingStep = "street" | "award" | "fold-win" | "next-hand"
 
 export interface SeatAction {
   kind: "sb" | "bb" | "check" | "call" | "bet" | "raise" | "all-in" | "fold"
@@ -45,6 +45,8 @@ const ROUND_PAUSE_MS = 1100
 const RUNOUT_PAUSE_MS = 1800
 const SHOWDOWN_PAUSE_MS = 2400
 const FOLD_WIN_PAUSE_MS = 900
+/** Time to read the result before the next hand deals itself. */
+const NEXT_HAND_MS = 6000
 const DISCONNECT_FOLD_MS = 10000
 /** Bots take a human-looking beat to think. */
 const BOT_THINK_MS = 1300
@@ -110,6 +112,7 @@ export interface GameState {
   turnDeadline: number | null
   log: PokerLogEntry[]
   logSeq: number
+  autoDealPaused: boolean
 }
 
 export interface PublicPlayer {
@@ -153,6 +156,8 @@ export interface PublicGameState {
   turnDeadline: number | null
   serverNow: number
   log: PokerLogEntry[]
+  nextHandAt: number | null
+  autoDealPaused: boolean
 }
 
 export type ClientMessage =
@@ -167,6 +172,7 @@ export type ClientMessage =
   | { type: "raise"; amount: number }
   | { type: "all-in" }
   | { type: "next-hand" }
+  | { type: "toggle-auto-deal" }
 
 export type ServerMessage =
   | { type: "state"; state: PublicGameState }
@@ -251,6 +257,7 @@ class PokerParty implements Party.Server {
         parsed.turnDeadline ??= null
         parsed.log ??= []
         parsed.logSeq ??= 0
+        parsed.autoDealPaused ??= false
         for (const player of Object.values(parsed.players) as Player[]) player.lastAction ??= null
         this.state = parsed
         for (const player of Object.values(this.state!.players) as Player[]) {
@@ -339,6 +346,8 @@ class PokerParty implements Party.Server {
       turnDeadline: s.turnDeadline,
       serverNow: Date.now(),
       log: s.log,
+      nextHandAt: s.pending?.step === "next-hand" ? s.pending.at : null,
+      autoDealPaused: s.autoDealPaused,
     }
   }
 
@@ -922,6 +931,8 @@ class PokerParty implements Party.Server {
     const playersWithChips = s.seatOrder.filter((id) => s.players[id]?.chips > 0)
     if (playersWithChips.length <= 1) {
       s.status = "finished"
+    } else if (!s.autoDealPaused) {
+      this.schedule("next-hand", NEXT_HAND_MS)
     }
 
     this.broadcast({ type: "hand-over", winners })
@@ -1105,6 +1116,7 @@ class PokerParty implements Party.Server {
         turnDeadline: null,
         log: [],
         logSeq: 0,
+        autoDealPaused: false,
       }
       await this.saveState()
     }
@@ -1378,6 +1390,24 @@ class PokerParty implements Party.Server {
           break
         }
 
+        case "toggle-auto-deal": {
+          if (sender.id !== this.state.hostId) {
+            this.send(sender, { type: "error", message: "Only host can pause dealing" })
+            return
+          }
+          const s = this.state
+          s.autoDealPaused = !s.autoDealPaused
+          if (s.autoDealPaused && s.pending?.step === "next-hand") {
+            s.pending = null
+            this.room.storage.deleteAlarm()
+          } else if (!s.autoDealPaused && !s.handInProgress && !s.pending && s.status === "playing" && s.handNumber > 0) {
+            this.schedule("next-hand", NEXT_HAND_MS)
+          }
+          await this.saveState()
+          this.broadcastState()
+          break
+        }
+
         case "leave": {
           const leavingPlayer = this.state.players[sender.id]
 
@@ -1477,7 +1507,11 @@ class PokerParty implements Party.Server {
       s.pending = null
       if (step === "street") this.dealStreet()
       else if (step === "award") this.awardShowdown()
-      else this.awardFoldWin()
+      else if (step === "fold-win") this.awardFoldWin()
+      else {
+        this.startNewHand()
+        this.broadcastState()
+      }
       await this.saveState()
       return
     }

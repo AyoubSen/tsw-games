@@ -277,6 +277,10 @@ export function useMultiplayerPoker() {
     if (state.isHost) sendNow({ type: "next-hand" })
   }, [sendNow, state.isHost])
 
+  const toggleAutoDeal = useCallback(() => {
+    if (state.isHost) sendNow({ type: "toggle-auto-deal" })
+  }, [sendNow, state.isHost])
+
   useEffect(() => {
     return () => {
       if (socketRef.current) {
@@ -298,6 +302,7 @@ export function useMultiplayerPoker() {
     raise,
     allIn,
     nextHand,
+    toggleAutoDeal,
     disconnect,
     abandonReconnect,
   }

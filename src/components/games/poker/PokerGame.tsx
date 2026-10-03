@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Bot, Crown, ScrollText, WifiOff, X } from "lucide-react"
+import { ArrowLeft, ArrowRight, Bot, Crown, Pause, Play, ScrollText, WifiOff, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { evaluateBestHand } from "@/lib/poker/handEvaluator"
 import { cn } from "@/lib/utils"
@@ -22,6 +22,7 @@ export interface PokerGameProps {
   onRaise: (amount: number) => void
   onAllIn: () => void
   onNextHand: () => void
+  onToggleAutoDeal: () => void
   onLeave: () => void
 }
 
@@ -250,7 +251,7 @@ function SeatPlate({ player, isMe, active, winner, compact, deadline, total, off
   )
 }
 
-export function PokerGame({ state, playerId, isHost, roomLabel, error, connected, onFold, onCheck, onCall, onRaise, onAllIn, onNextHand, onLeave }: PokerGameProps) {
+export function PokerGame({ state, playerId, isHost, roomLabel, error, connected, onFold, onCheck, onCall, onRaise, onAllIn, onNextHand, onToggleAutoDeal, onLeave }: PokerGameProps) {
   const reduced = useReducedMotion()
   const [stageRef, stage] = useElementSize<HTMLDivElement>()
   const geo = tableGeometry(stage.w || 1024, stage.h || 640)
@@ -377,11 +378,12 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
   const turnTotal = state.settings.turnTimeLimit * 1000
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
-    if (!state.turnDeadline) return
+    if (!state.turnDeadline && !state.nextHandAt) return
     const timer = window.setInterval(() => setNow(Date.now()), 250)
     return () => window.clearInterval(timer)
-  }, [state.turnDeadline])
+  }, [state.turnDeadline, state.nextHandAt])
   const secondsLeft = state.turnDeadline ? Math.max(0, Math.ceil((state.turnDeadline - (now + clockOffset.current)) / 1000)) : null
+  const nextHandIn = state.nextHandAt ? Math.max(0, Math.ceil((state.nextHandAt - (now + clockOffset.current)) / 1000)) : null
 
   const nameOf = (id: string | null) => (id === playerId ? "You" : id ? state.players[id]?.name ?? "Player" : "Player")
   const hostName = state.players[state.hostId]?.name ?? "the host"
@@ -753,16 +755,33 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
           <div className="flex min-h-14 flex-1 items-center justify-end">
             {handOver && state.status !== "finished" ? (
               isHost ? (
-                <button
-                  type="button"
-                  onClick={onNextHand}
-                  className="flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-amber-300 to-amber-500 px-8 text-sm font-black uppercase tracking-wider text-[#2a1a00] shadow-lg ring-1 ring-amber-200/60 transition-all hover:from-amber-200 active:scale-[0.98] sm:w-auto"
-                >
-                  Deal next hand
-                  <ArrowRight className="h-4 w-4" />
-                </button>
+                <div className="flex w-full items-center gap-2 sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={onToggleAutoDeal}
+                    aria-label={state.autoDealPaused ? "Resume auto-deal" : "Pause auto-deal"}
+                    className="flex h-14 shrink-0 items-center justify-center gap-2 rounded-2xl bg-white/[0.06] px-4 text-xs font-bold uppercase tracking-wider text-white/70 ring-1 ring-white/15 transition-all hover:bg-white/[0.1] hover:text-white active:scale-[0.98]"
+                  >
+                    {state.autoDealPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                    {state.autoDealPaused ? "Resume" : nextHandIn !== null ? <span className="font-mono tabular-nums">{nextHandIn}s</span> : "Pause"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onNextHand}
+                    className="flex h-14 flex-1 items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-amber-300 to-amber-500 px-8 text-sm font-black uppercase tracking-wider text-[#2a1a00] shadow-lg ring-1 ring-amber-200/60 transition-all hover:from-amber-200 active:scale-[0.98] sm:flex-none"
+                  >
+                    {state.autoDealPaused ? "Deal next hand" : "Deal now"}
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                </div>
               ) : (
-                <p className="w-full text-center text-sm text-white/45 sm:text-right">Waiting for {hostName} to deal the next hand…</p>
+                <p className="w-full text-center text-sm text-white/45 sm:text-right">
+                  {nextHandIn !== null
+                    ? <>Next hand in <span className="font-mono text-white/75">{nextHandIn}s</span></>
+                    : state.autoDealPaused
+                      ? <>{hostName} paused dealing</>
+                      : <>Waiting for {hostName} to deal the next hand…</>}
+                </p>
               )
             ) : canAct && me ? (
               <div className="w-full sm:max-w-[520px]">

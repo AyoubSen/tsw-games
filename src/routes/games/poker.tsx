@@ -180,6 +180,7 @@ function PokerPage() {
         onRaise={multiplayer.raise}
         onAllIn={multiplayer.allIn}
         onNextHand={multiplayer.nextHand}
+        onToggleAutoDeal={multiplayer.toggleAutoDeal}
         onLeave={handleLeaveMultiplayer}
       />
     )

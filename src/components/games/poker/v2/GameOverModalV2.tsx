@@ -1,8 +1,9 @@
 import { Trophy, RotateCcw, LogOut } from "lucide-react"
-import type { PublicPlayer } from "../../../../../party/poker"
+import type { PokerSettings, PublicPlayer } from "../../../../../party/poker"
 
 interface GameOverModalProps {
   players: Record<string, PublicPlayer>
+  settings: PokerSettings
   isHost: boolean
   onRestart: () => void
   onLeave: () => void
@@ -16,8 +17,13 @@ const MEDAL_COLORS = [
 
 const PODIUM_HEIGHTS = ["h-24", "h-16", "h-12"]
 
-export function GameOverModal({ players, isHost, onRestart, onLeave }: GameOverModalProps) {
-  const sorted = Object.values(players).sort((a, b) => b.chips - a.chips)
+export function GameOverModal({ players, settings, isHost, onRestart, onLeave }: GameOverModalProps) {
+  // With rebuys, players are ranked by what they won or lost against everything they bought in for
+  const net = (p: PublicPlayer) => p.chips - settings.startingChips * (1 + p.rebuys)
+  const signed = (value: number) => `${value > 0 ? "+" : value < 0 ? "−" : "±"}${Math.abs(value).toLocaleString()}`
+  const result = (p: PublicPlayer) => (settings.rebuys ? signed(net(p)) : p.chips.toLocaleString())
+  const boughtIn = (p: PublicPlayer) => (settings.rebuys && p.rebuys > 0 ? `${p.rebuys} rebuy${p.rebuys === 1 ? "" : "s"}` : null)
+  const sorted = Object.values(players).sort((a, b) => net(b) - net(a) || b.chips - a.chips)
   const winner = sorted[0]
   const top3 = sorted.slice(0, 3)
   const rest = sorted.slice(3)
@@ -82,7 +88,9 @@ export function GameOverModal({ players, isHost, onRestart, onLeave }: GameOverM
           </h2>
 
           <p className="text-zinc-400 mb-5 text-sm">
-            with {winner?.chips.toLocaleString()} chips
+            {settings.rebuys && winner
+              ? <>{signed(net(winner))} chips net · {winner.chips.toLocaleString()} stack{boughtIn(winner) ? ` · ${boughtIn(winner)}` : ""}</>
+              : <>with {winner?.chips.toLocaleString()} chips</>}
           </p>
 
           {/* Podium */}
@@ -98,7 +106,8 @@ export function GameOverModal({ players, isHost, onRestart, onLeave }: GameOverM
                     {medal.label}
                   </div>
                   <span className="text-xs font-medium text-white truncate max-w-[80px]">{p.name}</span>
-                  <span className="text-[10px] font-mono text-zinc-400">{p.chips.toLocaleString()}</span>
+                  <span className="text-[10px] font-mono text-zinc-400">{result(p)}</span>
+                  {boughtIn(p) && <span className="text-[9px] text-zinc-500">{boughtIn(p)}</span>}
                   {/* Podium block */}
                   <div className={`w-full ${height} rounded-t-lg bg-gradient-to-b from-zinc-700 to-zinc-800 border-t-2 ${medal.border}`} />
                 </div>
@@ -119,7 +128,10 @@ export function GameOverModal({ players, isHost, onRestart, onLeave }: GameOverM
                     <span className="w-5 text-zinc-500 font-mono text-xs">{i + 4}.</span>
                     <span className="text-zinc-300">{p.name}</span>
                   </div>
-                  <span className="font-mono text-xs text-zinc-500">{p.chips.toLocaleString()}</span>
+                  <span className="font-mono text-xs text-zinc-500">
+                    {boughtIn(p) && <span className="mr-2 font-sans text-[10px] text-zinc-600">{boughtIn(p)}</span>}
+                    {result(p)}
+                  </span>
                 </div>
               ))}
             </div>

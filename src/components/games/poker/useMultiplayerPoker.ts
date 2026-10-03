@@ -281,6 +281,22 @@ export function useMultiplayerPoker() {
     if (state.isHost) sendNow({ type: "toggle-auto-deal" })
   }, [sendNow, state.isHost])
 
+  const setRebuys = useCallback((enabled: boolean, cap: number) => {
+    if (state.isHost) sendNow({ type: "set-rebuys", enabled, cap })
+  }, [sendNow, state.isHost])
+
+  const rebuy = useCallback(() => {
+    sendNow({ type: "rebuy" })
+  }, [sendNow])
+
+  const toggleSitOut = useCallback(() => {
+    sendNow({ type: "toggle-sit-out" })
+  }, [sendNow])
+
+  const endGame = useCallback(() => {
+    if (state.isHost) sendNow({ type: "end-game" })
+  }, [sendNow, state.isHost])
+
   useEffect(() => {
     return () => {
       if (socketRef.current) {
@@ -303,6 +319,10 @@ export function useMultiplayerPoker() {
     allIn,
     nextHand,
     toggleAutoDeal,
+    setRebuys,
+    rebuy,
+    toggleSitOut,
+    endGame,
     disconnect,
     abandonReconnect,
   }

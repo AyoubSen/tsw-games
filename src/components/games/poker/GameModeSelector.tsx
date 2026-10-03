@@ -71,6 +71,8 @@ export function GameModeSelector({
       smallBlind,
       blindIncrease,
       turnTimeLimit,
+      rebuys: false,
+      rebuyCap: 0,
     })
   }
 

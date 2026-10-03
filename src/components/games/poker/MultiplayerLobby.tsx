@@ -1,9 +1,11 @@
 import { useState } from "react"
-import { Copy, Check, Crown, Users, LogOut, Play, Coins, Clock, TrendingUp, Bot, X } from "lucide-react"
+import { Copy, Check, Crown, Users, LogOut, Play, Coins, Clock, TrendingUp, Bot, X, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { getInviteLink } from "@/lib/inviteLinks"
 import type { PublicGameState } from "../../../../party/poker"
+
+const REBUY_CAPS = [1, 2, 3, 5, 0]
 
 interface MultiplayerLobbyProps {
   gameState: PublicGameState
@@ -12,6 +14,7 @@ interface MultiplayerLobbyProps {
   onStartGame: () => void
   onAddBot: () => void
   onRemoveBot: (playerId: string) => void
+  onSetRebuys: (enabled: boolean, cap: number) => void
   onLeave: () => void
 }
 
@@ -22,6 +25,7 @@ export function MultiplayerLobby({
   onStartGame,
   onAddBot,
   onRemoveBot,
+  onSetRebuys,
   onLeave,
 }: MultiplayerLobbyProps) {
   const [copied, setCopied] = useState(false)
@@ -97,7 +101,51 @@ export function MultiplayerLobby({
                 <Clock className="w-4 h-4 text-muted-foreground" />
                 <span>{settings.turnTimeLimit > 0 ? `${settings.turnTimeLimit}s timer` : "No timer"}</span>
               </div>
+              <div className="col-span-2 flex items-center gap-2">
+                <RefreshCw className="w-4 h-4 text-muted-foreground" />
+                <span>
+                  {!settings.rebuys
+                    ? "No rebuys"
+                    : settings.rebuyCap === 0
+                      ? "Unlimited rebuys"
+                      : `${settings.rebuyCap} rebuy${settings.rebuyCap === 1 ? "" : "s"} each`}
+                </span>
+              </div>
             </div>
+            {isHost && (
+              <div className="mt-4 space-y-2 border-t pt-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">Rebuys</p>
+                    <p className="text-xs text-muted-foreground">Busted players buy back in for {settings.startingChips.toLocaleString()} between hands</p>
+                  </div>
+                  <Button
+                    variant={settings.rebuys ? "default" : "outline"}
+                    size="sm"
+                    aria-pressed={settings.rebuys}
+                    onClick={() => onSetRebuys(!settings.rebuys, settings.rebuyCap)}
+                  >
+                    {settings.rebuys ? "On" : "Off"}
+                  </Button>
+                </div>
+                {settings.rebuys && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="mr-1 text-xs text-muted-foreground">Limit</span>
+                    {REBUY_CAPS.map((cap) => (
+                      <Button
+                        key={cap}
+                        variant={settings.rebuyCap === cap ? "default" : "outline"}
+                        size="sm"
+                        className="h-7 px-2.5 text-xs"
+                        onClick={() => onSetRebuys(true, cap)}
+                      >
+                        {cap === 0 ? "No limit" : cap}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 

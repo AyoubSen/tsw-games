@@ -42,7 +42,7 @@ function PokerPage() {
     hasGameState,
     finished: multiplayer.gameState?.status === 'finished',
     connectHost: (roomId, playerName) => {
-      if (gameNightConnection) multiplayer.createGame(playerName, { startingChips: 1000, smallBlind: 10, blindIncrease: 0, turnTimeLimit: 0 }, roomId)
+      if (gameNightConnection) multiplayer.createGame(playerName, { startingChips: 1000, smallBlind: 10, blindIncrease: 0, turnTimeLimit: 0, rebuys: false, rebuyCap: 0 }, roomId)
     },
     connectPlayer: (roomId, playerName) => {
       if (gameNightConnection) multiplayer.joinGame(roomId, playerName)
@@ -157,6 +157,7 @@ function PokerPage() {
           onStartGame={multiplayer.startGame}
           onAddBot={multiplayer.addBot}
           onRemoveBot={multiplayer.removeBot}
+          onSetRebuys={multiplayer.setRebuys}
           onLeave={handleLeaveMultiplayer}
         />
         </div>
@@ -181,6 +182,9 @@ function PokerPage() {
         onAllIn={multiplayer.allIn}
         onNextHand={multiplayer.nextHand}
         onToggleAutoDeal={multiplayer.toggleAutoDeal}
+        onRebuy={multiplayer.rebuy}
+        onToggleSitOut={multiplayer.toggleSitOut}
+        onEndGame={multiplayer.endGame}
         onLeave={handleLeaveMultiplayer}
       />
     )

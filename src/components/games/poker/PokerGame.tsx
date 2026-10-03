@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Bot, Crown, Pause, Play, ScrollText, WifiOff, X } from "lucide-react"
+import { ArrowLeft, ArrowRight, Bot, Coffee, Crown, Flag, Pause, Play, RefreshCw, ScrollText, WifiOff, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { evaluateBestHand } from "@/lib/poker/handEvaluator"
 import { calculatePots } from "@/lib/poker/potCalculator"
@@ -24,6 +24,9 @@ export interface PokerGameProps {
   onAllIn: () => void
   onNextHand: () => void
   onToggleAutoDeal: () => void
+  onRebuy: () => void
+  onToggleSitOut: () => void
+  onEndGame: () => void
   onLeave: () => void
 }
 
@@ -194,6 +197,9 @@ function logLine(entry: PokerLogEntry, me: string): { text: ReactNode; tone?: st
     case "show": return { text: <>{who} showed <MiniCards cards={entry.cards ?? []} /> · {entry.hand}</> }
     case "win": return { text: `${who} won ${n(entry.amount)}${entry.hand ? ` with ${entry.hand}` : ""}`, tone: "text-amber-300 font-semibold" }
     case "timeout": return { text: `${who} ran out of time`, tone: "text-rose-300" }
+    case "rebuy": return { text: `${who} bought back in for ${n(entry.amount)}`, tone: "text-sky-200" }
+    case "sit-out": return { text: `${who} ${entry.playerId === me ? "are" : "is"} sitting out`, tone: "text-white/45" }
+    case "sit-in": return { text: `${who} ${entry.playerId === me ? "are" : "is"} back in`, tone: "text-white/65" }
   }
 }
 
@@ -230,6 +236,7 @@ function SeatPlate({ player, isMe, active, winner, compact, deadline, total, off
 }) {
   const avatar = compact ? 30 : 40
   const out = player.chips <= 0 && !player.hasCards
+  const away = player.sittingOut && !player.hasCards
   return (
     <div
       className={cn(
@@ -237,7 +244,7 @@ function SeatPlate({ player, isMe, active, winner, compact, deadline, total, off
         compact ? "w-[104px] gap-1.5 pr-2" : "w-[156px] gap-2 pr-3",
         active ? "border-amber-200/80 bg-[#2a2210]/90 shadow-[0_0_0_3px_rgba(253,230,138,0.25),0_0_28px_rgba(253,230,138,0.35)]" : "border-white/12 bg-[#0c0f0e]/85",
         winner && "poker-win-glow border-amber-300 bg-[#3a2c0a]/95",
-        (player.folded || out) && !winner && "opacity-50 grayscale",
+        (player.folded || out || away) && !winner && "opacity-50 grayscale",
       )}
     >
       <div className="relative shrink-0" style={{ width: avatar, height: avatar }}>
@@ -254,16 +261,22 @@ function SeatPlate({ player, isMe, active, winner, compact, deadline, total, off
         <div className="flex items-center gap-1">
           <span className={cn("truncate font-semibold text-white/90", compact ? "text-[10px]" : "text-xs")}>{isMe ? "You" : player.name}</span>
           {!player.connected && <WifiOff className="h-3 w-3 shrink-0 text-rose-400" />}
+          {player.sittingOut && <Coffee aria-label="Sitting out" className="h-3 w-3 shrink-0 text-sky-300" />}
+          {player.rebuys > 0 && (
+            <span title={`Rebought ${player.rebuys}×`} className="flex shrink-0 items-center gap-px rounded-full bg-white/10 px-1 font-mono text-[9px] font-bold text-white/60">
+              <RefreshCw className="h-2 w-2" />{player.rebuys}
+            </span>
+          )}
         </div>
-        <div className={cn("font-mono font-bold tabular-nums", compact ? "text-[11px]" : "text-sm", player.allIn ? "text-rose-300" : "text-amber-200")}>
-          {player.allIn ? "ALL IN" : out ? "Out" : player.chips.toLocaleString()}
+        <div className={cn("font-mono font-bold tabular-nums", compact ? "text-[11px]" : "text-sm", player.allIn || out ? "text-rose-300" : away ? "text-sky-200" : "text-amber-200")}>
+          {player.allIn ? "ALL IN" : out ? "Busted" : player.chips.toLocaleString()}
         </div>
       </div>
     </div>
   )
 }
 
-export function PokerGame({ state, playerId, isHost, roomLabel, error, connected, onFold, onCheck, onCall, onRaise, onAllIn, onNextHand, onToggleAutoDeal, onLeave }: PokerGameProps) {
+export function PokerGame({ state, playerId, isHost, roomLabel, error, connected, onFold, onCheck, onCall, onRaise, onAllIn, onNextHand, onToggleAutoDeal, onRebuy, onToggleSitOut, onEndGame, onLeave }: PokerGameProps) {
   const reduced = useReducedMotion()
   const [stageRef, stage] = useElementSize<HTMLDivElement>()
   const geo = tableGeometry(stage.w || 1024, stage.h || 640)
@@ -421,6 +434,19 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
   const recentLog = [...state.log].reverse()
   const showGameOver = state.status === "finished"
 
+  // ---- Rebuys and sitting out ----
+  const { rebuys: rebuysOn, rebuyCap, startingChips } = state.settings
+  const canRebuy = (p: PublicPlayer) => rebuysOn && p.chips <= 0 && (rebuyCap === 0 || p.rebuys < rebuyCap)
+  const iHoldLiveCards = !!me && state.handInProgress && me.hasCards && !me.folded
+  const iAmBusted = !!me && me.chips <= 0 && !iHoldLiveCards
+  const iCanRebuy = !!me && iAmBusted && canRebuy(me) && state.status === "playing"
+  const rebuysLeft = me && rebuyCap > 0 ? rebuyCap - me.rebuys : null
+  const readyCount = order.filter((id) => {
+    const p = state.players[id]!
+    return (p.chips > 0 && !p.sittingOut) || (p.isBot && canRebuy(p))
+  }).length
+  const waitingForPlayers = state.status === "playing" && !state.handInProgress && !state.nextHandAt && readyCount < 2
+
   // ---- Status line under the board ----
   const payouts = (() => {
     const byPot = new Map<number, typeof state.winners>()
@@ -449,7 +475,7 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
 
   return (
     <div className="relative flex h-[calc(100dvh-73px)] flex-col overflow-hidden bg-[#0b0907] text-white">
-      {showGameOver && <GameOverModal players={state.players} isHost={isHost} onRestart={onNextHand} onLeave={onLeave} />}
+      {showGameOver && <GameOverModal players={state.players} settings={state.settings} isHost={isHost} onRestart={onNextHand} onLeave={onLeave} />}
 
       {/* Room */}
       <div className="pointer-events-none absolute inset-0" style={{ background: "radial-gradient(ellipse 80% 70% at 50% 45%, #2b2219 0%, #17120d 50%, #070605 100%)" }} />
@@ -734,6 +760,11 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
                       Fold
                     </div>
                   )}
+                  {!player.hasCards && (canRebuy(player) || (player.sittingOut && player.chips > 0)) && (
+                    <div className={cn("absolute left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider", player.chips <= 0 ? "bg-rose-900/90 text-rose-100" : "bg-sky-900/90 text-sky-100", id === playerId ? "left-full top-1/2 ml-2 -translate-y-1/2 translate-x-0" : tagAbove ? "bottom-full mb-1.5" : "top-full mt-1.5")}>
+                      {player.chips <= 0 ? "Can rebuy" : "Sitting out"}
+                    </div>
+                  )}
                   {isWinner && won > 0 && (
                     <div className="poker-float-up absolute left-1/2 -translate-x-1/2 whitespace-nowrap font-mono text-lg font-black text-amber-300 drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]" style={{ bottom: "100%", animationDelay: `${SWEEP_MS + 200}ms` }}>
                       +{won.toLocaleString()}
@@ -816,12 +847,66 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
             {myHand && !me?.folded && (
               <span className="truncate rounded-full bg-emerald-400/12 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-200 ring-1 ring-emerald-300/25">{myHand}</span>
             )}
+            {me && state.status === "playing" && (
+              <div className="flex shrink-0 items-center gap-1.5">
+                {iCanRebuy && (
+                  <button
+                    type="button"
+                    onClick={onRebuy}
+                    className="flex h-8 items-center gap-1.5 rounded-xl bg-gradient-to-b from-sky-300 to-sky-500 px-3 text-[11px] font-black uppercase tracking-wider text-sky-950 shadow ring-1 ring-sky-200/60 transition-all hover:from-sky-200 active:scale-[0.98]"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Rebuy {startingChips.toLocaleString()}
+                    {rebuysLeft !== null && <span className="font-mono text-[10px] opacity-70">({rebuysLeft} left)</span>}
+                  </button>
+                )}
+                {!iAmBusted && (
+                  <button
+                    type="button"
+                    onClick={onToggleSitOut}
+                    aria-pressed={me.sittingOut}
+                    className={cn(
+                      "flex h-8 items-center gap-1.5 rounded-xl px-3 text-[11px] font-bold uppercase tracking-wider ring-1 transition-all active:scale-[0.98]",
+                      me.sittingOut ? "bg-sky-300/15 text-sky-200 ring-sky-300/50 hover:bg-sky-300/25" : "bg-white/[0.05] text-white/55 ring-white/12 hover:bg-white/[0.09] hover:text-white",
+                    )}
+                  >
+                    <Coffee className="h-3.5 w-3.5" />
+                    {me.sittingOut ? "Sit in" : "Sit out"}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="flex min-h-14 flex-1 items-center justify-end">
-            {handOver && state.status !== "finished" ? (
+            {waitingForPlayers ? (
+              <div className="flex w-full items-center justify-end gap-3">
+                <p className="flex-1 text-center text-sm text-white/55 sm:text-right">
+                  {iCanRebuy ? "Rebuy to keep playing" : me?.sittingOut ? "Sit in to deal the next hand" : `Waiting for players to ${rebuysOn ? "rebuy or " : ""}sit back in…`}
+                </p>
+                {isHost && (
+                  <button
+                    type="button"
+                    onClick={onEndGame}
+                    className="flex h-14 shrink-0 items-center justify-center gap-2 rounded-2xl bg-white/[0.06] px-4 text-xs font-bold uppercase tracking-wider text-white/70 ring-1 ring-white/15 transition-all hover:bg-rose-500/15 hover:text-rose-100 hover:ring-rose-300/40 active:scale-[0.98]"
+                  >
+                    <Flag className="h-4 w-4" />
+                    End game
+                  </button>
+                )}
+              </div>
+            ) : handOver && state.status !== "finished" ? (
               isHost ? (
                 <div className="flex w-full items-center gap-2 sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={onEndGame}
+                    aria-label="End game"
+                    title="End game"
+                    className="flex h-14 shrink-0 items-center justify-center rounded-2xl bg-white/[0.06] px-4 text-white/60 ring-1 ring-white/15 transition-all hover:bg-rose-500/15 hover:text-rose-100 hover:ring-rose-300/40 active:scale-[0.98]"
+                  >
+                    <Flag className="h-4 w-4" />
+                  </button>
                   <button
                     type="button"
                     onClick={onToggleAutoDeal}
@@ -898,7 +983,11 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
               </div>
             ) : (
               <p className="w-full text-center text-sm text-white/45 sm:text-right">
-                {me?.folded && state.handInProgress
+                {me && !me.hasCards && state.handInProgress && iAmBusted
+                  ? iCanRebuy ? "You're busted · rebuy to play the next hand" : "You're out of chips · watching"
+                  : me && !me.hasCards && state.handInProgress && me.sittingOut
+                    ? "You're sitting out · sit in to play the next hand"
+                  : me?.folded && state.handInProgress
                   ? "You folded · watching the hand"
                   : me?.allIn && state.handInProgress
                     ? "You're all in · good luck"

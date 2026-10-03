@@ -29,7 +29,7 @@ export interface SeatAction {
 
 export interface PokerLogEntry {
   id: number
-  kind: "hand" | "blinds-up" | "sb" | "bb" | "fold" | "check" | "call" | "bet" | "raise" | "all-in" | "street" | "show" | "win" | "timeout"
+  kind: "hand" | "blinds-up" | "rebuy" | "sit-out" | "sit-in" | "sb" | "bb" | "fold" | "check" | "call" | "bet" | "raise" | "all-in" | "street" | "show" | "win" | "timeout"
   playerId?: string
   name?: string
   amount?: number
@@ -51,6 +51,8 @@ const DISCONNECT_FOLD_MS = 10000
 /** Bots take a human-looking beat to think. */
 const BOT_THINK_MS = 1300
 const BOT_THINK_JITTER_MS = 1100
+/** A short beat before dealing once a rebuy or sit-in makes a hand possible again. */
+const RESUME_DEAL_MS = 2000
 const BOT_NAMES = ["Ace", "Maverick", "Lucky", "Duchess", "Slim", "Rosie", "Tex", "Vegas"]
 
 export interface PokerSettings {
@@ -58,6 +60,9 @@ export interface PokerSettings {
   smallBlind: number
   blindIncrease: number
   turnTimeLimit: number
+  rebuys: boolean
+  /** Rebuys allowed per player; 0 means unlimited. */
+  rebuyCap: number
 }
 
 export interface Player {
@@ -74,6 +79,8 @@ export interface Player {
   isDealer: boolean
   lastAction: SeatAction | null
   isBot?: boolean
+  rebuys: number
+  sittingOut: boolean
 }
 
 export interface WinnerInfo {
@@ -130,6 +137,8 @@ export interface PublicPlayer {
   holeCards: number[] | null
   lastAction: SeatAction | null
   isBot?: boolean
+  rebuys: number
+  sittingOut: boolean
 }
 
 export interface PublicGameState {
@@ -173,6 +182,10 @@ export type ClientMessage =
   | { type: "all-in" }
   | { type: "next-hand" }
   | { type: "toggle-auto-deal" }
+  | { type: "set-rebuys"; enabled: boolean; cap: number }
+  | { type: "rebuy" }
+  | { type: "toggle-sit-out" }
+  | { type: "end-game" }
 
 export type ServerMessage =
   | { type: "state"; state: PublicGameState }
@@ -237,6 +250,20 @@ function getHighestBet(state: GameState): number {
   return max
 }
 
+/** Can be dealt into the next hand. */
+function isDealable(p: Player): boolean {
+  return p.chips > 0 && !p.sittingOut
+}
+
+function canRebuy(settings: PokerSettings, p: { chips: number; rebuys: number }): boolean {
+  return settings.rebuys && p.chips <= 0 && (settings.rebuyCap === 0 || p.rebuys < settings.rebuyCap)
+}
+
+/** Chips won or lost against everything the player bought in for. */
+function netResult(settings: PokerSettings, p: { chips: number; rebuys: number }): number {
+  return p.chips - settings.startingChips * (1 + p.rebuys)
+}
+
 // ─── Server ──────────────────────────────────────────────────────────────────
 
 class PokerParty implements Party.Server {
@@ -258,7 +285,13 @@ class PokerParty implements Party.Server {
         parsed.log ??= []
         parsed.logSeq ??= 0
         parsed.autoDealPaused ??= false
-        for (const player of Object.values(parsed.players) as Player[]) player.lastAction ??= null
+        parsed.settings.rebuys ??= false
+        parsed.settings.rebuyCap ??= 0
+        for (const player of Object.values(parsed.players) as Player[]) {
+          player.lastAction ??= null
+          player.rebuys ??= 0
+          player.sittingOut ??= false
+        }
         this.state = parsed
         for (const player of Object.values(this.state!.players) as Player[]) {
           player.connected = Boolean(player.isBot)
@@ -312,6 +345,8 @@ class PokerParty implements Party.Server {
         holeCards: showCards ? p.holeCards : null,
         lastAction: p.lastAction,
         isBot: p.isBot,
+        rebuys: p.rebuys,
+        sittingOut: p.sittingOut,
       }
     }
 
@@ -412,18 +447,26 @@ class PokerParty implements Party.Server {
     if (!this.state) return
     const s = this.state
 
-    // Count alive players (have chips)
+    // Busted bots buy back in on their own when the table allows it
+    for (const id of s.seatOrder) {
+      const p = s.players[id]
+      if (p?.isBot && canRebuy(s.settings, p)) this.rebuy(p)
+    }
+
+    // Count players who can be dealt in (have chips, not sitting out)
     const aliveSeatIndices: number[] = []
     for (let i = 0; i < s.seatOrder.length; i++) {
       const p = s.players[s.seatOrder[i]]
-      if (p && p.chips > 0) {
+      if (p && isDealable(p)) {
         aliveSeatIndices.push(i)
       }
     }
 
     if (aliveSeatIndices.length < 2) {
-      s.status = "finished"
+      // Nobody left who could still play ends the game; otherwise wait for a rebuy or a sit-in.
+      if (this.isGameOver()) s.status = "finished"
       s.handInProgress = false
+      s.pending = null
       return
     }
 
@@ -456,7 +499,7 @@ class PokerParty implements Party.Server {
         p.holeCards = []
         p.currentBet = 0
         p.totalBetThisHand = 0
-        p.folded = p.chips <= 0  // auto-fold eliminated players
+        p.folded = !isDealable(p)  // deal out busted and sitting-out players
         p.allIn = false
         p.isDealer = false
         p.lastAction = null
@@ -521,6 +564,39 @@ class PokerParty implements Party.Server {
     if (p.chips === 0) {
       p.allIn = true
     }
+  }
+
+  /** The game ends once fewer than two players have chips or could still buy back in. */
+  isGameOver(): boolean {
+    const s = this.state!
+    const live = s.seatOrder.filter((id) => {
+      const p = s.players[id]
+      return p && (p.chips > 0 || canRebuy(s.settings, p))
+    })
+    return live.length < 2
+  }
+
+  rebuy(p: Player) {
+    const s = this.state!
+    p.chips = s.settings.startingChips
+    p.rebuys += 1
+    this.addLog({ kind: "rebuy", playerId: p.id, name: p.name, amount: p.chips })
+  }
+
+  /** At least two players would be dealt in (busted bots rebuy at the deal). */
+  readyToDeal(): boolean {
+    const s = this.state!
+    return s.seatOrder.filter((id) => {
+      const p = s.players[id]
+      return p && (isDealable(p) || (p.isBot && canRebuy(s.settings, p)))
+    }).length >= 2
+  }
+
+  /** Between hands with enough players again: deal soon, unless the host paused dealing. */
+  resumeDealing() {
+    const s = this.state!
+    if (s.status !== "playing" || s.handInProgress || s.pending || s.autoDealPaused || s.handNumber === 0) return
+    if (this.readyToDeal()) this.schedule("next-hand", RESUME_DEAL_MS)
   }
 
   /** One player is left in the hand: let the last fold land, then push them the pot. */
@@ -928,10 +1004,9 @@ class PokerParty implements Party.Server {
       this.addLog({ kind: "win", playerId: w.playerId, name: w.playerName, amount: w.amount, hand: w.handResult?.description })
     }
 
-    const playersWithChips = s.seatOrder.filter((id) => s.players[id]?.chips > 0)
-    if (playersWithChips.length <= 1) {
+    if (this.isGameOver()) {
       s.status = "finished"
-    } else if (!s.autoDealPaused) {
+    } else if (!s.autoDealPaused && this.readyToDeal()) {
       this.schedule("next-hand", NEXT_HAND_MS)
     }
 
@@ -1094,6 +1169,8 @@ class PokerParty implements Party.Server {
           smallBlind: Math.max(1, Math.min(500, smallBlind)),
           blindIncrease: Math.max(0, Math.min(50, blindIncrease)),
           turnTimeLimit: Math.max(0, Math.min(120, turnTimeLimit)),
+          rebuys: false,
+          rebuyCap: 0,
         },
         deck: [],
         communityCards: [],
@@ -1188,6 +1265,8 @@ class PokerParty implements Party.Server {
             seatIndex,
             isDealer: false,
             lastAction: null,
+            rebuys: 0,
+            sittingOut: false,
           }
 
           this.state.players[sender.id] = player
@@ -1270,6 +1349,8 @@ class PokerParty implements Party.Server {
             isDealer: false,
             lastAction: null,
             isBot: true,
+            rebuys: 0,
+            sittingOut: false,
           }
           this.state.seatOrder.push(id)
           await this.saveState()
@@ -1380,9 +1461,17 @@ class PokerParty implements Party.Server {
             this.state.handNumber = 0
             for (const id of this.state.seatOrder) {
               const p = this.state.players[id]
-              if (p) p.chips = this.state.settings.startingChips
+              if (p) {
+                p.chips = this.state.settings.startingChips
+                p.rebuys = 0
+                p.sittingOut = false
+              }
             }
             this.state.dealerIndex = this.state.seatOrder.length - 1
+          }
+          if (!this.readyToDeal() && !this.isGameOver()) {
+            this.send(sender, { type: "error", message: "Waiting for players to rebuy or sit back in" })
+            return
           }
           this.startNewHand()
           await this.saveState()
@@ -1400,9 +1489,73 @@ class PokerParty implements Party.Server {
           if (s.autoDealPaused && s.pending?.step === "next-hand") {
             s.pending = null
             this.room.storage.deleteAlarm()
-          } else if (!s.autoDealPaused && !s.handInProgress && !s.pending && s.status === "playing" && s.handNumber > 0) {
+          } else if (!s.autoDealPaused && !s.handInProgress && !s.pending && s.status === "playing" && s.handNumber > 0 && this.readyToDeal()) {
             this.schedule("next-hand", NEXT_HAND_MS)
           }
+          await this.saveState()
+          this.broadcastState()
+          break
+        }
+
+        case "set-rebuys": {
+          if (sender.id !== this.state.hostId) {
+            this.send(sender, { type: "error", message: "Only the host can change rebuys" })
+            return
+          }
+          if (this.state.status !== "waiting") {
+            this.send(sender, { type: "error", message: "Game already started" })
+            return
+          }
+          const cap = Math.floor(Number(data.cap))
+          this.state.settings.rebuys = Boolean(data.enabled)
+          this.state.settings.rebuyCap = Number.isFinite(cap) ? Math.max(0, Math.min(20, cap)) : 0
+          await this.saveState()
+          this.broadcastState()
+          break
+        }
+
+        case "rebuy": {
+          const p = this.state.players[sender.id]
+          if (!p || this.state.status !== "playing") return
+          if (this.state.handInProgress && p.holeCards.length > 0 && !p.folded) {
+            this.send(sender, { type: "error", message: "Wait for the hand to finish" })
+            return
+          }
+          if (!canRebuy(this.state.settings, p)) {
+            this.send(sender, { type: "error", message: this.state.settings.rebuys && p.chips <= 0 ? "No rebuys left" : "Rebuys aren't available" })
+            return
+          }
+          this.rebuy(p)
+          this.resumeDealing()
+          await this.saveState()
+          this.broadcastState()
+          break
+        }
+
+        case "toggle-sit-out": {
+          const p = this.state.players[sender.id]
+          if (!p || this.state.status !== "playing") return
+          // Takes effect from the next deal; a hand already dealt to them plays out.
+          p.sittingOut = !p.sittingOut
+          this.addLog({ kind: p.sittingOut ? "sit-out" : "sit-in", playerId: p.id, name: p.name })
+          if (!p.sittingOut) this.resumeDealing()
+          await this.saveState()
+          this.broadcastState()
+          break
+        }
+
+        case "end-game": {
+          if (sender.id !== this.state.hostId) {
+            this.send(sender, { type: "error", message: "Only the host can end the game" })
+            return
+          }
+          if (this.state.status !== "playing" || this.state.handInProgress) {
+            this.send(sender, { type: "error", message: "Wait for the hand to finish" })
+            return
+          }
+          this.state.status = "finished"
+          this.state.pending = null
+          await this.room.storage.deleteAlarm()
           await this.saveState()
           this.broadcastState()
           break
@@ -1544,10 +1697,12 @@ class PokerParty implements Party.Server {
       if (!match) return new Response("Not found", { status: 404 })
       const finished = this.state?.status === "finished"
       const remaining = finished ? Object.values(this.state!.players) : []
-      const highestChips = remaining.length > 0 ? Math.max(...remaining.map((player) => player.chips)) : null
-      const winnerIds = highestChips === null
+      // Rank by net result so rebuys don't count as winnings
+      const net = (player: Player) => netResult(this.state!.settings, player)
+      const best = remaining.length > 0 ? Math.max(...remaining.map(net)) : null
+      const winnerIds = best === null
         ? []
-        : remaining.filter((player) => player.chips === highestChips).map((player) => player.id)
+        : remaining.filter((player) => net(player) === best).map((player) => player.id)
       return Response.json({ finished, scored: true, winnerIds })
     } catch {
       return new Response("Not found", { status: 404 })

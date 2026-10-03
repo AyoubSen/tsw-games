@@ -1,6 +1,7 @@
 import { ArrowLeft, ArrowRight, Bot, Crown, Pause, Play, ScrollText, WifiOff, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { evaluateBestHand } from "@/lib/poker/handEvaluator"
+import { calculatePots } from "@/lib/poker/potCalculator"
 import { cn } from "@/lib/utils"
 import type { PokerLogEntry, PublicGameState, PublicPlayer, SeatAction } from "../../../../party/poker"
 import { BettingControls } from "./v2/BettingControlsV2"
@@ -25,6 +26,9 @@ export interface PokerGameProps {
   onToggleAutoDeal: () => void
   onLeave: () => void
 }
+
+const potLabel = (index: number, short = false) =>
+  index === 0 ? (short ? "Main" : "Main pot") : short ? `Side ${index}` : `Side pot ${index}`
 
 type PreAction = "check-fold" | "call-any" | "check"
 
@@ -341,6 +345,11 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
   const winningCards = new Set(state.winners.flatMap((w) => w.handResult?.cards ?? []))
   const highlightBoard = handOver && winningCards.size > 0
   const collected = state.pot - order.reduce((sum, id) => sum + (state.players[id]?.currentBet ?? 0), 0)
+  // Split what is already in the middle into main and side pots. Bets still in front of seats join next sweep.
+  const pots = calculatePots(order.flatMap((id) => {
+    const p = state.players[id]
+    return p ? [{ playerId: id, amount: p.totalBetThisHand - p.currentBet, folded: p.folded, allIn: p.allIn && p.currentBet === 0 }] : []
+  }))
 
   const myCards = state.myHoleCards
   const iHaveCards = myCards.length === 2
@@ -413,14 +422,26 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
   const showGameOver = state.status === "finished"
 
   // ---- Status line under the board ----
+  const payouts = (() => {
+    const byPot = new Map<number, typeof state.winners>()
+    for (const w of state.winners) byPot.set(w.potIndex, [...(byPot.get(w.potIndex) ?? []), w])
+    if (byPot.size < 2) return []
+    return [...byPot.entries()].sort(([a], [b]) => a - b).map(([index, ws]) => ({
+      label: potLabel(index),
+      names: ws.map((w) => (w.playerId === playerId ? "You" : w.playerName)).join(" & "),
+      amount: ws.reduce((sum, w) => sum + w.amount, 0),
+      hand: ws[0].handResult?.description ?? "",
+    }))
+  })()
+
   const headline = (() => {
     if (handOver) {
       const first = state.winners[0]
       if (!first) return null
       const split = new Set(state.winners.map((w) => w.playerId)).size > 1
       const who = first.playerId === playerId ? "You" : first.playerName
-      if (split) return { big: "Split pot", small: first.handResult?.description ?? "" }
-      return { big: `${who} ${who === "You" ? "win" : "wins"} ${state.winners.reduce((sum, w) => sum + w.amount, 0).toLocaleString()}`, small: first.handResult?.description ?? "Everyone else folded" }
+      if (split) return { big: payouts.length ? "Pots awarded" : "Split pot", small: payouts.length ? "" : first.handResult?.description ?? "" }
+      return { big: `${who} ${who === "You" ? "win" : "wins"} ${state.winners.reduce((sum, w) => sum + w.amount, 0).toLocaleString()}`, small: payouts.length ? "" : first.handResult?.description ?? "Everyone else folded" }
     }
     if (showdown) return { big: "Showdown", small: "" }
     return null
@@ -481,6 +502,18 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
                 <div key={`${state.handNumber}-${headline.big}`} className="poker-pop flex flex-col items-center rounded-2xl border border-amber-300/40 bg-black/70 px-4 py-1.5 text-center shadow-[0_0_30px_rgba(252,211,77,0.25)] backdrop-blur">
                   <span className={cn("font-black tracking-tight text-amber-200", compact ? "text-sm" : "text-lg")}>{headline.big}</span>
                   {headline.small && <span className="text-[11px] font-medium text-white/70">{headline.small}</span>}
+                  {handOver && payouts.length > 0 && (
+                    <div className="mt-1 flex flex-col gap-0.5 border-t border-white/10 pt-1 text-[11px]">
+                      {payouts.map((payout) => (
+                        <div key={payout.label} className="flex items-baseline justify-center gap-1.5 whitespace-nowrap">
+                          <span className="font-bold uppercase tracking-wider text-white/45">{payout.label}</span>
+                          <span className="font-semibold text-white/85">{payout.names}</span>
+                          <span className="font-mono font-bold tabular-nums text-amber-200">+{payout.amount.toLocaleString()}</span>
+                          {payout.hand && <span className="text-white/50">· {payout.hand}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <span className="text-[10px] font-bold uppercase tracking-[0.35em] text-white/45">{state.handInProgress ? STREET_LABEL[state.bettingRound] : ""}</span>
@@ -512,12 +545,24 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
             </div>
 
             {/* Pot */}
-            {collected > 0 && (
+            {collected > 0 && pots.length < 2 && (
               <div key={collected} className="poker-pot-in absolute z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1" style={{ left: potSpot.x, top: potSpot.y, animationDelay: reduced ? "0ms" : `${SWEEP_MS - 80}ms` }}>
                 <ChipStack amount={collected} chip={compact ? 16 : 22} label="none" />
                 <span className="rounded-full bg-black/65 px-2.5 py-0.5 font-mono text-xs font-bold tabular-nums text-amber-100 ring-1 ring-amber-200/25">
                   Pot {state.pot.toLocaleString()}
                 </span>
+              </div>
+            )}
+            {collected > 0 && pots.length >= 2 && (
+              <div key={collected} className={cn("poker-pot-in absolute z-10 flex -translate-x-1/2 -translate-y-1/2 items-end", compact ? "gap-2" : "gap-4")} style={{ left: potSpot.x, top: potSpot.y, animationDelay: reduced ? "0ms" : `${SWEEP_MS - 80}ms` }}>
+                {pots.map((pot, index) => (
+                  <div key={index} className="flex flex-col items-center gap-1">
+                    <ChipStack amount={pot.amount} chip={compact ? 13 : 18} label="none" />
+                    <span className={cn("whitespace-nowrap rounded-full bg-black/65 px-2 py-0.5 font-mono text-[11px] font-bold tabular-nums ring-1", index === 0 ? "text-amber-100 ring-amber-200/25" : "text-sky-100 ring-sky-200/25")}>
+                      {potLabel(index, true)} {pot.amount.toLocaleString()}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
 

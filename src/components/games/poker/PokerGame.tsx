@@ -26,6 +26,14 @@ export interface PokerGameProps {
   onLeave: () => void
 }
 
+type PreAction = "check-fold" | "call-any" | "check"
+
+const PRE_ACTIONS: { key: PreAction; label: string }[] = [
+  { key: "check-fold", label: "Check / Fold" },
+  { key: "call-any", label: "Call any" },
+  { key: "check", label: "Check" },
+]
+
 interface Pt { x: number; y: number }
 interface Ghost { id: string; from: Pt; to: Pt; amount: number; delay: number }
 
@@ -375,6 +383,19 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
   // ---- Turn ----
   const isMyTurn = state.currentPlayerId === playerId
   const canAct = isMyTurn && state.handInProgress && !!me && !me.folded && !me.allIn && connected && !dealLock
+
+  // ---- Advance actions, queued before your turn ----
+  const [preAction, setPreAction] = useState<PreAction | null>(null)
+  const canQueue = !isMyTurn && state.handInProgress && !!me && me.hasCards && !me.folded && !me.allIn && connected
+  const toCall = me ? state.currentBetToMatch - me.currentBet : 0
+  useEffect(() => setPreAction(null), [state.handNumber])
+  useEffect(() => {
+    if (!canAct || !preAction || !me) return
+    setPreAction(null)
+    if (toCall <= 0) onCheck()
+    else if (preAction === "check-fold") onFold()
+    else if (preAction === "call-any") (toCall >= me.chips ? onAllIn : onCall)()
+  }, [canAct]) // eslint-disable-line react-hooks/exhaustive-deps
   const turnTotal = state.settings.turnTimeLimit * 1000
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
@@ -801,6 +822,34 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
                   onRaise={onRaise}
                   onAllIn={onAllIn}
                 />
+              </div>
+            ) : canQueue && !dealLock ? (
+              <div className="w-full sm:max-w-[520px]">
+                <div className="mb-1.5 px-1 text-[11px] font-bold uppercase tracking-[0.2em] text-white/40">
+                  {state.currentPlayerId
+                    ? <>Waiting for <span className="text-white/70">{nameOf(state.currentPlayerId)}</span>{secondsLeft !== null && <span className="ml-1.5 font-mono">{secondsLeft}s</span>}</>
+                    : "Dealing…"}
+                </div>
+                <div className="flex gap-2">
+                  {PRE_ACTIONS.map(({ key, label }) => {
+                    const on = preAction === key
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => setPreAction(on ? null : key)}
+                        className={cn(
+                          "flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl px-3 text-xs font-bold uppercase tracking-wider ring-1 transition-all active:scale-[0.98]",
+                          on ? "bg-amber-300/15 text-amber-200 ring-amber-300/60" : "bg-white/[0.05] text-white/60 ring-white/12 hover:bg-white/[0.09] hover:text-white",
+                        )}
+                      >
+                        <span className={cn("h-3 w-3 shrink-0 rounded-[4px] ring-1", on ? "bg-amber-300 ring-amber-200" : "ring-white/30")} />
+                        <span className="truncate">{label}</span>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             ) : (
               <p className="w-full text-center text-sm text-white/45 sm:text-right">

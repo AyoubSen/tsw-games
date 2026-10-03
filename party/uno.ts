@@ -20,6 +20,7 @@ import { isBotLevel, type BotLevel } from "../src/lib/botLevel"
 import { isReaction, pickReaction, takeReactionSlot, type Reaction, type ReactionMessage } from "../src/lib/reactions"
 import { canControlGame, markConnected, markDisconnected, nextHost, presentCount } from "./shared/presence"
 import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight"
+import { clearSpectators, dropSpectator, MAX_SPECTATORS, publicSpectators, type PublicSpectator, type Spectator } from "./shared/spectators"
 
 const UNO_GAME_ID = "uno" as GameNightGameId
 const PLAYER_TTL_MS = 30 * 60 * 1000
@@ -127,6 +128,8 @@ export interface UnoGameState {
   botJump?: { actionId: number; at: number | null } | null
   actionSeq: number
   log: UnoAction[]
+  /** People who joined mid-game; the host can seat them between hands. */
+  spectators?: Record<string, Spectator>
 }
 
 export interface PublicUnoGameState {
@@ -152,6 +155,7 @@ export interface PublicUnoGameState {
   pendingChallengeBy: string | null
   topPlayerId: string | null
   log: UnoAction[]
+  spectators: PublicSpectator[]
 }
 
 type ClientAction =
@@ -170,6 +174,7 @@ type ClientAction =
   | { type: "challenge" }
   | { type: "set-rule"; rule: keyof UnoRules; enabled: boolean }
   | { type: "react"; reaction: Reaction }
+  | { type: "seat-spectator"; playerId: string }
 
 export type ServerMessage = { type: "state"; state: PublicUnoGameState } | { type: "error"; message: string } | ReactionMessage
 
@@ -185,6 +190,7 @@ function parseAction(message: string): ClientAction | null {
   if (data.type === "catch") return typeof data.playerId === "string" ? { type: "catch", playerId: data.playerId } : null
   if (data.type === "set-bot-level") return typeof data.playerId === "string" && isBotLevel(data.level) ? { type: "set-bot-level", playerId: data.playerId, level: data.level } : null
   if (data.type === "remove-player") return typeof data.playerId === "string" ? { type: "remove-player", playerId: data.playerId } : null
+  if (data.type === "seat-spectator") return typeof data.playerId === "string" ? { type: "seat-spectator", playerId: data.playerId } : null
   if (data.type !== "play" || typeof data.cardId !== "string" || !parseUnoCardId(data.cardId)) return null
   if (data.color !== undefined && !isUnoColor(data.color)) return null
   if (data.targetId !== undefined && typeof data.targetId !== "string") return null
@@ -282,6 +288,7 @@ class UnoParty implements Party.Server {
     this.state.unoExposed ??= []
     this.state.rules = { ...DEFAULT_UNO_RULES, ...this.state.rules }
     this.state.pendingDraw ??= 0
+    clearSpectators(this.state)
     for (const player of Object.values(this.state.players)) {
       if (player.isBot) continue
       player.connected = false
@@ -578,6 +585,7 @@ class UnoParty implements Party.Server {
         const { card: _hidden, ...rest } = action
         return rest
       }),
+      spectators: publicSpectators(this.state.spectators),
     }
   }
 
@@ -703,6 +711,11 @@ class UnoParty implements Party.Server {
     const action = parseAction(message)
     if (!action) return this.error(sender, "Invalid action")
     if (action.type !== "join" && !this.authenticated(sender)) return this.error(sender, "Invalid player session")
+    // Spectators only watch: the one thing they can do besides joining is leave.
+    if (action.type !== "join" && this.state.spectators?.[sender.id]) {
+      if (action.type === "leave") { dropSpectator(this.state, sender.id); await this.save(); this.broadcast() }
+      return
+    }
 
     if (action.type === "join") {
       const token = this.connectionTokens.get(sender)
@@ -723,7 +736,21 @@ class UnoParty implements Party.Server {
         }
         await this.save(); this.broadcast(); return
       }
-      if (this.state.status !== "waiting") return this.error(sender, "Game already started")
+      const watching = this.state.spectators?.[sender.id]
+      if (watching) {
+        if (this.state.playerTokens[sender.id] !== token) return this.error(sender, "Invalid player session")
+        watching.name = member?.name ?? (action.name.trim().slice(0, 20) || watching.name)
+        await this.save(); this.broadcast(); return
+      }
+      if (this.state.status !== "waiting") {
+        const name = member?.name ?? action.name.trim().slice(0, 20)
+        if (!name) return this.error(sender, "Enter a player name")
+        this.state.spectators ??= {}
+        if (Object.keys(this.state.spectators).length >= MAX_SPECTATORS) return this.error(sender, "Too many people are watching")
+        this.state.spectators[sender.id] = { id: sender.id, name, joinedAt: Date.now() }
+        this.state.playerTokens[sender.id] = token
+        await this.save(); this.broadcast(); return
+      }
       const cutoff = Date.now() - PLAYER_TTL_MS
       for (const [id, player] of Object.entries(this.state.players)) {
         if (player.connected === false && player.disconnectedAt && player.disconnectedAt <= cutoff) {
@@ -849,6 +876,18 @@ class UnoParty implements Party.Server {
       await this.save(); this.broadcast(); return
     }
 
+    if (action.type === "seat-spectator") {
+      if (!canControlGame(this.state.players, this.state.hostId, sender.id)) return this.error(sender, "Only the host can seat spectators")
+      if (this.state.status === "playing") return this.error(sender, "Seat them once this hand is over")
+      const spectator = this.state.spectators?.[action.playerId]
+      if (!spectator) return this.error(sender, "They're no longer watching")
+      if (this.state.seatOrder.length >= this.state.maxPlayers) return this.error(sender, "No empty seats")
+      delete this.state.spectators![spectator.id]
+      this.state.players[spectator.id] = { id: spectator.id, name: spectator.name, hand: [], joinedAt: Date.now(), connected: true, disconnectedAt: null }
+      this.state.seatOrder.push(spectator.id)
+      await this.save(); this.broadcast(); return
+    }
+
     if (action.type === "restart") {
       if (this.state.status !== "finished" || !canControlGame(this.state.players, this.state.hostId, sender.id)) return
       for (const player of Object.values(this.state.players)) {
@@ -905,8 +944,10 @@ class UnoParty implements Party.Server {
   }
 
   async onClose(connection: Party.Connection) {
-    if (!this.state?.players[connection.id]) return
+    if (!this.state) return
     if (Array.from(this.room.getConnections()).some((candidate) => candidate.id === connection.id && candidate !== connection)) return
+    if (dropSpectator(this.state, connection.id)) { await this.save(); this.broadcast(); return }
+    if (!this.state.players[connection.id]) return
     markDisconnected(this.state.players, connection.id)
     this.state.players[connection.id]!.disconnectedAt = Date.now()
     if (this.state.status === "playing" && this.state.currentPlayerId === connection.id) {

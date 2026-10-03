@@ -136,6 +136,7 @@ export function useMultiplayerUno() {
     addBot: () => isHost && send({ type: "add-bot" }),
     removePlayer: (playerId: string) => isHost && send({ type: "remove-player", playerId }),
     setBotLevel: (playerId: string, level: BotLevel) => isHost && send({ type: "set-bot-level", playerId, level }),
+    seatSpectator: (playerId: string) => isHost && send({ type: "seat-spectator", playerId }),
     disconnect,
     abandonReconnect,
   }

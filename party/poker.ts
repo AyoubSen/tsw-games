@@ -16,6 +16,7 @@ import {
   validateGameNightConnection,
   type GameNightMember,
 } from "./shared/gameNight"
+import { clearSpectators, dropSpectator, MAX_SPECTATORS, publicSpectators, type PublicSpectator, type Spectator } from "./shared/spectators"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -162,6 +163,8 @@ export interface GameState {
   muckable: string[]
   /** The last hands, oldest first; the newest may still be in play. */
   history: HandRecord[]
+  /** People who joined mid-game; the host can seat them between hands. */
+  spectators?: Record<string, Spectator>
 }
 
 export interface PublicPlayer {
@@ -214,6 +217,7 @@ export interface PublicGameState {
   autoDealPaused: boolean
   showOffer: { playerId: string; until: number } | null
   muckable: string[]
+  spectators: PublicSpectator[]
 }
 
 export type ClientMessage =
@@ -237,6 +241,7 @@ export type ClientMessage =
   | { type: "show-cards"; cards: number[] }
   | { type: "muck" }
   | { type: "react"; reaction: Reaction }
+  | { type: "seat-spectator"; playerId: string }
 
 export type ServerMessage =
   | { type: "state"; state: PublicGameState }
@@ -346,6 +351,7 @@ class PokerParty implements Party.Server {
         parsed.showOffer ??= null
         parsed.muckable ??= []
         parsed.history ??= []
+        clearSpectators(parsed)
         parsed.settings.rebuys ??= false
         parsed.settings.rebuyCap ??= 0
         for (const player of Object.values(parsed.players) as Player[]) {
@@ -449,6 +455,7 @@ class PokerParty implements Party.Server {
       autoDealPaused: s.autoDealPaused,
       showOffer: s.showOffer,
       muckable: s.muckable,
+      spectators: publicSpectators(s.spectators),
     }
   }
 
@@ -1547,6 +1554,16 @@ class PokerParty implements Party.Server {
         return
       }
 
+      // Spectators only watch: the one thing they can do besides joining is leave.
+      if (data.type !== "join" && this.state.spectators?.[sender.id]) {
+        if (data.type === "leave") {
+          dropSpectator(this.state, sender.id)
+          await this.saveState()
+          this.broadcastState()
+        }
+        return
+      }
+
       switch (data.type) {
         case "join": {
 		  const playerToken = this.connectionTokens.get(sender)
@@ -1561,8 +1578,27 @@ class PokerParty implements Party.Server {
 			this.send(sender, { type: "error", message: "Invalid player session" })
 			return
 		  }
+          const watching = this.state.spectators?.[sender.id]
+          if (watching) {
+            if (expectedToken !== playerToken) {
+              this.send(sender, { type: "error", message: "Invalid player session" })
+              return
+            }
+            watching.name = name
+            await this.saveState()
+            this.broadcastState()
+            return
+          }
           if (this.state.status === "playing" && !this.state.players[sender.id]) {
-            this.send(sender, { type: "error", message: "Game already in progress" })
+            this.state.spectators ??= {}
+            if (Object.keys(this.state.spectators).length >= MAX_SPECTATORS) {
+              this.send(sender, { type: "error", message: "Too many people are watching" })
+              return
+            }
+            this.state.spectators[sender.id] = { id: sender.id, name, joinedAt: Date.now() }
+            this.state.playerTokens[sender.id] = playerToken
+            await this.saveState()
+            this.broadcastState()
             return
           }
 
@@ -1646,6 +1682,48 @@ class PokerParty implements Party.Server {
           this.state.status = "playing"
           this.state.dealerIndex = this.state.seatOrder.length - 1 // Will advance to 0 in startNewHand
           this.startNewHand()
+          await this.saveState()
+          this.broadcastState()
+          break
+        }
+
+        case "seat-spectator": {
+          if (sender.id !== this.state.hostId) {
+            this.send(sender, { type: "error", message: "Only the host can seat spectators" })
+            return
+          }
+          if (this.state.handInProgress) {
+            this.send(sender, { type: "error", message: "Seat them once this hand is over" })
+            return
+          }
+          const spectator = this.state.spectators?.[data.playerId]
+          if (!spectator) {
+            this.send(sender, { type: "error", message: "They're no longer watching" })
+            return
+          }
+          if (this.state.seatOrder.length >= 8) {
+            this.send(sender, { type: "error", message: "No empty seats" })
+            return
+          }
+          delete this.state.spectators![spectator.id]
+          this.state.players[spectator.id] = {
+            id: spectator.id,
+            name: spectator.name,
+            chips: this.state.settings.startingChips,
+            holeCards: [],
+            currentBet: 0,
+            totalBetThisHand: 0,
+            folded: false,
+            allIn: false,
+            connected: true,
+            seatIndex: this.state.seatOrder.length,
+            isDealer: false,
+            lastAction: null,
+            rebuys: 0,
+            sittingOut: false,
+          }
+          this.state.seatOrder.push(spectator.id)
+          this.resumeDealing()
           await this.saveState()
           this.broadcastState()
           break
@@ -2008,6 +2086,13 @@ class PokerParty implements Party.Server {
 	  this.connectionTokens.delete(conn)
 	  return
 	}
+
+    if (this.isAuthenticated(conn) && dropSpectator(this.state, conn.id)) {
+      await this.saveState()
+      this.broadcastState()
+      this.connectionTokens.delete(conn)
+      return
+    }
 
     const player = this.state.players[conn.id]
     if (!player || !this.isAuthenticated(conn)) return

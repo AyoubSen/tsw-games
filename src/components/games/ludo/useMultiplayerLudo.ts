@@ -197,6 +197,8 @@ export function useMultiplayerLudo() {
     setQuick: (quick: boolean) =>
       isHost && sendNow({ type: "set-quick", quick }),
     restartGame: () => isHost && sendNow({ type: "restart" }),
+    seatSpectator: (playerId: string) =>
+      isHost && sendNow({ type: "seat-spectator", playerId }),
     react: (reaction: Reaction) => sendNow({ type: "react", reaction }),
     disconnect,
     abandonReconnect,

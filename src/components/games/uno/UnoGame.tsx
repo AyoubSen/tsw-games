@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Crown, Layers, RotateCcw, Trophy, WifiOff, X } from "lucide-react"
+import { ArrowLeft, Bot, Crown, Eye, Layers, RotateCcw, Trophy, WifiOff, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import {
   canJumpInUno,
@@ -22,6 +22,10 @@ export interface UnoGameProps {
   state: PublicUnoGameState
   playerId: string
   isHost: boolean
+  /** Joined mid-game: sees the table, holds no cards and can't act. */
+  spectating: boolean
+  /** The Watching panel for the top bar. */
+  watching: ReactNode
   roomLabel: string
   message: string | null
   connected: boolean
@@ -180,7 +184,7 @@ function useReducedMotion() {
   return reduced
 }
 
-export function UnoGame({ state, playerId, isHost, roomLabel, message, connected, onPlayCard, onDrawCard, onPass, onCallUno, onCatch, onChallenge, reactions, onReact, onRestart, onLeave }: UnoGameProps) {
+export function UnoGame({ state, playerId, isHost, spectating, watching, roomLabel, message, connected, onPlayCard, onDrawCard, onPass, onCallUno, onCatch, onChallenge, reactions, onReact, onRestart, onLeave }: UnoGameProps) {
   const reduced = useReducedMotion()
   const rootRef = useRef<HTMLDivElement>(null)
   const [tableRef, table] = useElementSize<HTMLDivElement>()
@@ -428,7 +432,7 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
   // You can call during your own play's replay; others can catch once it has played out.
   const exposed = state.status === "playing" ? state.unoExposedIds : []
   const mustCall = connected && exposed.includes(playerId)
-  const canCatch = (id: string) => connected && exposed.includes(id) && !(action?.type === "play" && action.playerId === id)
+  const canCatch = (id: string) => !spectating && connected && exposed.includes(id) && !(action?.type === "play" && action.playerId === id)
 
   const pick = (card: UnoCard) => {
     if ((!canAct || view.drawnCardId) && !isJumpable(card)) return
@@ -603,7 +607,7 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
   const pileW = compact ? 70 : 100
   const pileH = pileW * 1.5
   const pileGap = compact ? 16 : 28
-  const handHeight = crowded ? handCardH + 70 : handCardH + 58
+  const handHeight = spectating ? 16 : crowded ? handCardH + 70 : handCardH + 58
   const bottomReserve = handHeight + 64
 
   return (
@@ -764,8 +768,10 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
             <p className="self-center truncate px-3 text-[11px] text-white/50 xl:hidden">Last: {lastStory.line}</p>
           ) : null}
         </div>
-        <div className="ml-auto shrink-0">
-          <ReactionPicker onReact={onReact} disabled={!connected} side="bottom" align="end" />
+        {/* Above the finish screen, where the host seats spectators between hands. */}
+        <div className="relative z-[60] ml-auto flex shrink-0 items-start gap-2">
+          {watching}
+          {!spectating && <ReactionPicker onReact={onReact} disabled={!connected} side="bottom" align="end" />}
         </div>
       </div>
 
@@ -801,11 +807,17 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
       <div className="absolute inset-x-0 bottom-0 flex flex-col items-center">
         <div className="pointer-events-none relative flex min-h-12 w-full items-center justify-center gap-2 px-3">
           <ReactionBubble bubble={reactions[playerId]} />
-          <div className={cn("items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold", tray ? "hidden sm:flex" : "flex", myTurn ? "border-amber-200/80 bg-amber-300 text-[#1a1406]" : "border-white/10 bg-black/45 text-white/80 backdrop-blur")}>
-            <span>{myTurn ? "Your turn" : "You"}</span>
-            <span className={cn("rounded-full px-1.5", myTurn ? "bg-black/15" : "bg-white/10")}>{rawHand.length}</span>
-            {rawHand.length === 1 && !mustCall && <span className="rounded bg-[#ef3b33] px-1 italic text-[#ffd23f]">UNO!</span>}
-          </div>
+          {spectating ? (
+            <div className="flex items-center gap-2 rounded-full border border-sky-300/40 bg-sky-500/20 px-3 py-1.5 text-xs font-bold text-sky-100 backdrop-blur">
+              <Eye className="size-3.5" />Watching · the host can seat you between hands
+            </div>
+          ) : (
+            <div className={cn("items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold", tray ? "hidden sm:flex" : "flex", myTurn ? "border-amber-200/80 bg-amber-300 text-[#1a1406]" : "border-white/10 bg-black/45 text-white/80 backdrop-blur")}>
+              <span>{myTurn ? "Your turn" : "You"}</span>
+              <span className={cn("rounded-full px-1.5", myTurn ? "bg-black/15" : "bg-white/10")}>{rawHand.length}</span>
+              {rawHand.length === 1 && !mustCall && <span className="rounded bg-[#ef3b33] px-1 italic text-[#ffd23f]">UNO!</span>}
+            </div>
+          )}
           {mustCall && (
             <button
               type="button"

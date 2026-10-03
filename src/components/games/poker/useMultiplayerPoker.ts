@@ -275,6 +275,10 @@ export function useMultiplayerPoker() {
     if (state.isHost) sendNow({ type: "set-bot-level", playerId, level })
   }, [sendNow, state.isHost])
 
+  const seatSpectator = useCallback((playerId: string) => {
+    if (state.isHost) sendNow({ type: "seat-spectator", playerId })
+  }, [sendNow, state.isHost])
+
   const fold = useCallback(() => {
     sendNow({ type: "fold" })
   }, [sendNow])
@@ -347,6 +351,7 @@ export function useMultiplayerPoker() {
     addBot,
     removeBot,
     setBotLevel,
+    seatSpectator,
     fold,
     check,
     call,

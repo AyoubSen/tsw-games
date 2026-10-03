@@ -7,6 +7,7 @@ import { UnoGame } from "@/components/games/uno/UnoGame"
 import { useMultiplayerUno } from "@/components/games/uno/useMultiplayerUno"
 import { Button } from "@/components/ui/button"
 import { BotLevelPicker } from "@/components/multiplayer/BotLevelPicker"
+import { WatchingList, WatchingMenu } from "@/components/multiplayer/Spectators"
 import { GameTopBar, MultiplayerLobby, MultiplayerSetupCard } from "@/components/multiplayer/shared"
 import { UNO_RULE_INFO } from "@/lib/uno"
 import { cn } from "@/lib/utils"
@@ -26,7 +27,8 @@ function UnoPage() {
   const [copied, setCopied] = useState(false)
   const multiplayer = useMultiplayerUno()
   const gameNight = useGameNight()
-  const hasGameState = Boolean(multiplayer.gameState && multiplayer.playerId && multiplayer.gameState.players[multiplayer.playerId])
+  const spectating = Boolean(multiplayer.gameState && multiplayer.playerId && multiplayer.gameState.spectators.some((spectator) => spectator.id === multiplayer.playerId))
+  const hasGameState = Boolean(multiplayer.gameState && multiplayer.playerId && (multiplayer.gameState.players[multiplayer.playerId] || spectating))
   const session = useMultiplayerSession({
     game: "uno", joinGame: multiplayer.joinGame, hasGameState, error: multiplayer.error,
     connectionStatus: multiplayer.connectionStatus, inviteRoomCode: invitedRoom,
@@ -48,6 +50,13 @@ function UnoPage() {
   const players = useMemo(() => multiplayer.gameState?.seatOrder.map((id) => multiplayer.gameState!.players[id]).filter(Boolean) ?? [], [multiplayer.gameState])
   const connectedPlayers = players.filter((player) => player.connected !== false)
   const bots = players.filter((player) => player.isBot)
+  const watching = multiplayer.gameState && multiplayer.playerId ? {
+    spectators: multiplayer.gameState.spectators,
+    playerId: multiplayer.playerId,
+    isHost: multiplayer.isHost,
+    seatBlocked: multiplayer.gameState.status === "playing" ? "Seat them once this hand is over" : players.length >= multiplayer.gameState.maxPlayers ? "No empty seats" : null,
+    onSeat: multiplayer.seatSpectator,
+  } : null
   const create = () => {
     if (!name.trim()) return setMessage("Enter your name first.")
     const code = multiplayer.createGame(name.trim())
@@ -78,6 +87,7 @@ function UnoPage() {
     </MultiplayerSetupCard></main>
   </div>
   if (view === "lobby" && multiplayer.gameState && multiplayer.playerId) return <MultiplayerLobby title="Uno" subtitle="The first player out of cards wins" onBack={leave} players={players} hostId={multiplayer.gameState.hostId} currentPlayerId={multiplayer.playerId} playerDescription={`${connectedPlayers.length} of 8 players`} settings={<div className="space-y-3">
+    {watching && <WatchingList {...watching} />}
     <div className="rounded-2xl border bg-red-500/5 p-4 text-sm"><p className="font-bold">Classic deck</p><p className="text-muted-foreground">7-card hands, call UNO at one card or get caught for +2.</p></div>
     <div className="rounded-2xl border bg-red-500/5 p-4 text-sm">
       <p className="font-bold">House rules</p>
@@ -110,6 +120,6 @@ function UnoPage() {
       </ul>}
     </div>
   </div>} roomCode={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode} copiedRoomCode={copied} onCopyRoomCode={copyInvite} onStart={multiplayer.startGame} onLeave={leave} canStart={connectedPlayers.length >= 2} isHost={multiplayer.isHost} message={message} startLabel="Deal Cards" />
-  if (view === "game" && multiplayer.gameState && multiplayer.playerId) return <UnoGame state={multiplayer.gameState} playerId={multiplayer.playerId} isHost={multiplayer.isHost} roomLabel={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode} message={message} connected={multiplayer.connectionStatus === "connected"} onPlayCard={multiplayer.playCard} onDrawCard={multiplayer.drawCard} onPass={multiplayer.pass} onCallUno={multiplayer.callUno} onCatch={multiplayer.catchUno} onChallenge={multiplayer.challenge} reactions={multiplayer.reactions} onReact={multiplayer.react} onRestart={multiplayer.restartGame} onLeave={leave} />
+  if (view === "game" && multiplayer.gameState && multiplayer.playerId) return <UnoGame state={multiplayer.gameState} playerId={multiplayer.playerId} isHost={multiplayer.isHost} spectating={spectating} watching={watching && <WatchingMenu {...watching} />} roomLabel={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode} message={message} connected={multiplayer.connectionStatus === "connected"} onPlayCard={multiplayer.playCard} onDrawCard={multiplayer.drawCard} onPass={multiplayer.pass} onCallUno={multiplayer.callUno} onCatch={multiplayer.catchUno} onChallenge={multiplayer.challenge} reactions={multiplayer.reactions} onReact={multiplayer.react} onRestart={multiplayer.restartGame} onLeave={leave} />
   return null
 }

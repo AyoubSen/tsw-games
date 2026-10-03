@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Bot, ChevronLeft, ChevronRight, Coffee, Crown, Flag, History as HistoryIcon, Pause, Play, RefreshCw, ScrollText, WifiOff, X } from "lucide-react"
+import { ArrowLeft, ArrowRight, Bot, ChevronLeft, ChevronRight, Coffee, Crown, Eye, Flag, History as HistoryIcon, Pause, Play, RefreshCw, ScrollText, WifiOff, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { BOT_LEVEL_LABELS } from "@/lib/botLevel"
 import { evaluateBestHand } from "@/lib/poker/handEvaluator"
@@ -19,6 +19,10 @@ export interface PokerGameProps {
   history: PublicHandRecord[]
   playerId: string
   isHost: boolean
+  /** Joined mid-game: sees the table, holds no cards and can't act. */
+  spectating: boolean
+  /** The Watching panel for the top bar. */
+  watching: ReactNode
   roomLabel: string
   error: string | null
   connected: boolean
@@ -437,7 +441,7 @@ function SeatPlate({ player, isMe, active, winner, compact, deadline, total, off
   )
 }
 
-export function PokerGame({ state, history, playerId, isHost, roomLabel, error, connected, onFold, onCheck, onCall, onRaise, onAllIn, onNextHand, onToggleAutoDeal, onRebuy, onToggleSitOut, onEndGame, onShowCards, onMuck, reactions, onReact, onLeave }: PokerGameProps) {
+export function PokerGame({ state, history, playerId, isHost, spectating, watching, roomLabel, error, connected, onFold, onCheck, onCall, onRaise, onAllIn, onNextHand, onToggleAutoDeal, onRebuy, onToggleSitOut, onEndGame, onShowCards, onMuck, reactions, onReact, onLeave }: PokerGameProps) {
   const reduced = useReducedMotion()
   const [stageRef, stage] = useElementSize<HTMLDivElement>()
   const geo = tableGeometry(stage.w || 1024, stage.h || 640)
@@ -1016,7 +1020,8 @@ export function PokerGame({ state, history, playerId, isHost, roomLabel, error, 
               <span>History</span>
             </button>
           </div>
-          <ReactionPicker onReact={onReact} disabled={!connected} side="bottom" align="end" className="size-[42px]" />
+          {watching}
+          {!spectating && <ReactionPicker onReact={onReact} disabled={!connected} side="bottom" align="end" className="size-[42px]" />}
           </div>
         </div>
 
@@ -1060,11 +1065,19 @@ export function PokerGame({ state, history, playerId, isHost, roomLabel, error, 
       <div className="relative z-40 shrink-0 border-t border-white/[0.08] bg-black/55 px-3 pb-3 pt-2.5 backdrop-blur-md sm:px-5">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-5">
           <div className="flex min-w-0 items-center justify-between gap-3 sm:w-[260px] sm:shrink-0 sm:flex-col sm:items-start sm:gap-1">
+            {spectating ? (
+              <div className="flex items-center gap-2 text-sky-100">
+                <Eye className="h-4 w-4" />
+                <span className="text-sm font-bold">Watching</span>
+                <span className="text-xs text-white/45">The host can seat you between hands</span>
+              </div>
+            ) : (
             <div className="flex items-baseline gap-2">
               <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40">Stack</span>
               <span className="font-mono text-lg font-black tabular-nums text-amber-200">{(me?.chips ?? 0).toLocaleString()}</span>
               {!!me?.currentBet && <span className="font-mono text-xs tabular-nums text-white/45">+{me.currentBet.toLocaleString()} in</span>}
             </div>
+            )}
             {myHand && !me?.folded && (
               <span className="truncate rounded-full bg-emerald-400/12 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-200 ring-1 ring-emerald-300/25">{myHand}</span>
             )}

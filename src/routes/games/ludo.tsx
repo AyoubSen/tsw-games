@@ -20,6 +20,7 @@ import {
 import { useMultiplayerLudo } from "@/components/games/ludo/useMultiplayerLudo"
 import { BotLevelPicker } from "@/components/multiplayer/BotLevelPicker"
 import { ReactionBubble, ReactionPicker } from "@/components/multiplayer/Reactions"
+import { WatchingList, WatchingMenu } from "@/components/multiplayer/Spectators"
 import {
   GameTopBar,
   MultiplayerLobby,
@@ -82,10 +83,17 @@ function LudoPage() {
 
   const multiplayer = useMultiplayerLudo()
   const gameNight = useGameNight()
+  const spectating = Boolean(
+    multiplayer.gameState &&
+      multiplayer.playerId &&
+      multiplayer.gameState.spectators.some(
+        (spectator) => spectator.id === multiplayer.playerId,
+      ),
+  )
   const hasGameState = Boolean(
     multiplayer.gameState &&
       multiplayer.playerId &&
-      multiplayer.gameState.players[multiplayer.playerId],
+      (multiplayer.gameState.players[multiplayer.playerId] || spectating),
   )
   const isGameNightConnection = gameNight.connection?.gameId === "ludo"
   const session = useMultiplayerSession({
@@ -217,6 +225,22 @@ function LudoPage() {
       ),
     [multiplayer.gameState],
   )
+
+  const watching =
+    multiplayer.gameState && multiplayer.playerId
+      ? {
+          spectators: multiplayer.gameState.spectators,
+          playerId: multiplayer.playerId,
+          isHost: multiplayer.isHost,
+          seatBlocked:
+            multiplayer.gameState.status === "playing"
+              ? "Seat them once this game is over"
+              : lobbyPlayers.length >= multiplayer.gameState.maxPlayers
+                ? "No empty seats"
+                : null,
+          onSeat: multiplayer.seatSpectator,
+        }
+      : null
 
   const createMultiplayer = () => {
     const name = playerName.trim()
@@ -375,6 +399,7 @@ function LudoPage() {
         playerDescription={`${lobbyPlayers.length} of ${multiplayer.gameState.maxPlayers} players`}
         settings={
           <div className="space-y-3">
+            {watching && <WatchingList {...watching} />}
             <div className="rounded-2xl border bg-accent/30 p-4 text-sm">
               <p className="font-semibold">Mode</p>
               <div className="mt-2 grid grid-cols-2 gap-2">
@@ -743,13 +768,17 @@ function LudoPage() {
               </span>
             )}
           </div>
-          <div className="ml-auto shrink-0">
-            <ReactionPicker
-              onReact={multiplayer.react}
-              disabled={multiplayer.connectionStatus !== "connected"}
-              side="bottom"
-              align="end"
-            />
+          {/* Above the finish screen, where the host seats spectators. */}
+          <div className="relative z-30 ml-auto flex shrink-0 items-start gap-2">
+            {watching && <WatchingMenu {...watching} />}
+            {!spectating && (
+              <ReactionPicker
+                onReact={multiplayer.react}
+                disabled={multiplayer.connectionStatus !== "connected"}
+                side="bottom"
+                align="end"
+              />
+            )}
           </div>
         </div>
 
@@ -957,7 +986,9 @@ function LudoPage() {
                   <Dices className="h-5 w-5" />
                   {canRoll
                     ? "Roll Dice"
-                    : `Waiting for ${turnPlayer?.name ?? "players"}...`}
+                    : spectating
+                      ? `Watching · ${turnPlayer?.name ?? "A player"}'s turn`
+                      : `Waiting for ${turnPlayer?.name ?? "players"}...`}
                 </button>
               )}
             </div>

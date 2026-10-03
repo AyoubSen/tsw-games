@@ -35,6 +35,7 @@ import {
   validateGameNightConnection,
   type GameNightMember,
 } from "./shared/gameNight"
+import { clearSpectators, dropSpectator, MAX_SPECTATORS, publicSpectators, type PublicSpectator, type Spectator } from "./shared/spectators"
 
 export interface Player {
   id: string
@@ -105,6 +106,8 @@ export interface GameState {
   lastMove: LastMove | null
   winner: WinnerSnapshot | null
   playerTokens: Record<string, string>
+  /** People who joined mid-game; the host can seat them once the game is over. */
+  spectators?: Record<string, Spectator>
 }
 
 export interface PublicPlayer {
@@ -139,6 +142,7 @@ export interface PublicGameState {
   winner: WinnerSnapshot | null
   serverNow: number
   mySeat: number | null
+  spectators: PublicSpectator[]
 }
 
 export type ClientMessage =
@@ -154,6 +158,7 @@ export type ClientMessage =
   | { type: "restart" }
   | { type: "leave" }
   | { type: "react"; reaction: unknown }
+  | { type: "seat-spectator"; playerId: unknown }
 
 export type ServerMessage =
   | { type: "state"; state: PublicGameState }
@@ -195,6 +200,7 @@ class LudoParty implements Party.Server {
     stored.lastMove ??= null
     stored.rollAgain ??= false
     stored.quick ??= false
+    clearSpectators(stored)
     for (const player of Object.values(stored.players)) {
       const wasConnected = player.connected !== false
       player.connected = false
@@ -270,6 +276,7 @@ class LudoParty implements Party.Server {
       winner: this.state.winner,
       serverNow: Date.now(),
       mySeat: playerId ? (this.state.players[playerId]?.seat ?? null) : null,
+      spectators: publicSpectators(this.state.spectators),
     }
   }
 
@@ -676,6 +683,16 @@ class LudoParty implements Party.Server {
         return
       }
 
+      // Spectators only watch: the one thing they can do besides joining is leave.
+      if (data.type !== "join" && this.state.spectators?.[sender.id]) {
+        if (data.type === "leave") {
+          dropSpectator(this.state, sender.id)
+          await this.saveState()
+          this.broadcastState()
+        }
+        return
+      }
+
       switch (data.type) {
         case "join": {
           const gameNightMember = this.gameNightMembers.get(sender)
@@ -705,8 +722,33 @@ class LudoParty implements Party.Server {
             return
           }
 
+          const watching = this.state.spectators?.[sender.id]
+          if (watching) {
+            if (this.state.playerTokens[sender.id] !== playerToken) {
+              this.send(sender, { type: "error", message: "Invalid player session" })
+              return
+            }
+            watching.name = gameNightMember?.name ?? (data.name.trim().slice(0, 20) || watching.name)
+            await this.saveState()
+            this.broadcastState()
+            return
+          }
+
           if (this.state.status !== "waiting") {
-            this.send(sender, { type: "error", message: "Game already started" })
+            const name = gameNightMember?.name ?? data.name.trim().slice(0, 20)
+            if (!name) {
+              this.send(sender, { type: "error", message: "Enter a player name" })
+              return
+            }
+            this.state.spectators ??= {}
+            if (Object.keys(this.state.spectators).length >= MAX_SPECTATORS) {
+              this.send(sender, { type: "error", message: "Too many people are watching" })
+              return
+            }
+            this.state.spectators[sender.id] = { id: sender.id, name, joinedAt: Date.now() }
+            this.state.playerTokens[sender.id] = playerToken
+            await this.saveState()
+            this.broadcastState()
             return
           }
           if (Object.keys(this.state.players).length >= this.state.maxPlayers) {
@@ -738,6 +780,45 @@ class LudoParty implements Party.Server {
             !isPresent(this.state.players[this.state.hostId])
           ) {
             this.state.hostId = sender.id
+          }
+          await this.saveState()
+          this.broadcastState()
+          return
+        }
+
+        case "seat-spectator": {
+          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
+            this.send(sender, { type: "error", message: "Only the host can seat spectators" })
+            return
+          }
+          if (this.state.status === "playing") {
+            this.send(sender, { type: "error", message: "Seat them once this game is over" })
+            return
+          }
+          const spectator =
+            typeof data.playerId === "string"
+              ? this.state.spectators?.[data.playerId]
+              : undefined
+          if (!spectator) {
+            this.send(sender, { type: "error", message: "They're no longer watching" })
+            return
+          }
+          if (Object.keys(this.state.players).length >= this.state.maxPlayers) {
+            this.pruneDisconnectedPlayers()
+          }
+          if (Object.keys(this.state.players).length >= this.state.maxPlayers) {
+            this.send(sender, { type: "error", message: "No empty seats" })
+            return
+          }
+          delete this.state.spectators![spectator.id]
+          this.state.players[spectator.id] = {
+            id: spectator.id,
+            name: spectator.name,
+            joinedAt: Date.now(),
+            connected: true,
+            disconnectedAt: null,
+            seat: null,
+            tokens: freshTokens(this.state.quick),
           }
           await this.saveState()
           this.broadcastState()
@@ -1087,11 +1168,17 @@ class LudoParty implements Party.Server {
   }
 
   async onClose(connection: Party.Connection) {
-    if (!this.state?.players[connection.id]) return
+    if (!this.state) return
     const replacementIsOpen = Array.from(this.room.getConnections()).some(
       (candidate) => candidate.id === connection.id && candidate !== connection,
     )
     if (replacementIsOpen) return
+    if (dropSpectator(this.state, connection.id)) {
+      await this.saveState()
+      this.broadcastState()
+      return
+    }
+    if (!this.state.players[connection.id]) return
 
     markDisconnected(this.state.players, connection.id)
     this.state.players[connection.id].disconnectedAt = Date.now()

@@ -10,6 +10,7 @@ import { GameModeSelector } from '@/components/games/poker/GameModeSelector'
 import { MultiplayerLobby } from '@/components/games/poker/MultiplayerLobby'
 import { PokerGame } from '@/components/games/poker/PokerGame'
 import { useMultiplayerPoker, type PokerSettings } from '@/components/games/poker/useMultiplayerPoker'
+import { WatchingMenu } from '@/components/multiplayer/Spectators'
 
 export const Route = createFileRoute('/games/poker')({
   validateSearch: parseInviteSearch,
@@ -26,7 +27,8 @@ function PokerPage() {
   const gameNightConnection = gameNight.connection?.gameId === 'poker' && gameNight.connection.roomCode === night
     ? gameNight.connection
     : null
-  const hasGameState = Boolean(multiplayer.gameState && multiplayer.playerId && multiplayer.gameState.players[multiplayer.playerId])
+  const spectating = Boolean(multiplayer.gameState && multiplayer.playerId && multiplayer.gameState.spectators.some((spectator) => spectator.id === multiplayer.playerId))
+  const hasGameState = Boolean(multiplayer.gameState && multiplayer.playerId && (multiplayer.gameState.players[multiplayer.playerId] || spectating))
   const session = useMultiplayerSession({
     game: 'poker',
     joinGame: multiplayer.joinGame,
@@ -174,6 +176,17 @@ function PokerPage() {
         history={multiplayer.history}
         playerId={multiplayer.playerId}
         isHost={multiplayer.isHost}
+        spectating={spectating}
+        watching={
+          <WatchingMenu
+            spectators={multiplayer.gameState.spectators}
+            playerId={multiplayer.playerId}
+            isHost={multiplayer.isHost}
+            seatBlocked={multiplayer.gameState.handInProgress ? 'Seat them once this hand is over' : multiplayer.gameState.seatOrder.length >= 8 ? 'No empty seats' : null}
+            onSeat={multiplayer.seatSpectator}
+            className="h-[42px]"
+          />
+        }
         roomLabel={gameNightConnection ? bridge.publicRoomCode : multiplayer.gameState.roomCode}
         error={multiplayer.error}
         connected={multiplayer.connectionStatus === 'connected'}

@@ -171,6 +171,7 @@ function PokerPage() {
     return (
       <PokerGame
         state={multiplayer.gameState}
+        history={multiplayer.history}
         playerId={multiplayer.playerId}
         isHost={multiplayer.isHost}
         roomLabel={gameNightConnection ? bridge.publicRoomCode : multiplayer.gameState.roomCode}

@@ -14,6 +14,7 @@ import type { BotLevel } from "@/lib/botLevel"
 import type {
   ServerMessage,
   PublicGameState,
+  PublicHandRecord,
   PokerSettings,
 } from "../../../../party/poker"
 
@@ -24,6 +25,7 @@ export type { PokerSettings }
 export interface MultiplayerState {
   connectionStatus: ConnectionStatus
   gameState: PublicGameState | null
+  history: PublicHandRecord[]
   playerId: string | null
   error: string | null
   isHost: boolean
@@ -33,6 +35,7 @@ export function useMultiplayerPoker() {
   const [state, setState] = useState<MultiplayerState>({
     connectionStatus: "disconnected",
     gameState: null,
+    history: [],
     playerId: null,
     error: null,
     isHost: false,
@@ -135,6 +138,10 @@ export function useMultiplayerPoker() {
         }))
         break
 
+      case "history":
+        setState((prev) => ({ ...prev, history: message.hands }))
+        break
+
       case "player-joined":
         setState((prev) => {
           if (!prev.gameState) return prev
@@ -199,6 +206,7 @@ export function useMultiplayerPoker() {
     setState({
       connectionStatus: "disconnected",
       gameState: null,
+      history: [],
       playerId: null,
       error: null,
       isHost: false,
@@ -213,6 +221,7 @@ export function useMultiplayerPoker() {
     setState({
       connectionStatus: "disconnected",
       gameState: null,
+      history: [],
       playerId: null,
       error: null,
       isHost: false,

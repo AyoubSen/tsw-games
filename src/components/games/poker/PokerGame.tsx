@@ -1,10 +1,10 @@
-import { ArrowLeft, ArrowRight, Bot, Coffee, Crown, Flag, Pause, Play, RefreshCw, ScrollText, WifiOff, X } from "lucide-react"
+import { ArrowLeft, ArrowRight, Bot, ChevronLeft, ChevronRight, Coffee, Crown, Flag, History as HistoryIcon, Pause, Play, RefreshCw, ScrollText, WifiOff, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { BOT_LEVEL_LABELS } from "@/lib/botLevel"
 import { evaluateBestHand } from "@/lib/poker/handEvaluator"
 import { calculatePots } from "@/lib/poker/potCalculator"
 import { cn } from "@/lib/utils"
-import type { PokerLogEntry, PublicGameState, PublicPlayer, SeatAction } from "../../../../party/poker"
+import type { PokerLogEntry, PublicGameState, PublicHandRecord, PublicPlayer, SeatAction } from "../../../../party/poker"
 import { BettingControls } from "./v2/BettingControlsV2"
 import { ChipStack } from "./v2/ChipStackV2"
 import { GameOverModal } from "./v2/GameOverModalV2"
@@ -13,6 +13,7 @@ import { PokerHandGuide } from "./v2/PokerHandGuideV2"
 
 export interface PokerGameProps {
   state: PublicGameState
+  history: PublicHandRecord[]
   playerId: string
   isHost: boolean
   roomLabel: string
@@ -207,6 +208,152 @@ function logLine(entry: PokerLogEntry, me: string): { text: ReactNode; tone?: st
   }
 }
 
+type HistoryStreet = "pre-flop" | "flop" | "turn" | "river" | "result"
+const HISTORY_BOARD: Record<HistoryStreet, number> = { "pre-flop": 0, flop: 3, turn: 4, river: 5, result: 5 }
+const HISTORY_TAB: Record<HistoryStreet, string> = { "pre-flop": "Pre-flop", flop: "Flop", turn: "Turn", river: "River", result: "Result" }
+
+/** Split a hand's events into its streets, with the shows, mucks and wins as the result. */
+function historyStreets(hand: PublicHandRecord) {
+  const streets: { street: HistoryStreet; pot?: number; events: PokerLogEntry[] }[] = [{ street: "pre-flop", events: [] }]
+  const result: PokerLogEntry[] = []
+  for (const entry of hand.events) {
+    if (entry.kind === "street") streets.push({ street: entry.round as HistoryStreet, pot: entry.amount, events: [] })
+    else if (entry.kind === "show" || entry.kind === "muck") result.push(entry)
+    else if (entry.kind !== "win") streets[streets.length - 1].events.push(entry)
+  }
+  streets.push({ street: "result", pot: hand.winners.reduce((sum, w) => sum + w.amount, 0), events: result })
+  return streets
+}
+
+function HistoryCard({ card, size = "sm" }: { card: number | null | undefined; size?: "sm" | "lg" }) {
+  const box = size === "lg" ? "h-11 w-8 text-sm" : "h-6 w-[18px] text-[10px]"
+  if (card === undefined) return <span className={cn(box, "inline-block rounded-[4px] border border-dashed border-white/15")} />
+  if (card === null) {
+    return <span className={cn(box, "inline-block rounded-[4px] bg-gradient-to-br from-rose-800 to-rose-950 ring-1 ring-white/20")} title="Not shown" />
+  }
+  const red = cardSuitOf(card) === 1 || cardSuitOf(card) === 2
+  return (
+    <span className={cn(box, "inline-flex flex-col items-center justify-center rounded-[4px] bg-white font-black leading-none", red ? "text-[#c8102e]" : "text-[#16161d]")}>
+      {cardRankLabel(card)}
+      <SuitIcon suit={cardSuitOf(card)} className={size === "lg" ? "h-3.5 w-3.5" : "h-2.5 w-2.5"} />
+    </span>
+  )
+}
+
+function HistoryPanel({ hands, me, onClose }: { hands: PublicHandRecord[]; me: string; onClose: () => void }) {
+  // null follows the latest hand as new ones finish
+  const [picked, setPicked] = useState<number | null>(null)
+  const [street, setStreet] = useState<HistoryStreet>("pre-flop")
+  const hand = hands.find((h) => h.handNumber === picked) ?? hands[hands.length - 1]
+  const index = hand ? hands.indexOf(hand) : -1
+
+  const header = (
+    <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+      <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/50">History</span>
+      {hand && (
+        <div className="flex items-center gap-1">
+          <button type="button" aria-label="Previous hand" disabled={index <= 0} onClick={() => { setPicked(hands[index - 1].handNumber); setStreet("pre-flop") }} className="rounded-md p-0.5 text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-25 disabled:hover:bg-transparent">
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <span className="min-w-[64px] text-center font-mono text-[11px] font-semibold text-white/85">Hand #{hand.handNumber}</span>
+          <button type="button" aria-label="Next hand" disabled={index >= hands.length - 1} onClick={() => { setPicked(index + 1 === hands.length - 1 ? null : hands[index + 1].handNumber); setStreet("pre-flop") }} className="rounded-md p-0.5 text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-25 disabled:hover:bg-transparent">
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+      <button type="button" aria-label="Close history" onClick={onClose} className="rounded-md p-0.5 text-white/40 hover:bg-white/10 hover:text-white">
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  )
+
+  if (!hand) {
+    return (
+      <>
+        {header}
+        <p className="px-3 py-3 text-[11px] text-white/35">No finished hands yet.</p>
+      </>
+    )
+  }
+
+  const streets = historyStreets(hand)
+  const current = streets.find((entry) => entry.street === street) ?? streets[0]
+  const reached = streets.findIndex((entry) => entry.street === current.street)
+  const foldedBy = new Set(streets.slice(0, reached + 1).flatMap((entry) => entry.events).filter((entry) => entry.kind === "fold").map((entry) => entry.playerId))
+  const pots = [...new Set(hand.winners.map((w) => w.potIndex))].sort((a, b) => a - b)
+
+  return (
+    <>
+      {header}
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2 text-[11px] leading-snug">
+        <div className="flex justify-center gap-1">
+          {[0, 1, 2, 3, 4].map((slot) => (
+            <HistoryCard key={slot} size="lg" card={slot < HISTORY_BOARD[current.street] ? hand.board[slot] : undefined} />
+          ))}
+        </div>
+
+        <div className="mt-2 flex gap-0.5 rounded-lg bg-white/[0.04] p-0.5">
+          {streets.map((entry) => (
+            <button
+              key={entry.street}
+              type="button"
+              onClick={() => setStreet(entry.street)}
+              className={cn("flex-1 rounded-md px-1 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors", entry.street === current.street ? "bg-white/15 text-white" : "text-white/45 hover:text-white/80")}
+            >
+              {HISTORY_TAB[entry.street]}
+            </button>
+          ))}
+        </div>
+
+        <ul className="mt-2 space-y-1">
+          {hand.players.map((p) => (
+            <li key={p.id} className={cn("flex items-center gap-2", foldedBy.has(p.id) && "opacity-40")}>
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: avatarColor(p.id) }} />
+              <span className="min-w-0 flex-1 truncate font-semibold text-white/80">
+                {p.id === me ? "You" : p.name}
+                {p.isDealer && <span className="ml-1 rounded-full bg-white px-1 text-[9px] font-black text-black">D</span>}
+              </span>
+              <span className="font-mono text-[10px] tabular-nums text-white/40">{p.startChips.toLocaleString()}</span>
+              <span className="flex gap-0.5">
+                {p.cards.map((card, i) => <HistoryCard key={i} card={card} />)}
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        <div className="mt-2 border-t border-white/10 pt-2">
+          {current.pot !== undefined && (
+            <div className="mb-1 font-semibold text-emerald-200">
+              {current.street === "result" ? "Total pot" : "Pot"} {current.pot.toLocaleString()}
+            </div>
+          )}
+          <ol className="space-y-1">
+            {current.events.length === 0 && current.street !== "result" && <li className="text-white/35">No action.</li>}
+            {current.events.map((entry) => {
+              const line = logLine(entry, me)
+              return <li key={entry.id} className={cn("text-white/65", line.tone)}>{line.text}</li>
+            })}
+          </ol>
+          {current.street === "result" && (
+            <ul className="mt-1.5 space-y-1">
+              {pots.map((potIndex) => {
+                const potWinners = hand.winners.filter((w) => w.potIndex === potIndex)
+                return (
+                  <li key={potIndex} className="text-amber-300">
+                    <span className="font-semibold">{pots.length > 1 ? potLabel(potIndex) : "Pot"} {potWinners.reduce((sum, w) => sum + w.amount, 0).toLocaleString()}</span>
+                    {" · "}
+                    {potWinners.map((w) => `${w.playerId === me ? "You" : w.playerName}${w.hand ? ` (${w.hand})` : ""}`).join(", ")}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
 function TurnRing({ deadline, total, offset, size }: { deadline: number; total: number; offset: number; size: number }) {
   const remaining = Math.max(0, deadline - (Date.now() + offset))
   const elapsed = Math.max(0, total - remaining)
@@ -285,7 +432,7 @@ function SeatPlate({ player, isMe, active, winner, compact, deadline, total, off
   )
 }
 
-export function PokerGame({ state, playerId, isHost, roomLabel, error, connected, onFold, onCheck, onCall, onRaise, onAllIn, onNextHand, onToggleAutoDeal, onRebuy, onToggleSitOut, onEndGame, onShowCards, onMuck, onLeave }: PokerGameProps) {
+export function PokerGame({ state, history, playerId, isHost, roomLabel, error, connected, onFold, onCheck, onCall, onRaise, onAllIn, onNextHand, onToggleAutoDeal, onRebuy, onToggleSitOut, onEndGame, onShowCards, onMuck, onLeave }: PokerGameProps) {
   const reduced = useReducedMotion()
   const [stageRef, stage] = useElementSize<HTMLDivElement>()
   const geo = tableGeometry(stage.w || 1024, stage.h || 640)
@@ -295,6 +442,7 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
   const [initialBoard] = useState(() => new Set(state.communityCards.map((card) => `${state.handNumber}:${card}`)))
   const [initialBets] = useState(() => new Set(Object.values(state.players).map((p) => `${state.handNumber}:${p.id}:${p.currentBet}`)))
   const [logOpen, setLogOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1280)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [ghosts, setGhosts] = useState<Ghost[]>([])
   const [toast, setToast] = useState<string | null>(null)
   const [dealLock, setDealLock] = useState(false)
@@ -840,11 +988,25 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
             <PokerHandGuide currentCategory={iHaveCards && state.communityCards.length >= 3 ? evaluateBestHand(myCards, state.communityCards).category : null} />
             <button
               type="button"
-              onClick={() => setLogOpen((open) => !open)}
+              onClick={() => {
+                setLogOpen((open) => !open)
+                setHistoryOpen(false)
+              }}
               className={cn("flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/5 hover:text-white/80", logOpen && "bg-white/10 text-white")}
             >
               <ScrollText size={13} />
               <span>Log</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setHistoryOpen((open) => !open)
+                setLogOpen(false)
+              }}
+              className={cn("flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/5 hover:text-white/80", historyOpen && "bg-white/10 text-white")}
+            >
+              <HistoryIcon size={13} />
+              <span>History</span>
             </button>
           </div>
         </div>
@@ -869,6 +1031,12 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
                 )
               })}
             </ol>
+          </div>
+        )}
+
+        {historyOpen && (
+          <div className={cn(GLASS, "poker-rise absolute right-2 top-14 z-40 flex max-h-[min(520px,calc(100%-80px))] w-[min(320px,calc(100%-16px))] flex-col overflow-hidden sm:right-3")}>
+            <HistoryPanel hands={history} me={playerId} onClose={() => setHistoryOpen(false)} />
           </div>
         )}
 

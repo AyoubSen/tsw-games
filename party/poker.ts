@@ -41,6 +41,9 @@ export interface PokerLogEntry {
 }
 
 const LOG_LIMIT = 40
+const HISTORY_LIMIT = 20
+/** Log kinds that belong to a hand's history. */
+const HAND_EVENT_KINDS = new Set<PokerLogEntry["kind"]>(["sb", "bb", "fold", "check", "call", "bet", "raise", "all-in", "street", "show", "muck", "win", "timeout"])
 const DEAL_MS = 1500
 const ROUND_PAUSE_MS = 1100
 const RUNOUT_PAUSE_MS = 1800
@@ -97,6 +100,26 @@ export interface WinnerInfo {
   potIndex: number
 }
 
+/** A hand as the server remembers it. Hole cards stay private until shown. */
+export interface HandRecord {
+  handNumber: number
+  done: boolean
+  players: { id: string; name: string; startChips: number; isDealer: boolean; holeCards: number[]; shown: number[] }[]
+  board: number[]
+  events: PokerLogEntry[]
+  winners: { playerId: string; playerName: string; amount: number; potIndex: number; hand?: string }[]
+}
+
+export interface PublicHandRecord {
+  handNumber: number
+  /** Hole cards by position; null for a card the viewer never saw. */
+  players: { id: string; name: string; startChips: number; isDealer: boolean; cards: (number | null)[] }[]
+  board: number[]
+  /** Street events carry the pot at the start of that street in `amount`. */
+  events: PokerLogEntry[]
+  winners: HandRecord["winners"]
+}
+
 export interface GameState {
   roomCode: string
   hostId: string
@@ -132,6 +155,8 @@ export interface GameState {
   showOffer: { playerId: string; until: number } | null
   /** Beaten players at showdown who may still muck instead of showing. */
   muckable: string[]
+  /** The last hands, oldest first; the newest may still be in play. */
+  history: HandRecord[]
 }
 
 export interface PublicPlayer {
@@ -215,6 +240,7 @@ export type ServerMessage =
   | { type: "community-cards"; cards: number[]; round: BettingRound }
   | { type: "showdown"; players: { id: string; holeCards: number[]; handResult: HandResult }[] }
   | { type: "hand-over"; winners: WinnerInfo[] }
+  | { type: "history"; hands: PublicHandRecord[] }
   | { type: "error"; message: string }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -292,6 +318,9 @@ class PokerParty implements Party.Server {
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
   gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
+  /** Bumped whenever a finished hand's record changes; each connection gets it once per version. */
+  historyVersion = 0
+  historySent = new WeakMap<Party.Connection, number>()
 
   async onStart() {
     const stored = await this.room.storage.get<string>("state")
@@ -308,6 +337,7 @@ class PokerParty implements Party.Server {
         parsed.shownCards ??= {}
         parsed.showOffer ??= null
         parsed.muckable ??= []
+        parsed.history ??= []
         parsed.settings.rebuys ??= false
         parsed.settings.rebuyCap ??= 0
         for (const player of Object.values(parsed.players) as Player[]) {
@@ -414,11 +444,28 @@ class PokerParty implements Party.Server {
     }
   }
 
+  getPublicHistory(playerId: string): PublicHandRecord[] {
+    return this.state!.history.filter((hand) => hand.done).map((hand) => ({
+      handNumber: hand.handNumber,
+      players: hand.players.map(({ holeCards, shown, ...rest }) => ({
+        ...rest,
+        cards: holeCards.map((card, index) => (rest.id === playerId || shown.includes(index) ? card : null)),
+      })),
+      board: hand.board,
+      events: hand.events,
+      winners: hand.winners,
+    }))
+  }
+
   broadcastState() {
     if (!this.state) return
     for (const conn of this.room.getConnections()) {
       if (!this.isAuthenticated(conn)) continue
       try {
+        if (this.historySent.get(conn) !== this.historyVersion) {
+          this.historySent.set(conn, this.historyVersion)
+          this.send(conn, { type: "history", hands: this.getPublicHistory(conn.id) })
+        }
         this.send(conn, { type: "state", state: this.getPublicState(conn.id) })
       } catch (e) {
         console.error("broadcastState error for", conn.id, e)
@@ -445,6 +492,15 @@ class PokerParty implements Party.Server {
     const s = this.state!
     s.logSeq += 1
     s.log = [...s.log, { ...entry, id: s.logSeq }].slice(-LOG_LIMIT)
+    const hand = this.currentHandRecord()
+    if (hand && HAND_EVENT_KINDS.has(entry.kind)) hand.events.push({ ...entry, id: s.logSeq })
+  }
+
+  /** The record of the hand being played or just played, if any. */
+  currentHandRecord(): HandRecord | null {
+    const s = this.state!
+    const hand = s.history.at(-1)
+    return hand && hand.handNumber === s.handNumber ? hand : null
   }
 
   /** Queue the dealer's next step. It runs from the alarm, so a restart cannot strand the hand. */
@@ -542,6 +598,18 @@ class PokerParty implements Party.Server {
     const dealer = s.players[s.seatOrder[s.dealerIndex]]
     if (dealer) dealer.isDealer = true
 
+    s.history = [...s.history, {
+      handNumber: s.handNumber,
+      done: false,
+      players: s.seatOrder
+        .map((id) => s.players[id])
+        .filter((p) => p && !p.folded)
+        .map((p) => ({ id: p.id, name: p.name, startChips: p.chips, isDealer: p.isDealer, holeCards: [], shown: [] })),
+      board: [],
+      events: [],
+      winners: [],
+    }].slice(-HISTORY_LIMIT)
+
     // Set blinds using alive-player logic
     if (aliveSeatIndices.length === 2) {
       // Heads-up: dealer is small blind
@@ -569,6 +637,7 @@ class PokerParty implements Party.Server {
       }
     }
     s.deck = s.deck.slice(cardIdx)
+    for (const seat of this.currentHandRecord()!.players) seat.holeCards = s.players[seat.id].holeCards
 
     // First to act: left of big blind. The clock starts once the cards have landed.
     const firstIdx = nextCanActSeatIndex(s, s.bigBlindIndex)
@@ -888,6 +957,9 @@ class PokerParty implements Party.Server {
     s.deck = s.deck.slice(count)
     s.communityCards = [...s.communityCards, ...cards]
     this.addLog({ kind: "street", round: s.bettingRound, cards })
+    // The history notes the pot each street starts with; the live log doesn't need it.
+    const streetEvent = this.currentHandRecord()?.events.at(-1)
+    if (streetEvent?.kind === "street") streetEvent.amount = s.pot
 
     this.broadcast({
       type: "community-cards",
@@ -933,6 +1005,8 @@ class PokerParty implements Party.Server {
     const s = this.state!
     s.showdownPlayers.push(p.id)
     s.muckable = s.muckable.filter((id) => id !== p.id)
+    const seat = this.currentHandRecord()?.players.find((entry) => entry.id === p.id)
+    if (seat) seat.shown = [0, 1]
     if (p.holeCards.length !== 2 || s.communityCards.length < 5) return
     const handResult = evaluateBestHand(p.holeCards, s.communityCards)
     this.addLog({ kind: "show", playerId: p.id, name: p.name, cards: p.holeCards, hand: handResult.description })
@@ -1063,6 +1137,11 @@ class PokerParty implements Party.Server {
     if (fresh.length === 0) return
     const all = [...already, ...fresh]
     s.shownCards[p.id] = all
+    const seat = this.currentHandRecord()?.players.find((entry) => entry.id === p.id)
+    if (seat) {
+      seat.shown = all
+      this.historyVersion += 1
+    }
     if (all.length === 2) s.showOffer = null
     const hand = all.length === 2 && s.communityCards.length >= 3 ? evaluateBestHand(p.holeCards, s.communityCards).description : undefined
     this.addLog({ kind: "show", playerId: p.id, name: p.name, cards: fresh.map((index) => p.holeCards[index]), hand })
@@ -1086,6 +1165,13 @@ class PokerParty implements Party.Server {
     }
     for (const w of winners) {
       this.addLog({ kind: "win", playerId: w.playerId, name: w.playerName, amount: w.amount, hand: w.handResult?.description })
+    }
+    const hand = this.currentHandRecord()
+    if (hand) {
+      hand.done = true
+      hand.board = s.communityCards
+      hand.winners = winners.map((w) => ({ playerId: w.playerId, playerName: w.playerName, amount: w.amount, potIndex: w.potIndex, hand: w.handResult?.description }))
+      this.historyVersion += 1
     }
 
     if (this.isGameOver()) {
@@ -1408,6 +1494,7 @@ class PokerParty implements Party.Server {
         shownCards: {},
         showOffer: null,
         muckable: [],
+        history: [],
       }
       await this.saveState()
     }
@@ -1692,6 +1779,8 @@ class PokerParty implements Party.Server {
           if (this.state.status === "finished") {
             this.state.status = "playing"
             this.state.handNumber = 0
+            this.state.history = []
+            this.historyVersion += 1
             for (const id of this.state.seatOrder) {
               const p = this.state.players[id]
               if (p) {

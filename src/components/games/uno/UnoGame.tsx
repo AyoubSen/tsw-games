@@ -1,5 +1,5 @@
 import { ArrowLeft, Bot, Crown, Eye, Layers, RotateCcw, ScrollText, Trophy, WifiOff, X } from "lucide-react"
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react"
 import {
   canJumpInUno,
   canPlayUnoTurn,
@@ -49,6 +49,8 @@ interface Spot { x: number; y: number; w: number; h: number }
 interface Pose { x: number; y: number; rot: number; scale: number }
 interface Flight { id: string; card: UnoCard | null; flip: boolean; fade: boolean; from: Pose; to: Pose; w: number; h: number; delay: number; duration: number }
 interface Story { line: string; stamp?: string; sub?: string; tone?: UnoColor }
+/** A hand card picked up by the pointer: held, sliding back, parked on the pile awaiting a choice, or played. */
+interface Drag { card: UnoCard; x: number; y: number; rot: number; scale: number; over: boolean; phase: "drag" | "back" | "parked" | "played" }
 
 const TURN_GOLD = "#fde68a"
 const GLASS = "pointer-events-auto rounded-2xl border border-white/10 bg-black/45 shadow-2xl backdrop-blur-md"
@@ -233,6 +235,7 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
   const [spunId, setSpunId] = useState<number | null>(null)
   const [shower, setShower] = useState<number | null>(null)
   const [logOpen, setLogOpen] = useState(false)
+  const [drag, setDrag] = useState<Drag | null>(null)
 
   useEffect(() => {
     setToast(message)
@@ -469,9 +472,11 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
     return () => window.removeEventListener("keydown", onKey)
   }, [])
 
-  const play = (card: UnoCard, color?: UnoColor, targetId?: string) => {
+  const play = (card: UnoCard, color?: UnoColor, targetId?: string, dropped?: Pose) => {
     if (!isPlayable(card)) return
-    const spot = spotOf(cardRefs.current.get(card.id))
+    const at = dropped ?? (drag?.card.id === card.id && drag.phase === "parked" ? drag : null)
+    const spot = at ? { x: at.x, y: at.y, w: handCardW * at.scale, h: handCardH * at.scale } : spotOf(cardRefs.current.get(card.id))
+    if (at) setDrag({ card, x: at.x, y: at.y, rot: at.rot, scale: at.scale, over: false, phase: "played" })
     playedFrom.current = spot ? { id: card.id, spot } : null
     setPending({ cardId: card.id })
     setSelectedId(null)
@@ -501,6 +506,96 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
     if ((!canAct || view.drawnCardId) && !isJumpable(card)) return
     setSelectedId((current) => (current === card.id ? null : card.id))
   }
+
+  // ---- Dragging a card onto the discard pile ----
+  const canDrag = (card: UnoCard) => (canAct && (!view.drawnCardId || view.drawnCardId === card.id)) || isJumpable(card)
+  const gesture = useRef<{ card: UnoCard; pointerId: number; startX: number; startY: number; offX: number; offY: number; lastX: number; rot: number; over: boolean; started: boolean } | null>(null)
+  const justDragged = useRef(false)
+  const settleTimer = useRef<number | undefined>(undefined)
+
+  const sendBack = (cardId: string) => {
+    const home = spotOf(cardRefs.current.get(cardId))
+    setDrag((current) => current && home ? { ...current, x: home.x, y: home.y, rot: 0, scale: 1, over: false, phase: "back" } : null)
+    window.clearTimeout(settleTimer.current)
+    settleTimer.current = window.setTimeout(() => setDrag((current) => current?.phase === "back" ? null : current), reduced ? 0 : 260)
+  }
+
+  // Read through a ref so the window listeners always see this render's rules.
+  const dropCard = useRef<(card: UnoCard, over: boolean) => void>(() => {})
+  dropCard.current = (card, over) => {
+    const pile = spotOf(discardRef.current)
+    if (!over || !pile || !isPlayable(card)) {
+      if (over && canAct) setSelectedId(card.id)
+      sendBack(card.id)
+      return
+    }
+    const placed: Pose = { x: pile.x, y: pile.y, rot: 0, scale: pile.w / handCardW }
+    if (card.color === null || needsTarget(card)) {
+      setSelectedId(card.id)
+      setDrag({ card, ...placed, over: false, phase: "parked" })
+    } else {
+      play(card, undefined, undefined, placed)
+    }
+  }
+
+  const startDrag = (event: ReactPointerEvent<HTMLButtonElement>, card: UnoCard) => {
+    const root = rootRef.current
+    const home = spotOf(event.currentTarget)
+    if (event.button !== 0 || drag || !canDrag(card) || !root || !home) return
+    const origin = root.getBoundingClientRect()
+    const x = event.clientX - origin.left
+    const y = event.clientY - origin.top
+    gesture.current = { card, pointerId: event.pointerId, startX: x, startY: y, offX: x - home.x, offY: y - home.y, lastX: x, rot: 0, over: false, started: false }
+    const move = (moved: PointerEvent) => {
+      const held = gesture.current
+      if (!held || moved.pointerId !== held.pointerId) return
+      const box = root.getBoundingClientRect()
+      const px = moved.clientX - box.left
+      const py = moved.clientY - box.top
+      if (!held.started) {
+        if (Math.hypot(px - held.startX, py - held.startY) < 8) return
+        held.started = true
+        playSound("deal")
+      }
+      const pile = discardRef.current?.getBoundingClientRect()
+      const reach = pile ? pile.width * 0.6 : 0
+      held.over = Boolean(pile && moved.clientX > pile.left - reach && moved.clientX < pile.right + reach && moved.clientY > pile.top - reach && moved.clientY < pile.bottom + reach)
+      held.rot = Math.max(-16, Math.min(16, held.rot * 0.7 + (px - held.lastX) * 0.9))
+      held.lastX = px
+      setDrag({ card, x: px - held.offX, y: py - held.offY, rot: reduced ? 0 : held.rot, scale: held.over ? 1.15 : 1.08, over: held.over, phase: "drag" })
+      // Ease the tilt back once the pointer rests.
+      window.clearTimeout(settleTimer.current)
+      settleTimer.current = window.setTimeout(() => {
+        held.rot = 0
+        setDrag((current) => current?.phase === "drag" ? { ...current, rot: 0 } : current)
+      }, 90)
+    }
+    const end = (ended: PointerEvent) => {
+      const held = gesture.current
+      if (!held || ended.pointerId !== held.pointerId) return
+      window.removeEventListener("pointermove", move)
+      window.removeEventListener("pointerup", end)
+      window.removeEventListener("pointercancel", end)
+      gesture.current = null
+      if (!held.started) return
+      justDragged.current = true
+      window.setTimeout(() => { justDragged.current = false }, 0)
+      if (ended.type === "pointercancel") sendBack(card.id)
+      else dropCard.current(card, held.over)
+    }
+    window.addEventListener("pointermove", move)
+    window.addEventListener("pointerup", end)
+    window.addEventListener("pointercancel", end)
+  }
+
+  // A parked wild or 7 slides home if its choice is cancelled; a played card hands over to its flight.
+  useEffect(() => {
+    if (drag?.phase === "parked" && selected?.id !== drag.card.id) sendBack(drag.card.id)
+    // biome-ignore lint/correctness/useExhaustiveDependencies: reacts to the selection only
+  }, [selected?.id])
+  useEffect(() => {
+    if (!pending) setDrag((current) => current?.phase === "played" ? null : current)
+  }, [pending])
 
   // ---- Table geometry ----
   const order = state.seatOrder
@@ -602,8 +697,9 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
           else cardRefs.current.delete(card.id)
         }}
         type="button"
-        style={{ ...style, width: handCardW, height: handCardH }}
-        onClick={() => pick(card)}
+        style={{ ...style, width: handCardW, height: handCardH, touchAction: canDrag(card) ? (crowded ? "pan-x" : "none") : undefined }}
+        onPointerDown={(event) => startDrag(event, card)}
+        onClick={() => !justDragged.current && pick(card)}
         onDoubleClick={() => card.color && !needsTarget(card) && play(card)}
         aria-pressed={isSelected}
         aria-label={`${cardLabel(card)}${playable ? ", playable" : ""}`}
@@ -613,6 +709,8 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
             ? "relative [transform:translateY(calc(0px_-_var(--lift)_-_var(--hover,0px)))]"
             : "absolute bottom-3 origin-[50%_130%] [transform:translateY(calc(var(--drop)_-_var(--lift)_-_var(--hover,0px)))_rotate(var(--rot))]",
           canAct ? "hover:[--hover:16px]" : "cursor-default hover:[--hover:6px]",
+          canDrag(card) && "cursor-grab active:cursor-grabbing",
+          drag?.card.id === card.id && "opacity-0",
         )}
       >
         <div
@@ -785,6 +883,15 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
                   </div>
                 )}
                 {wheelActive && action?.type === "play" && <ColorWheel color={action.color} size={pileH * 1.1} />}
+                {drag?.phase === "drag" && (
+                  <div
+                    aria-hidden="true"
+                    className={cn(
+                      "pointer-events-none absolute -inset-4 rounded-[20px] border-2 border-dashed transition duration-150",
+                      !drag.over ? "border-white/40" : isPlayable(drag.card) ? "scale-105 border-white bg-white/10" : "border-red-400 bg-red-500/10",
+                    )}
+                  />
+                )}
                 {shownTop?.color === null && view.activeColor && !reduced && !wheelActive && (
                   <div key={shownTop.id} aria-hidden="true" className="uno-shock pointer-events-none absolute inset-0 rounded-full border-4" style={{ borderColor: COLOR_HEX[view.activeColor].base }} />
                 )}
@@ -933,6 +1040,21 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
 
       {/* Cards in flight. */}
       {shower !== null && <CardShower key={shower} width={compact ? 34 : 48} />}
+
+      {drag && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute left-0 top-0 z-50"
+          style={{
+            width: handCardW,
+            height: handCardH,
+            transform: `translate(${drag.x - handCardW / 2}px, ${drag.y - handCardH / 2}px) rotate(${drag.rot}deg) scale(${drag.scale})`,
+            transition: reduced ? "none" : drag.phase === "drag" ? "transform 70ms ease-out" : "transform 240ms cubic-bezier(.2,.8,.2,1)",
+          }}
+        >
+          <UnoCardView card={drag.card} className={cn("size-full", drag.phase === "drag" && "shadow-[0_28px_40px_rgb(0_0_0/.55)]")} />
+        </div>
+      )}
 
       {flights.map((flight) => (
         <FlightCard key={flight.id} flight={flight} onDone={() => setFlights((current) => current.filter((item) => item.id !== flight.id))} />

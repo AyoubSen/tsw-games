@@ -277,3 +277,46 @@ function compareEvaluations(
 export function compareHands(a: HandResult, b: HandResult): number {
   return compareEvaluations(a, b)
 }
+
+function bestOf7(cards: number[]): { category: HandCategory; ranks: number[] } {
+  let best: { category: HandCategory; ranks: number[] } | null = null
+  for (const combo of combinations5(cards)) {
+    const result = evaluate5(combo)
+    if (!best || compareEvaluations(result, best) > 0) best = result
+  }
+  return best!
+}
+
+/**
+ * Monte Carlo chance that the hole cards beat `opponents` random hands by the river.
+ * Splits count as a share of the pot. Returns 0–1.
+ */
+export function estimateEquity(holeCards: number[], communityCards: number[], opponents: number, iterations = 800): number {
+  const used = new Set([...holeCards, ...communityCards])
+  const deck = createDeck().filter((card) => !used.has(card))
+  const boardNeeded = 5 - communityCards.length
+  const draws = boardNeeded + opponents * 2
+  let total = 0
+  for (let i = 0; i < iterations; i++) {
+    // Shuffle only the cards this run deals
+    for (let j = 0; j < draws; j++) {
+      const k = j + Math.floor(Math.random() * (deck.length - j))
+      ;[deck[j], deck[k]] = [deck[k], deck[j]]
+    }
+    const board = [...communityCards, ...deck.slice(0, boardNeeded)]
+    const mine = bestOf7([...holeCards, ...board])
+    let sharing = 1
+    let lost = false
+    for (let o = 0; o < opponents; o++) {
+      const at = boardNeeded + o * 2
+      const cmp = compareEvaluations(mine, bestOf7([deck[at], deck[at + 1], ...board]))
+      if (cmp < 0) {
+        lost = true
+        break
+      }
+      if (cmp === 0) sharing++
+    }
+    if (!lost) total += 1 / sharing
+  }
+  return total / iterations
+}

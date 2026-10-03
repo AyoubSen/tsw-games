@@ -1,7 +1,7 @@
-import { ArrowLeft, ArrowRight, Bot, ChevronLeft, ChevronRight, Coffee, Crown, Eye, Flag, History as HistoryIcon, Pause, Play, RefreshCw, ScrollText, WifiOff, X } from "lucide-react"
+import { ArrowLeft, ArrowRight, Bot, ChevronLeft, ChevronRight, Coffee, Crown, Eye, Flag, GraduationCap, History as HistoryIcon, Pause, Play, RefreshCw, ScrollText, WifiOff, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { BOT_LEVEL_LABELS } from "@/lib/botLevel"
-import { evaluateBestHand } from "@/lib/poker/handEvaluator"
+import { estimateEquity, evaluateBestHand } from "@/lib/poker/handEvaluator"
 import { calculatePots } from "@/lib/poker/potCalculator"
 import { cn } from "@/lib/utils"
 import type { PokerLogEntry, PublicGameState, PublicHandRecord, PublicPlayer, SeatAction } from "../../../../party/poker"
@@ -64,6 +64,8 @@ const DEAL_STEP_MS = 110
 const SWEEP_MS = 520
 const AVATAR_COLORS = ["#e76f51", "#2a9d8f", "#e9c46a", "#8ab17d", "#7b8cde", "#d16ba5", "#f4a261", "#5fa8d3"]
 const RANK_PLURAL = ["Twos", "Threes", "Fours", "Fives", "Sixes", "Sevens", "Eights", "Nines", "Tens", "Jacks", "Queens", "Kings", "Aces"]
+const LEARNING_KEY = "tsw-games-poker-learning"
+const pct = (value: number) => `${Math.round(value * 100)}%`
 const STREET_LABEL: Record<string, string> = { "pre-flop": "Pre-flop", flop: "Flop", turn: "Turn", river: "River", showdown: "Showdown" }
 
 function hash(text: string) {
@@ -454,6 +456,19 @@ export function PokerGame({ state, history, playerId, isHost, spectating, watchi
   const [initialBets] = useState(() => new Set(Object.values(state.players).map((p) => `${state.handNumber}:${p.id}:${p.currentBet}`)))
   const [logOpen, setLogOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1280)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [learning, setLearning] = useState(() => {
+    try {
+      return typeof window !== "undefined" && localStorage.getItem(LEARNING_KEY) === "1"
+    } catch {
+      return false
+    }
+  })
+  const toggleLearning = () => {
+    setLearning(!learning)
+    try {
+      localStorage.setItem(LEARNING_KEY, learning ? "0" : "1")
+    } catch {}
+  }
   const [ghosts, setGhosts] = useState<Ghost[]>([])
   const [toast, setToast] = useState<string | null>(null)
   const [dealLock, setDealLock] = useState(false)
@@ -612,6 +627,21 @@ export function PokerGame({ state, history, playerId, isHost, spectating, watchi
   const [preAction, setPreAction] = useState<PreAction | null>(null)
   const canQueue = !isMyTurn && state.handInProgress && !!me && me.hasCards && !me.folded && !me.allIn && connected
   const toCall = me ? state.currentBetToMatch - me.currentBet : 0
+
+  // ---- Learning mode: win chance against random hands and pot odds, computed only for you ----
+  const opponentsLeft = order.filter((id) => id !== playerId && state.players[id]?.hasCards && !state.players[id]?.folded).length
+  const showLearning = learning && !spectating && iHaveCards && !!me && !me.folded && state.handInProgress && opponentsLeft > 0
+  const [equity, setEquity] = useState<number | null>(null)
+  useEffect(() => {
+    setEquity(null)
+    if (!showLearning) return
+    // Defer so the table paints before the simulation runs
+    const timer = window.setTimeout(() => setEquity(estimateEquity(myCards, state.communityCards, opponentsLeft)), 0)
+    return () => window.clearTimeout(timer)
+    // biome-ignore lint/correctness/useExhaustiveDependencies: reruns when the cards or the field change
+  }, [showLearning, myCards.join(","), state.communityCards.join(","), opponentsLeft])
+  const callCost = me && !me.allIn ? Math.min(toCall, me.chips) : 0
+  const potOdds = showLearning && callCost > 0 ? callCost / (state.pot + callCost) : null
   useEffect(() => setPreAction(null), [state.handNumber])
   useEffect(() => {
     if (!canAct || !preAction || !me) return
@@ -1055,6 +1085,18 @@ export function PokerGame({ state, history, playerId, isHost, spectating, watchi
               <HistoryIcon size={13} />
               <span>History</span>
             </button>
+            {!spectating && (
+              <button
+                type="button"
+                onClick={toggleLearning}
+                aria-pressed={learning}
+                title="Learning mode: your win chance and pot odds, visible only to you"
+                className={cn("flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/5 hover:text-white/80", learning && "bg-sky-400/15 text-sky-200")}
+              >
+                <GraduationCap size={13} />
+                <span>Learn</span>
+              </button>
+            )}
           </div>
           {watching}
           <SoundToggle className="size-[42px]" />
@@ -1100,6 +1142,20 @@ export function PokerGame({ state, history, playerId, isHost, spectating, watchi
 
       {/* Dock */}
       <div className="relative z-40 shrink-0 border-t border-white/[0.08] bg-black/55 px-3 pb-3 pt-2.5 backdrop-blur-md sm:px-5">
+        {potOdds !== null && (
+          <div className="mx-auto mb-2 flex w-full max-w-5xl flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px]">
+            <span className="flex items-center gap-1 font-bold uppercase tracking-[0.2em] text-sky-200/60">
+              <GraduationCap className="h-3.5 w-3.5" />
+              Pot odds
+            </span>
+            <span className="text-white/55">
+              <span className="font-mono tabular-nums text-white/80">{callCost.toLocaleString()}</span> to win <span className="font-mono tabular-nums text-white/80">{state.pot.toLocaleString()}</span>
+            </span>
+            <span className={cn("font-semibold", equity === null ? "text-white/70" : equity >= potOdds ? "text-emerald-200" : "text-rose-200")}>
+              Calling needs {pct(potOdds)} equity; you have {equity === null ? "…" : `~${pct(equity)}`}
+            </span>
+          </div>
+        )}
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-5">
           <div className="flex min-w-0 items-center justify-between gap-3 sm:w-[260px] sm:shrink-0 sm:flex-col sm:items-start sm:gap-1">
             {spectating ? (
@@ -1116,7 +1172,14 @@ export function PokerGame({ state, history, playerId, isHost, spectating, watchi
             </div>
             )}
             {myHand && !me?.folded && (
-              <span className="truncate rounded-full bg-emerald-400/12 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-200 ring-1 ring-emerald-300/25">{myHand}</span>
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate rounded-full bg-emerald-400/12 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-200 ring-1 ring-emerald-300/25">{myHand}</span>
+                {showLearning && (
+                  <span title={`Chance to win against ${opponentsLeft} random ${opponentsLeft === 1 ? "hand" : "hands"}`} className="shrink-0 whitespace-nowrap rounded-full bg-sky-400/12 px-2.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-sky-200 ring-1 ring-sky-300/25">
+                    {equity === null ? "…" : `~${pct(equity)}`} win
+                  </span>
+                )}
+              </div>
             )}
             {me && state.status === "playing" && (
               <div className="flex shrink-0 items-center gap-1.5">

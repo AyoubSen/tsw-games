@@ -54,6 +54,7 @@ const TURN_GOLD = "#fde68a"
 const GLASS = "pointer-events-auto rounded-2xl border border-white/10 bg-black/45 shadow-2xl backdrop-blur-md"
 const COLOR_RANK: Record<string, number> = { red: 0, yellow: 1, green: 2, blue: 3, wild: 4 }
 const VALUE_RANK: string[] = [...UNO_COLORED_VALUES, ...UNO_WILD_VALUES]
+const WHEEL_MS = 900
 
 function sortHand(hand: readonly UnoCard[]) {
   return [...hand].sort((a, b) =>
@@ -78,7 +79,9 @@ function timeline(action: UnoAction, me: string, reduced: boolean) {
     const draws = action.drawCount ?? 0
     const settle = draws ? land + (300 + (draws - 1) * 150 + 520) * motion + 150 : land
     const loud = action.card.color === null || action.card.value === "skip" || action.card.value === "reverse" || action.card.value === "draw-two" || action.cardsLeft <= 1 || Boolean(action.swapId || action.rotated || action.jumpIn)
-    return { land, settle, release: settle + (loud ? 1500 : 900) }
+    const release = settle + (loud ? 1500 : 900)
+    // A wild spins the color wheel, then shows its stamp.
+    return { land, settle, release: action.card.color === null && !reduced ? Math.max(release, land + WHEEL_MS + 1300) : release }
   }
   if (action.type === "draw") {
     const land = 580 * motion
@@ -159,6 +162,13 @@ function storyOf(action: UnoAction, me: string, rules: UnoRules): Story {
   }
 }
 
+/** When 4+ penalty cards start leaving the deck, if they do. */
+function bigDrawAt(action: UnoAction, land: number) {
+  if (action.type === "play") return (action.drawCount ?? 0) >= 4 ? land + 300 : null
+  if (action.type === "catch" || action.type === "penalty" || action.type === "challenge") return action.drawCount >= 4 ? 0 : null
+  return null
+}
+
 function playDeal(cards: number, spacing = 90) {
   for (let index = 0; index < cards; index++) playSound("deal", index * spacing)
 }
@@ -220,6 +230,8 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
   const [under, setUnder] = useState<UnoCard[]>([])
   const [rootWidth, setRootWidth] = useState(1024)
   const [toast, setToast] = useState<string | null>(null)
+  const [spunId, setSpunId] = useState<number | null>(null)
+  const [shower, setShower] = useState<number | null>(null)
 
   useEffect(() => {
     setToast(message)
@@ -269,6 +281,23 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
       window.setTimeout(() => advance("settled"), times.settle),
       window.setTimeout(() => setReveal((current) => current?.action.id === action.id ? null : current), times.release),
     ]
+    if (action.type === "play" && action.card.color === null && !reduced) {
+      playSound("dice", times.land)
+      timers.push(window.setTimeout(() => setSpunId(action.id), times.land + WHEEL_MS))
+    }
+    const hit = bigDrawAt(action, times.land)
+    if (hit !== null) {
+      playSound("capture", hit)
+      if (!reduced) {
+        timers.push(
+          window.setTimeout(() => {
+            shakeTable()
+            setShower(action.id)
+          }, hit),
+          window.setTimeout(() => setShower((current) => current === action.id ? null : current), hit + 1000),
+        )
+      }
+    }
     return () => timers.forEach((timer) => window.clearTimeout(timer))
     // biome-ignore lint/correctness/useExhaustiveDependencies: replays once per new action
   }, [latest?.id])
@@ -277,6 +306,18 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
   useEffect(() => {
     previousState.current = state
   }, [state])
+
+  function shakeTable() {
+    const frames = [
+      { transform: "translate(0, 0)" },
+      { transform: "translate(-10px, 5px) rotate(-0.5deg)" },
+      { transform: "translate(9px, -6px) rotate(0.5deg)" },
+      { transform: "translate(-6px, 4px) rotate(-0.3deg)" },
+      { transform: "translate(4px, -2px)" },
+      { transform: "translate(0, 0)" },
+    ]
+    for (const element of [tableRef.current, handRef.current]) element?.animate(frames, { duration: 460, easing: "ease-out" })
+  }
 
   function launchFlights(action: UnoAction, land: number) {
     const discard = spotOf(discardRef.current)
@@ -319,10 +360,12 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
   const action = active?.action ?? null
   const snapshot = active?.snapshot ?? null
   const beforeLanding = active?.phase === "flying"
+  // A wild keeps the old color until its wheel stops.
+  const wheelActive = !reduced && action?.type === "play" && action.card.color === null && !beforeLanding && spunId !== action.id
 
   const view = {
     topCard: beforeLanding ? snapshot!.topCard : state.topCard,
-    activeColor: beforeLanding ? snapshot!.activeColor : state.activeColor,
+    activeColor: beforeLanding || wheelActive ? snapshot!.activeColor : state.activeColor,
     direction: beforeLanding ? snapshot!.direction : state.direction,
     currentPlayerId: snapshot ? snapshot.currentPlayerId : state.currentPlayerId,
     status: snapshot ? snapshot.status : state.status,
@@ -499,6 +542,8 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
     : ""
   const statusText = finished
     ? winner === playerId ? "You won the hand!" : `${nameOf(winner)} wins the hand`
+    : wheelActive && action?.type === "play"
+      ? `${nameOf(action.playerId)} played ${cardLabel(action.card)}…`
     : story
       ? story.line
       : myTurn
@@ -518,7 +563,7 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
     return null
   }
   const logEntries = state.log
-    .filter((entry) => !(active && beforeLanding && entry.id === action?.id))
+    .filter((entry) => !(active && (beforeLanding || wheelActive) && entry.id === action?.id))
     .slice(-8)
     .reverse()
 
@@ -657,6 +702,9 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
       {/* Table: opponents around the piles. */}
       <div ref={tableRef} className="absolute inset-x-0 top-20" style={{ bottom: bottomReserve }}>
         <div aria-hidden="true" className="pointer-events-none absolute inset-x-[4%] inset-y-[2%] rounded-[50%] border border-white/[0.06] shadow-[inset_0_0_120px_rgb(0_0_0/.35)]" />
+        {table.w > 0 && !reduced && action?.type === "play" && action.card.value === "reverse" && action.reversed && !beforeLanding && (
+          <ReverseSweep key={action.id} cx={centerX} cy={centerY} rx={table.w * 0.44} ry={table.h * (compact ? 0.4 : 0.42)} clockwise={view.direction !== -1} hex={COLOR_HEX[action.color].base} />
+        )}
         {table.w > 0 && opponents.map((id) => {
           const player = state.players[id]!
           const spot = seatSpots.get(id)!
@@ -741,7 +789,8 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
                     <UnoCardView card={shownTop} className="size-full" />
                   </div>
                 )}
-                {shownTop?.color === null && view.activeColor && !reduced && (
+                {wheelActive && action?.type === "play" && <ColorWheel color={action.color} size={pileH * 1.1} />}
+                {shownTop?.color === null && view.activeColor && !reduced && !wheelActive && (
                   <div key={shownTop.id} aria-hidden="true" className="uno-shock pointer-events-none absolute inset-0 rounded-full border-4" style={{ borderColor: COLOR_HEX[view.activeColor].base }} />
                 )}
               </div>
@@ -749,7 +798,7 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
 
             {/* What to match, plus the reveal caption. */}
             <div className="absolute left-0 flex -translate-x-1/2 flex-col items-center gap-2" style={{ top: ringSize / 2 + (compact ? 4 : 10) }}>
-              {view.activeColor && !finished && (
+              {view.activeColor && !finished && !wheelActive && (
                 <div className="flex items-center gap-2 whitespace-nowrap rounded-full border border-white/10 bg-black/50 py-1 pl-1.5 pr-3 text-xs font-bold backdrop-blur">
                   <span className="size-4 rounded-full ring-2 ring-white/80 transition-colors duration-500" style={{ background: COLOR_HEX[view.activeColor].base }} />
                   <span className="text-white/60">Match</span>
@@ -757,7 +806,7 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
                 </div>
               )}
             </div>
-            {story?.stamp && !beforeLanding && (
+            {story?.stamp && !beforeLanding && !wheelActive && (
               <div key={action!.id} className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-1/2" style={{ left: pileGap / 2 + pileW * 0.85, top: -pileH * 0.48 }}>
                 <div className="uno-stamp whitespace-nowrap rounded-xl border-[3px] border-white px-3 py-1 text-2xl font-black italic uppercase tracking-tight shadow-[0_10px_30px_rgb(0_0_0/.5)] sm:text-4xl" style={{ background: story.tone ? COLOR_HEX[story.tone].base : "#111", color: story.tone === "yellow" ? "#141416" : "#fff" }}>
                   {story.stamp}
@@ -787,7 +836,7 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
             <p className="min-w-0 flex-1 truncate text-sm font-semibold">{statusText}</p>
             {!connected && <span className="flex shrink-0 items-center gap-1 text-xs text-amber-200"><WifiOff className="size-3.5" />Reconnecting</span>}
           </div>
-          {story?.sub && !beforeLanding ? (
+          {story?.sub && !beforeLanding && !wheelActive ? (
             <p key={action!.id} className="uno-rise self-center truncate rounded-full bg-black/55 px-3 py-1 text-xs font-semibold text-white/90 backdrop-blur">{story.sub}</p>
           ) : !active && lastStory && !finished ? (
             <p className="self-center truncate px-3 text-[11px] text-white/50 xl:hidden">Last: {lastStory.line}</p>
@@ -830,7 +879,8 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
       )}
 
       {/* My hand and the option tray. */}
-      <div className="absolute inset-x-0 bottom-0 flex flex-col items-center">
+      <div className="absolute inset-x-0 bottom-0 isolate flex flex-col items-center">
+        {!spectating && !finished && rawHand.length === 1 && <Spotlight width={compact ? 260 : 360} height={handHeight + 160} />}
         <div className="pointer-events-none relative flex min-h-12 w-full items-center justify-center gap-2 px-3">
           <ReactionBubble bubble={reactions[playerId]} />
           {spectating ? (
@@ -873,6 +923,8 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
       )}
 
       {/* Cards in flight. */}
+      {shower !== null && <CardShower key={shower} width={compact ? 34 : 48} />}
+
       {flights.map((flight) => (
         <FlightCard key={flight.id} flight={flight} onDone={() => setFlights((current) => current.filter((item) => item.id !== flight.id))} />
       ))}
@@ -962,6 +1014,7 @@ function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline
       className={cn("absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1 transition-opacity", offline && "opacity-55")}
       style={{ left: x, top: y, width: compact ? 84 : 120 }}
     >
+      {count === 1 && <Spotlight width={compact ? 110 : 160} height={compact ? 190 : 260} />}
       <ReactionBubble bubble={reaction} />
       <div className="relative" style={{ width: fanW, height: backH + 4 }}>
         {Array.from({ length: shown }, (_, index) => (
@@ -1004,6 +1057,74 @@ function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline
       ) : isTurn ? (
         <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-[#1a1406]">Playing</span>
       ) : null}
+    </div>
+  )
+}
+
+/** A beam and pool of light on whoever is down to one card. */
+function Spotlight({ width, height }: { width: number; height: number }) {
+  return (
+    <div aria-hidden="true" className="uno-spot pointer-events-none absolute bottom-[18%] left-1/2 -z-10" style={{ width, height, marginLeft: -width / 2 }}>
+      <div className="absolute inset-0" style={{ clipPath: "polygon(43% 0, 57% 0, 100% 100%, 0 100%)", background: "linear-gradient(to bottom, rgb(255 244 210 / 0), rgb(255 244 210 / .26))" }} />
+      <div className="absolute inset-x-0 -bottom-[12%] h-[24%] rounded-[50%]" style={{ background: "radial-gradient(closest-side, rgb(255 238 186 / .55), transparent)" }} />
+    </div>
+  )
+}
+
+/** Spins and stops with the chosen color under the pointer. */
+function ColorWheel({ color, size }: { color: UnoColor; size: number }) {
+  const turn = 1080 - (UNO_COLORS.indexOf(color) * 90 + 45)
+  const segments = UNO_COLORS.map((segment, index) => `${COLOR_HEX[segment].base} ${index * 90}deg ${(index + 1) * 90}deg`).join(", ")
+  return (
+    <div aria-hidden="true" className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2" style={{ width: size, height: size }}>
+      <div className="uno-wheel-frame relative size-full">
+        <div className="uno-wheel-spin size-full rounded-full border-4 border-white shadow-[0_0_0_2px_rgb(0_0_0/.35),0_14px_40px_rgb(0_0_0/.6)]" style={{ background: `conic-gradient(${segments})`, "--to": `${turn}deg` } as CSSProperties}>
+          <div className="absolute inset-[32%] rounded-full border-[3px] border-white bg-[#141416]" />
+        </div>
+        <svg viewBox="0 0 20 16" className="absolute -top-3 left-1/2 w-6 -translate-x-1/2 drop-shadow-[0_2px_4px_rgb(0_0_0/.6)]">
+          <path d="M2,1 L18,1 L10,15 Z" fill="#fff" stroke="#141416" strokeWidth="1.5" strokeLinejoin="round" />
+        </svg>
+      </div>
+    </div>
+  )
+}
+
+/** A comet that laps the table in the new direction of play. */
+function ReverseSweep({ cx, cy, rx, ry, clockwise, hex }: { cx: number; cy: number; rx: number; ry: number; clockwise: boolean; hex: string }) {
+  // Starts at the bottom (your seat); both arcs run clockwise on screen.
+  const d = `M ${cx} ${cy + ry} A ${rx} ${ry} 0 1 1 ${cx} ${cy - ry} A ${rx} ${ry} 0 1 1 ${cx} ${cy + ry}`
+  const style = { "--sweep": clockwise ? "-100" : "100" } as CSSProperties
+  return (
+    <svg aria-hidden="true" className="pointer-events-none absolute inset-0 size-full overflow-visible">
+      <path d={d} pathLength={100} fill="none" stroke={hex} strokeWidth={2} className="uno-sweep-track" />
+      <path d={d} pathLength={100} fill="none" stroke={hex} strokeWidth={22} strokeOpacity={0.35} strokeLinecap="round" strokeDasharray="12 88" className="uno-sweep blur-[6px]" style={style} />
+      <path d={d} pathLength={100} fill="none" stroke="#fff" strokeWidth={5} strokeLinecap="round" strokeDasharray="12 88" className="uno-sweep drop-shadow-[0_0_8px_#fff]" style={style} />
+    </svg>
+  )
+}
+
+const SHOWER = Array.from({ length: 18 }, (_, index) => ({
+  left: (index * 53 + 7) % 100,
+  delay: (index % 6) * 40,
+  fall: 560 + (index % 4) * 70,
+  drift: ((index % 5) - 2) * 40,
+  spin: (index % 2 ? 1 : -1) * (200 + (index % 3) * 120),
+  scale: 0.7 + (index % 3) * 0.2,
+}))
+
+/** Card backs raining over the table when someone draws a pile. */
+function CardShower({ width }: { width: number }) {
+  return (
+    <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-30 overflow-hidden">
+      {SHOWER.map((piece, index) => (
+        <div
+          key={index}
+          className="uno-shower absolute top-0"
+          style={{ left: `${piece.left}%`, width: width * piece.scale, height: width * piece.scale * 1.5, "--delay": `${piece.delay}ms`, "--fall": `${piece.fall}ms`, "--drift": `${piece.drift}px`, "--spin": `${piece.spin}deg` } as CSSProperties}
+        >
+          <UnoCardView card={null} className="size-full" />
+        </div>
+      ))}
     </div>
   )
 }

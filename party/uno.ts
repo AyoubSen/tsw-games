@@ -204,7 +204,9 @@ function revealMs(action: UnoAction | undefined): number {
     const draws = action.drawCount ?? 0
     const settle = draws ? 540 + 300 + (draws - 1) * 150 + 520 + 150 : 540
     const loud = action.card.color === null || action.card.value === "skip" || action.card.value === "reverse" || action.card.value === "draw-two" || action.cardsLeft <= 1 || Boolean(action.swapId || action.rotated || action.jumpIn)
-    return settle + (loud ? 1500 : 900)
+    const release = settle + (loud ? 1500 : 900)
+    // A wild also spins the color wheel before its stamp shows.
+    return action.card.color === null ? Math.max(release, 540 + 2200) : release
   }
   if (action.type === "draw") return 580 + (action.playable ? 400 : 1500)
   if (action.type === "pass") return 900

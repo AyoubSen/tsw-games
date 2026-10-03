@@ -14,6 +14,8 @@ export type LudoColor = (typeof LUDO_COLORS)[number]["id"]
 
 export const LUDO_SEATS = 4
 export const LUDO_TOKENS_PER_PLAYER = 4
+/** Quick game: two pawns each, and a 5 or a 6 on either die brings one out. */
+export const LUDO_QUICK_TOKENS_PER_PLAYER = 2
 export const LUDO_BOARD_SIZE = 19
 export const LUDO_TRACK_LENGTH = 68
 /** Relative steps: 0-63 on the shared track, 64-70 up the home path, 71 home. */
@@ -22,6 +24,15 @@ export const LUDO_HOME_INDEX = 71
 export const LUDO_BASE = -1
 /** A five - on one die, or both dice together - brings a pawn out of the nest. */
 export const LUDO_ENTER_VALUE = 5
+
+export function tokensPerPlayer(quick: boolean): number {
+  return quick ? LUDO_QUICK_TOKENS_PER_PLAYER : LUDO_TOKENS_PER_PLAYER
+}
+
+/** Whether a single rolled die brings a pawn out of the nest. */
+export function canEnterWith(value: number, quick: boolean): boolean {
+  return value === LUDO_ENTER_VALUE || (quick && value === 6)
+}
 export const LUDO_CAPTURE_BONUS = 20
 export const LUDO_HOME_BONUS = 10
 
@@ -227,6 +238,7 @@ export function getLegalMoves(
   pending: LudoDie[],
   allTokens: number[][],
   allySeats: number[] = controlledSeats,
+  quick = false,
 ): LudoMove[] {
   const moves: LudoMove[] = []
   const add = (move: Omit<LudoMove, "id" | "dice"> | null, dice: number[]) => {
@@ -245,7 +257,7 @@ export function getLegalMoves(
       tokens.forEach((position, tokenIndex) => {
         if (position === LUDO_BASE) {
           if (tokenIndex !== nestPawn) return
-          if (die.bonus || die.value !== LUDO_ENTER_VALUE) return
+          if (die.bonus || !canEnterWith(die.value, quick)) return
           add(tryEnter(seat, tokenIndex, allTokens, allySeats), [dieIndex])
           return
         }
@@ -290,8 +302,9 @@ export function getPlayableMoves(
   pending: LudoDie[],
   allTokens: number[][],
   allySeats: number[] = controlledSeats,
+  quick = false,
 ): LudoMove[] {
-  const moves = getLegalMoves(controlledSeats, pending, allTokens, allySeats)
+  const moves = getLegalMoves(controlledSeats, pending, allTokens, allySeats, quick)
   if (moves.length <= 1) return moves
 
   const memo = new Map<string, number>()
@@ -306,7 +319,7 @@ export function getPlayableMoves(
     const cached = memo.get(key)
     if (cached !== undefined) return cached
     let most = 0
-    for (const move of getLegalMoves(controlledSeats, dice, tokens, allySeats)) {
+    for (const move of getLegalMoves(controlledSeats, dice, tokens, allySeats, quick)) {
       const used =
         move.dice.length + mostUsable(applyToTokens(tokens, move), remaining(dice, move))
       if (used > most) most = used

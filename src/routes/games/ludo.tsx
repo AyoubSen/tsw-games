@@ -44,7 +44,6 @@ import {
   getTokenCell,
   LUDO_BASE,
   LUDO_COLORS,
-  LUDO_TOKENS_PER_PLAYER,
   type LudoMove,
 } from "@/lib/ludo"
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
@@ -404,6 +403,33 @@ function LudoPage() {
             </div>
 
             <div className="rounded-2xl border bg-accent/30 p-4 text-sm">
+              <p className="font-semibold">Game length</p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <Button
+                  size="sm"
+                  variant={game.quick ? "outline" : "default"}
+                  disabled={!multiplayer.isHost}
+                  onClick={() => multiplayer.setQuick(false)}
+                >
+                  Classic
+                </Button>
+                <Button
+                  size="sm"
+                  variant={game.quick ? "default" : "outline"}
+                  disabled={!multiplayer.isHost}
+                  onClick={() => multiplayer.setQuick(true)}
+                >
+                  Quick game
+                </Button>
+              </div>
+              <p className="mt-2 text-muted-foreground">
+                {game.quick
+                  ? "Two pawns each, and a 5 or a 6 on either die brings a pawn out."
+                  : "Four pawns each, and a 5 brings a pawn out."}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border bg-accent/30 p-4 text-sm">
               <div className="flex items-center justify-between gap-2">
                 <p className="font-semibold">Bots</p>
                 <Button
@@ -690,6 +716,7 @@ function LudoPage() {
             <p className="text-lg font-black leading-none tracking-tight">Parcheesi</p>
             <p className="text-xs text-white/60">
               {game.mode === "teams" ? "Teams 2v2" : "Free for all"}
+              {game.quick ? " · Quick game" : ""}
             </p>
           </div>
           <div
@@ -744,7 +771,7 @@ function LudoPage() {
                       </span>
                     )}
                   </p>
-                  <HomePips home={home} color={color} />
+                  <HomePips home={home} total={player.tokens.length} color={color} />
                 </div>
               </div>
             )
@@ -797,7 +824,7 @@ function LudoPage() {
                       {player.isBot && player.botLevel && ` · ${BOT_LEVEL_LABELS[player.botLevel]} bot`}
                     </p>
                   </div>
-                  <HomePips home={home} color={color} />
+                  <HomePips home={home} total={player.tokens.length} color={color} />
                 </div>
               )
             })}
@@ -846,7 +873,10 @@ function LudoPage() {
               <p className="line-clamp-2 text-xs text-white/60">
                 {isHolding
                   ? " "
-                  : (game.lastEvent ?? "Roll a 5 to bring a pawn out.")}
+                  : (game.lastEvent ??
+                    (game.quick
+                      ? "Roll a 5 or a 6 to bring a pawn out."
+                      : "Roll a 5 to bring a pawn out."))}
               </p>
             </div>
           </div>
@@ -937,7 +967,9 @@ function LudoPage() {
               <p className="mt-1 text-sm text-white/65">
                 {game.mode === "teams"
                   ? "Both partners brought every pawn home."
-                  : "All four pawns made it home."}
+                  : game.quick
+                    ? "Both pawns made it home."
+                    : "All four pawns made it home."}
               </p>
               <div className="mt-5 flex justify-center gap-2">
                 {multiplayer.isHost ? (
@@ -967,8 +999,6 @@ function LudoPage() {
 
   return null
 }
-
-const TOKEN_SLOTS = Array.from({ length: LUDO_TOKENS_PER_PLAYER }, (_, slot) => slot)
 
 const PIP_CELLS = [0, 1, 2, 3, 4, 5, 6, 7, 8]
 const PIP_LAYOUT: Record<number, number[]> = {
@@ -1030,10 +1060,10 @@ function PlayerAvatar({
   )
 }
 
-function HomePips({ home, color }: { home: number; color: string }) {
+function HomePips({ home, total, color }: { home: number; total: number; color: string }) {
   return (
-    <div className="flex shrink-0 gap-1" title={`${home}/${LUDO_TOKENS_PER_PLAYER} home`}>
-      {TOKEN_SLOTS.map((slot) => (
+    <div className="flex shrink-0 gap-1" title={`${home}/${total} home`}>
+      {Array.from({ length: total }, (_, slot) => (
         <span
           key={slot}
           aria-hidden="true"
@@ -1042,7 +1072,7 @@ function HomePips({ home, color }: { home: number; color: string }) {
         />
       ))}
       <span className="sr-only">
-        {home} of {LUDO_TOKENS_PER_PLAYER} tokens home
+        {home} of {total} tokens home
       </span>
     </div>
   )

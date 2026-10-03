@@ -15,8 +15,8 @@ import {
   LUDO_HOME_BONUS,
   LUDO_HOME_INDEX,
   LUDO_SEATS,
-  LUDO_TOKENS_PER_PLAYER,
   rollLudoDice,
+  tokensPerPlayer,
   type LudoDie,
   type LudoMode,
   type LudoMove,
@@ -84,6 +84,8 @@ export interface GameState {
   seatOrder: (string | null)[]
   status: "waiting" | "playing" | "finished"
   mode: LudoMode
+  /** Quick game: two pawns each, entering on a 5 or a 6. */
+  quick: boolean
   maxPlayers: number
   roundId: string
   turnSeat: number
@@ -122,6 +124,7 @@ export interface PublicGameState {
   seatOrder: (string | null)[]
   status: GameState["status"]
   mode: LudoMode
+  quick: boolean
   maxPlayers: number
   roundId: string
   turnSeat: number
@@ -144,6 +147,7 @@ export type ClientMessage =
   | { type: "remove-player"; playerId: unknown }
   | { type: "set-bot-level"; playerId: unknown; level: unknown }
   | { type: "set-mode"; mode: unknown }
+  | { type: "set-quick"; quick: unknown }
   | { type: "roll"; roundId: unknown }
   | { type: "move"; moveId: unknown; roundId: unknown }
   | { type: "restart" }
@@ -161,8 +165,8 @@ const BOT_TURN_MS = 3400
 const BOT_STEP_MS = 1300
 const BOT_NAMES = ["Ada", "Baxter", "Cleo", "Dodge"]
 
-function freshTokens(): number[] {
-  return Array.from({ length: LUDO_TOKENS_PER_PLAYER }, () => LUDO_BASE)
+function freshTokens(quick: boolean): number[] {
+  return Array.from({ length: tokensPerPlayer(quick) }, () => LUDO_BASE)
 }
 
 class LudoParty implements Party.Server {
@@ -184,6 +188,7 @@ class LudoParty implements Party.Server {
     stored.log ??= []
     stored.lastMove ??= null
     stored.rollAgain ??= false
+    stored.quick ??= false
     for (const player of Object.values(stored.players)) {
       const wasConnected = player.connected !== false
       player.connected = false
@@ -216,7 +221,7 @@ class LudoParty implements Party.Server {
   allTokens(): number[][] {
     if (!this.state) return []
     return this.state.seatOrder.map(
-      (id) => (id ? this.state?.players[id]?.tokens : null) ?? freshTokens(),
+      (id) => (id ? this.state?.players[id]?.tokens : null) ?? freshTokens(this.state?.quick ?? false),
     )
   }
 
@@ -245,6 +250,7 @@ class LudoParty implements Party.Server {
       seatOrder: [...this.state.seatOrder],
       status: this.state.status,
       mode: this.state.mode,
+      quick: this.state.quick,
       maxPlayers: this.state.maxPlayers,
       roundId: this.state.roundId,
       turnSeat: this.state.turnSeat,
@@ -410,6 +416,7 @@ class LudoParty implements Party.Server {
       this.state.dice,
       this.allTokens(),
       this.allySeats(this.state.turnSeat),
+      this.state.quick,
     )
   }
 
@@ -605,6 +612,7 @@ class LudoParty implements Party.Server {
         seatOrder: Array.from({ length: LUDO_SEATS }, () => null),
         status: "waiting",
         mode: "classic",
+        quick: false,
         maxPlayers: LUDO_SEATS,
         roundId: crypto.randomUUID(),
         turnSeat: 0,
@@ -694,7 +702,7 @@ class LudoParty implements Party.Server {
             connected: true,
             disconnectedAt: null,
             seat: null,
-            tokens: freshTokens(),
+            tokens: freshTokens(this.state.quick),
           }
           this.state.playerTokens[sender.id] = playerToken
           if (
@@ -734,7 +742,7 @@ class LudoParty implements Party.Server {
             connected: true,
             disconnectedAt: null,
             seat: null,
-            tokens: freshTokens(),
+            tokens: freshTokens(this.state.quick),
             isBot: true,
             botLevel: "normal",
           }
@@ -808,6 +816,28 @@ class LudoParty implements Party.Server {
           return
         }
 
+        case "set-quick": {
+          if (this.state.status !== "waiting") {
+            this.send(sender, { type: "error", message: "Game already started" })
+            return
+          }
+          if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
+            this.send(sender, { type: "error", message: "Only the host can change the mode" })
+            return
+          }
+          if (typeof data.quick !== "boolean") {
+            this.send(sender, { type: "error", message: "Unknown mode" })
+            return
+          }
+          this.state.quick = data.quick
+          for (const player of Object.values(this.state.players)) {
+            player.tokens = freshTokens(this.state.quick)
+          }
+          await this.saveState()
+          this.broadcastState()
+          return
+        }
+
         case "start": {
           if (this.state.status !== "waiting") {
             this.send(sender, { type: "error", message: "Game is not waiting to start" })
@@ -847,7 +877,7 @@ class LudoParty implements Party.Server {
           )
           seated.forEach((player, index) => {
             player.seat = index
-            player.tokens = freshTokens()
+            player.tokens = freshTokens(this.state.quick)
             seatOrder[index] = player.id
           })
           this.state.seatOrder = seatOrder
@@ -936,7 +966,7 @@ class LudoParty implements Party.Server {
           this.state.winner = null
           for (const player of Object.values(this.state.players)) {
             player.seat = null
-            player.tokens = freshTokens()
+            player.tokens = freshTokens(this.state.quick)
           }
           await this.room.storage.deleteAlarm()
           await this.saveState()

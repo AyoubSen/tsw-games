@@ -185,6 +185,8 @@ export function useMultiplayerLudo() {
       isHost && sendNow({ type: "set-bot-level", playerId, level }),
     setMode: (mode: "classic" | "teams") =>
       isHost && sendNow({ type: "set-mode", mode }),
+    setQuick: (quick: boolean) =>
+      isHost && sendNow({ type: "set-quick", quick }),
     restartGame: () => isHost && sendNow({ type: "restart" }),
     disconnect,
     abandonReconnect,

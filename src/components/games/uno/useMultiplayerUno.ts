@@ -10,7 +10,7 @@ import {
   leavePartySocket,
   PARTYKIT_HOST,
 } from "@/lib/partykit"
-import type { UnoColor } from "@/lib/uno"
+import type { UnoColor, UnoRules } from "@/lib/uno"
 import type { PublicUnoGameState, ServerMessage } from "../../../../party/uno"
 
 const INITIAL_STATE = {
@@ -117,11 +117,13 @@ export function useMultiplayerUno() {
     createGame,
     joinGame,
     startGame: () => isHost && send({ type: "start" }),
-    playCard: (cardId: string, color?: UnoColor) => send({ type: "play", cardId, ...(color && { color }) }),
+    playCard: (cardId: string, color?: UnoColor, targetId?: string) => send({ type: "play", cardId, ...(color && { color }), ...(targetId && { targetId }) }),
     drawCard: () => send({ type: "draw" }),
     pass: () => send({ type: "pass" }),
     callUno: () => send({ type: "uno" }),
     catchUno: (playerId: string) => send({ type: "catch", playerId }),
+    challenge: () => send({ type: "challenge" }),
+    setRule: (rule: keyof UnoRules, enabled: boolean) => isHost && send({ type: "set-rule", rule, enabled }),
     restartGame: () => isHost && send({ type: "restart" }),
     addBot: () => isHost && send({ type: "add-bot" }),
     removePlayer: (playerId: string) => isHost && send({ type: "remove-player", playerId }),

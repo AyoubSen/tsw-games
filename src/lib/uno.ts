@@ -74,3 +74,46 @@ export function canPlayUnoCard(
   }
   return card.color === activeColor || card.value === topCard.value
 }
+
+export interface UnoRules {
+  stacking: boolean
+  challenge: boolean
+  sevenZero: boolean
+  jumpIn: boolean
+}
+
+export const DEFAULT_UNO_RULES: UnoRules = { stacking: false, challenge: false, sevenZero: false, jumpIn: false }
+
+export const UNO_RULE_INFO: { key: keyof UnoRules; label: string; description: string }[] = [
+  { key: "stacking", label: "Stacking", description: "Answer a +2 with a +2 or +4, or a +4 with a +4. Whoever can't stack draws the total." },
+  { key: "challenge", label: "+4 challenge", description: "A +4 can be played any time. Challenge it: a bluffer draws 4, otherwise you draw 6." },
+  { key: "sevenZero", label: "7-0", description: "A 7 swaps hands with a player of your choice. A 0 passes every hand along." },
+  { key: "jumpIn", label: "Jump-in", description: "Play an identical card out of turn. Play continues from you." },
+]
+
+export function isUnoRule(value: unknown): value is keyof UnoRules {
+  return typeof value === "string" && value in DEFAULT_UNO_RULES
+}
+
+/** Whether a card can be played on your turn, given the house rules and any +2/+4 waiting to be stacked or drawn. */
+export function canPlayUnoTurn(
+  card: UnoCard,
+  topCard: UnoCard,
+  activeColor: UnoColor,
+  hand: readonly UnoCard[],
+  rules: UnoRules,
+  pendingDraw: number,
+): boolean {
+  // With challenges on, a +4 may be a bluff.
+  const strictHand = rules.challenge ? [] : hand
+  if (pendingDraw > 0) {
+    if (!rules.stacking) return false
+    if (card.value === "wild-draw-four") return canPlayUnoCard(card, topCard, activeColor, strictHand)
+    return card.value === "draw-two" && topCard.value === "draw-two"
+  }
+  return canPlayUnoCard(card, topCard, activeColor, strictHand)
+}
+
+export function canJumpInUno(card: UnoCard, topCard: UnoCard): boolean {
+  return card.color !== null && card.color === topCard.color && card.value === topCard.value
+}

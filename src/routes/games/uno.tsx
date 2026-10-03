@@ -7,6 +7,8 @@ import { UnoGame } from "@/components/games/uno/UnoGame"
 import { useMultiplayerUno } from "@/components/games/uno/useMultiplayerUno"
 import { Button } from "@/components/ui/button"
 import { GameTopBar, MultiplayerLobby, MultiplayerSetupCard } from "@/components/multiplayer/shared"
+import { UNO_RULE_INFO } from "@/lib/uno"
+import { cn } from "@/lib/utils"
 import { getGameNightInviteLink, getInviteLink, parseInviteSearch } from "@/lib/inviteLinks"
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
 
@@ -71,11 +73,26 @@ function UnoPage() {
   if ((view === "select" || view === "lobby") && !multiplayer.gameState) return <div className="min-h-[calc(100vh-73px)] bg-gradient-to-b from-red-500/10 via-background to-background">
     <GameTopBar title="Uno" subtitle="Match colors, numbers, and action cards" />
     <main className="mx-auto max-w-xl px-4 py-10"><MultiplayerSetupCard title="Multiplayer Uno" description="Create a private table for 2-8 players, or fill seats with bots." icon={<Users className="h-5 w-5 text-red-500" />} playerName={name} roomCode={roomCode} createLabel="Create Uno Room" onPlayerNameChange={setName} onRoomCodeChange={setRoomCode} onJoin={join} onCreate={create} message={message}>
-      <div className="rounded-2xl bg-muted/60 p-4 text-sm text-muted-foreground">Draw one card, play matching colors or values, and empty your hand first. No stacking or challenges.</div>
+      <div className="rounded-2xl bg-muted/60 p-4 text-sm text-muted-foreground">Draw one card, play matching colors or values, and empty your hand first. The host can turn on house rules in the lobby.</div>
     </MultiplayerSetupCard></main>
   </div>
   if (view === "lobby" && multiplayer.gameState && multiplayer.playerId) return <MultiplayerLobby title="Uno" subtitle="The first player out of cards wins" onBack={leave} players={players} hostId={multiplayer.gameState.hostId} currentPlayerId={multiplayer.playerId} playerDescription={`${connectedPlayers.length} of 8 players`} settings={<div className="space-y-3">
-    <div className="rounded-2xl border bg-red-500/5 p-4 text-sm"><p className="font-bold">Classic deck</p><p className="text-muted-foreground">7-card hands, call UNO at one card or get caught for +2, no stacking.</p></div>
+    <div className="rounded-2xl border bg-red-500/5 p-4 text-sm"><p className="font-bold">Classic deck</p><p className="text-muted-foreground">7-card hands, call UNO at one card or get caught for +2.</p></div>
+    <div className="rounded-2xl border bg-red-500/5 p-4 text-sm">
+      <p className="font-bold">House rules</p>
+      <ul className="mt-2 space-y-2">
+        {UNO_RULE_INFO.map((rule) => {
+          const on = multiplayer.gameState!.rules[rule.key]
+          return <li key={rule.key} className="flex items-start justify-between gap-3">
+            <span><span className="font-semibold">{rule.label}</span><span className="block text-muted-foreground">{rule.description}</span></span>
+            <button type="button" role="switch" aria-checked={on} aria-label={rule.label} disabled={!multiplayer.isHost} onClick={() => multiplayer.setRule(rule.key, !on)} className={cn("relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60", on ? "bg-red-500" : "bg-muted-foreground/30")}>
+              <span className={cn("absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow transition-transform", on && "translate-x-5")} />
+            </button>
+          </li>
+        })}
+      </ul>
+      {!multiplayer.isHost && <p className="mt-2 text-xs text-muted-foreground">Only the host can change house rules.</p>}
+    </div>
     <div className="rounded-2xl border bg-red-500/5 p-4 text-sm">
       <div className="flex items-center justify-between gap-2">
         <p className="font-bold">Bots</p>
@@ -89,6 +106,6 @@ function UnoPage() {
       </ul>}
     </div>
   </div>} roomCode={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode} copiedRoomCode={copied} onCopyRoomCode={copyInvite} onStart={multiplayer.startGame} onLeave={leave} canStart={connectedPlayers.length >= 2} isHost={multiplayer.isHost} message={message} startLabel="Deal Cards" />
-  if (view === "game" && multiplayer.gameState && multiplayer.playerId) return <UnoGame state={multiplayer.gameState} playerId={multiplayer.playerId} isHost={multiplayer.isHost} roomLabel={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode} message={message} connected={multiplayer.connectionStatus === "connected"} onPlayCard={multiplayer.playCard} onDrawCard={multiplayer.drawCard} onPass={multiplayer.pass} onCallUno={multiplayer.callUno} onCatch={multiplayer.catchUno} onRestart={multiplayer.restartGame} onLeave={leave} />
+  if (view === "game" && multiplayer.gameState && multiplayer.playerId) return <UnoGame state={multiplayer.gameState} playerId={multiplayer.playerId} isHost={multiplayer.isHost} roomLabel={bridge.isGameNight ? bridge.publicRoomCode : multiplayer.gameState.roomCode} message={message} connected={multiplayer.connectionStatus === "connected"} onPlayCard={multiplayer.playCard} onDrawCard={multiplayer.drawCard} onPass={multiplayer.pass} onCallUno={multiplayer.callUno} onCatch={multiplayer.catchUno} onChallenge={multiplayer.challenge} onRestart={multiplayer.restartGame} onLeave={leave} />
   return null
 }

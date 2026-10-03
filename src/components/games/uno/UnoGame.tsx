@@ -1,12 +1,15 @@
 import { ArrowLeft, Bot, Crown, Layers, RotateCcw, Trophy, WifiOff, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import {
-  canPlayUnoCard,
+  canJumpInUno,
+  canPlayUnoTurn,
   UNO_COLORED_VALUES,
   UNO_COLORS,
+  UNO_RULE_INFO,
   UNO_WILD_VALUES,
   type UnoCard,
   type UnoColor,
+  type UnoRules,
 } from "@/lib/uno"
 import { cn } from "@/lib/utils"
 import type { PublicUnoGameState, UnoAction } from "../../../../party/uno"
@@ -19,11 +22,12 @@ export interface UnoGameProps {
   roomLabel: string
   message: string | null
   connected: boolean
-  onPlayCard: (cardId: string, color?: UnoColor) => void
+  onPlayCard: (cardId: string, color?: UnoColor, targetId?: string) => void
   onDrawCard: () => void
   onPass: () => void
   onCallUno: () => void
   onCatch: (playerId: string) => void
+  onChallenge: () => void
   onRestart: () => void
   onLeave: () => void
 }
@@ -62,7 +66,7 @@ function timeline(action: UnoAction, me: string, reduced: boolean) {
     const land = 540 * motion
     const draws = action.drawCount ?? 0
     const settle = draws ? land + (300 + (draws - 1) * 150 + 520) * motion + 150 : land
-    const loud = action.card.color === null || action.card.value === "skip" || action.card.value === "reverse" || action.card.value === "draw-two" || action.cardsLeft <= 1
+    const loud = action.card.color === null || action.card.value === "skip" || action.card.value === "reverse" || action.card.value === "draw-two" || action.cardsLeft <= 1 || Boolean(action.swapId || action.rotated || action.jumpIn)
     return { land, settle, release: settle + (loud ? 1500 : 900) }
   }
   if (action.type === "draw") {
@@ -70,8 +74,8 @@ function timeline(action: UnoAction, me: string, reduced: boolean) {
     const mine = action.playerId === me
     return { land, settle: land, release: land + (mine ? (action.playable ? 250 : 1500) : action.playable ? 400 : 800) }
   }
-  if (action.type === "catch") {
-    const settle = ((action.drawCount - 1) * 150 + 520) * motion + 150
+  if (action.type === "catch" || action.type === "penalty" || action.type === "challenge") {
+    const settle = ((Math.max(action.drawCount, 1) - 1) * 150 + 520) * motion + 150
     return { land: 0, settle, release: settle + 1500 }
   }
   if (action.type === "pass") return { land: 0, settle: 0, release: 900 }
@@ -79,7 +83,7 @@ function timeline(action: UnoAction, me: string, reduced: boolean) {
   return { land: 0, settle: 0, release: 1400 }
 }
 
-function storyOf(action: UnoAction, me: string): Story {
+function storyOf(action: UnoAction, me: string, rules: UnoRules): Story {
   const you = action.playerId === me
   const actor = you ? "You" : action.name
   const verb = (subject: string, plain: string, third: string) => `${subject} ${subject === "You" ? plain : third}`
@@ -88,16 +92,23 @@ function storyOf(action: UnoAction, me: string): Story {
       return { line: `Cards dealt · ${you ? "you go" : `${action.name} goes`} first` }
     case "play": {
       const wild = action.card.color === null
-      const line = `${actor} played ${cardLabel(action.card)}${wild ? ` · ${COLOR_NAME[action.color]}` : ""}`
+      const line = `${actor} ${action.jumpIn ? "jumped in with" : "played"} ${cardLabel(action.card)}${wild ? ` · ${COLOR_NAME[action.color]}` : ""}`
       const base = { line, tone: action.color }
       const victim = action.victimId === me ? "You" : action.victimName
       const skipped = action.skippedId === me ? "You" : action.skippedName
       const colorNote = wild ? ` · color is ${COLOR_NAME[action.color]}` : ""
       if (action.cardsLeft === 0) return { ...base, stamp: "Out!", sub: `${actor} played ${you ? "your" : "their"} last card` }
       const unoNote = action.cardsLeft !== 1 ? "" : action.unoCalled ? ` · ${verb(actor, "call", "calls")} UNO!` : ` · ${verb(actor, "have", "has")} one card left`
+      if (action.swapId) return { ...base, stamp: "Swap", sub: `${actor} swapped hands with ${action.swapId === me ? "you" : action.swapName}${unoNote}` }
+      if (action.rotated) return { ...base, stamp: "Rotate", sub: `Every hand passes one seat along${unoNote}` }
       switch (action.card.value) {
         case "draw-two":
         case "wild-draw-four":
+          if (action.stack) {
+            const facing = action.facingId === me ? "You" : action.facingName ?? "Next player"
+            const options = [rules.stacking && "stack", action.card.value === "wild-draw-four" && rules.challenge && "challenge"].filter(Boolean).join(", ")
+            return { ...base, stamp: action.card.value === "draw-two" ? "+2" : "+4", sub: `${facing} can ${options} or draw ${action.stack}${colorNote}${unoNote}` }
+          }
           return { ...base, stamp: action.card.value === "draw-two" ? "+2" : "+4", sub: victim ? `${verb(victim, "draw", "draws")} ${action.drawCount ?? 0} and ${victim === "You" ? "miss" : "misses"} a turn${colorNote}${unoNote}` : undefined }
         case "skip":
           return { ...base, stamp: "Skip", sub: skipped ? `${verb(skipped, "miss", "misses")} a turn${unoNote}` : undefined }
@@ -106,6 +117,7 @@ function storyOf(action: UnoAction, me: string): Story {
         case "wild":
           return { ...base, stamp: "Wild", sub: `Color is now ${COLOR_NAME[action.color]}${unoNote}` }
         default:
+          if (action.jumpIn) return { ...base, stamp: "Jump-in!", sub: `Play continues from ${you ? "you" : action.name}${unoNote}` }
           if (action.cardsLeft !== 1) return base
           return action.unoCalled ? { ...base, stamp: "UNO!", sub: `${verb(actor, "have", "has")} one card left` } : { ...base, sub: `${verb(actor, "have", "has")} one card left` }
       }
@@ -118,6 +130,16 @@ function storyOf(action: UnoAction, me: string): Story {
     case "catch": {
       const victim = action.victimId === me ? "You" : action.victimName
       return { line: `${actor} caught ${victim === "You" ? "you" : victim}`, stamp: "Caught!", sub: `${verb(victim, "draw", "draws")} ${action.drawCount} for not calling UNO` }
+    }
+    case "penalty":
+      return { line: `${actor} drew ${action.drawCount}`, stamp: `+${action.drawCount}`, sub: `${verb(actor, "take", "takes")} the stack and ${actor === "You" ? "miss" : "misses"} a turn` }
+    case "challenge": {
+      const target = action.targetId === me ? "You" : action.targetName
+      const victim = action.victimId === me ? "You" : action.victimName
+      const line = `${actor} challenged ${target === "You" ? "your" : `${target}'s`} +4`
+      return action.guilty
+        ? { line, stamp: "Busted!", sub: `${target} had a matching color · ${verb(victim, "draw", "draws")} ${action.drawCount}` }
+        : { line, stamp: "Legit", sub: `${verb(victim, "draw", "draws")} ${action.drawCount} and ${victim === "You" ? "miss" : "misses"} a turn` }
     }
     case "timeout":
       return { line: `${actor} ran out of time` }
@@ -153,7 +175,7 @@ function useReducedMotion() {
   return reduced
 }
 
-export function UnoGame({ state, playerId, isHost, roomLabel, message, connected, onPlayCard, onDrawCard, onPass, onCallUno, onCatch, onRestart, onLeave }: UnoGameProps) {
+export function UnoGame({ state, playerId, isHost, roomLabel, message, connected, onPlayCard, onDrawCard, onPass, onCallUno, onCatch, onChallenge, onRestart, onLeave }: UnoGameProps) {
   const reduced = useReducedMotion()
   const rootRef = useRef<HTMLDivElement>(null)
   const [tableRef, table] = useElementSize<HTMLDivElement>()
@@ -253,8 +275,8 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
       for (let index = 0; victimPose && index < (action.drawCount ?? 0); index++) {
         added.push({ id: `v${action.id}-${index}`, card: null, flip: false, fade: true, from: deckPose, to: victimPose, w, h, delay: land + 300 + index * 150, duration: 520 })
       }
-    } else if (action.type === "catch") {
-      const victimPose = seatPose(action.victimId)
+    } else if (action.type === "catch" || action.type === "penalty" || action.type === "challenge") {
+      const victimPose = seatPose(action.type === "penalty" ? action.playerId : action.victimId)
       for (let index = 0; victimPose && index < action.drawCount; index++) {
         added.push({ id: `c${action.id}-${index}`, card: null, flip: false, fade: true, from: deckPose, to: victimPose, w, h, delay: index * 150, duration: 520 })
       }
@@ -280,7 +302,7 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
     drawnCardId: snapshot ? snapshot.drawnCardId : state.drawnCardId,
     deckCount: beforeLanding ? snapshot!.deckCount : state.deckCount,
   }
-  const victimId = action?.type === "play" || action?.type === "catch" ? action.victimId : undefined
+  const victimId = action?.type === "play" || action?.type === "catch" || action?.type === "challenge" ? action.victimId : action?.type === "penalty" ? action.playerId : undefined
   const countOf = (id: string) => {
     const live = state.players[id]?.cardCount ?? 0
     if (!snapshot) return live
@@ -289,8 +311,10 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
     if (id === victimId && active?.phase !== "settled") return before
     return live
   }
-  const holdHand = snapshot && ((beforeLanding && action?.type === "draw" && action.playerId === playerId) || (victimId === playerId && active?.phase !== "settled"))
-  const rawHand = holdHand ? snapshot.myHand : state.myHand
+  const handsMoved = action?.type === "play" && Boolean(action.swapId || action.rotated)
+  const holdHand = snapshot && ((beforeLanding && (handsMoved || (action?.type === "draw" && action.playerId === playerId))) || (victimId === playerId && active?.phase !== "settled"))
+  // A held hand still has the card that is in flight.
+  const rawHand = holdHand ? snapshot.myHand.filter((card) => action?.type !== "play" || card.id !== action.card.id) : state.myHand
   const hand = useMemo(() => sortHand(rawHand.filter((card) => card.id !== pending?.cardId)), [rawHand, pending?.cardId])
 
   // ---- Side effects tied to what is shown ----
@@ -342,19 +366,29 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
   // ---- Turn and options ----
   const myTurn = view.currentPlayerId === playerId && view.status === "playing"
   const canAct = myTurn && !active && connected && !pending
-  const isPlayable = (card: UnoCard) => Boolean(
+  const rules = state.rules
+  const pendingDraw = state.pendingDraw
+  const canChallenge = canAct && Boolean(state.pendingChallengeBy)
+  // Jump-in: an identical card can be played out of turn once the last play has landed.
+  const jumpOpen = rules.jumpIn && connected && !pending && !beforeLanding && state.status === "playing" && !pendingDraw && state.currentPlayerId !== playerId && state.topPlayerId !== playerId
+  const isJumpable = (card: UnoCard) => Boolean(jumpOpen && state.topCard && canJumpInUno(card, state.topCard))
+  const isPlayable = (card: UnoCard) => isJumpable(card) || Boolean(
     canAct && view.topCard && view.activeColor &&
     (!view.drawnCardId || view.drawnCardId === card.id) &&
-    canPlayUnoCard(card, view.topCard, view.activeColor, state.myHand),
+    canPlayUnoTurn(card, view.topCard, view.activeColor, state.myHand, rules, pendingDraw),
   )
   const hasPlayable = hand.some(isPlayable)
   const canDraw = canAct && !view.drawnCardId
-  const selected = canAct ? hand.find((card) => card.id === (view.drawnCardId ?? selectedId)) ?? null : null
+  const selected = canAct
+    ? hand.find((card) => card.id === (view.drawnCardId ?? selectedId)) ?? null
+    : hand.find((card) => card.id === selectedId && isJumpable(card)) ?? null
   const selectedPlayable = selected ? isPlayable(selected) : false
+  const needsTarget = (card: UnoCard) => rules.sevenZero && card.value === "7" && rawHand.length > 1
+  const swapTargets = state.seatOrder.filter((id) => id !== playerId && state.players[id])
 
   useEffect(() => {
-    if (!canAct) setSelectedId(null)
-  }, [canAct])
+    if (!canAct && !jumpOpen) setSelectedId(null)
+  }, [canAct, jumpOpen])
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSelectedId(null)
@@ -363,13 +397,18 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
     return () => window.removeEventListener("keydown", onKey)
   }, [])
 
-  const play = (card: UnoCard, color?: UnoColor) => {
+  const play = (card: UnoCard, color?: UnoColor, targetId?: string) => {
     if (!isPlayable(card)) return
     const spot = spotOf(cardRefs.current.get(card.id))
     playedFrom.current = spot ? { id: card.id, spot } : null
     setPending({ cardId: card.id })
     setSelectedId(null)
-    onPlayCard(card.id, color)
+    onPlayCard(card.id, color, targetId)
+  }
+  const challenge = () => {
+    if (!canChallenge) return
+    setPending({ cardId: null })
+    onChallenge()
   }
   const draw = () => {
     if (!canDraw) return
@@ -387,7 +426,7 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
   const canCatch = (id: string) => connected && exposed.includes(id) && !(action?.type === "play" && action.playerId === id)
 
   const pick = (card: UnoCard) => {
-    if (!canAct || view.drawnCardId) return
+    if ((!canAct || view.drawnCardId) && !isJumpable(card)) return
     setSelectedId((current) => (current === card.id ? null : card.id))
   }
 
@@ -417,8 +456,8 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
 
   // ---- Words ----
   const nameOf = (id: string | null) => (id === playerId ? "You" : id ? state.players[id]?.name ?? snapshot?.players[id]?.name ?? "Player" : "Player")
-  const story = action ? storyOf(action, playerId) : null
-  const lastStory = latest ? storyOf(latest, playerId) : null
+  const story = action ? storyOf(action, playerId, rules) : null
+  const lastStory = latest ? storyOf(latest, playerId, rules) : null
   const winner = state.winnerId
   const finished = view.status === "finished"
   const matchText = view.topCard && view.activeColor
@@ -429,13 +468,18 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
     : story
       ? story.line
       : myTurn
-        ? view.drawnCardId ? "Play the card you drew, or keep it" : hasPlayable ? "Your turn · pick a card" : "Your turn · nothing matches, draw a card"
+        ? pendingDraw && !active
+          ? `${hasPlayable ? "Stack" : state.pendingChallengeBy ? "Challenge the +4" : "Nothing to stack"} or draw ${pendingDraw}`
+          : view.drawnCardId ? "Play the card you drew, or keep it" : hasPlayable ? "Your turn · pick a card" : "Your turn · nothing matches, draw a card"
         : `${nameOf(view.currentPlayerId)}'s turn`
   const turnHex = myTurn ? TURN_GOLD : view.activeColor ? COLOR_HEX[view.activeColor].base : "#94a3b8"
   const seatTag = (id: string) => {
-    if (action?.type === "catch" && action.victimId === id) return `+${action.drawCount}`
+    if ((action?.type === "catch" || action?.type === "challenge") && action.victimId === id) return `+${action.drawCount}`
+    if (action?.type === "penalty" && action.playerId === id) return `+${action.drawCount}`
     if (!action || action.type !== "play" || beforeLanding) return null
     if (action.victimId === id) return `+${action.drawCount ?? 0}`
+    if (action.facingId === id) return `+${action.stack}?`
+    if (action.swapId === id) return "Swapped"
     if (action.skippedId === id) return "Skipped"
     return null
   }
@@ -478,7 +522,7 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
         type="button"
         style={{ ...style, width: handCardW, height: handCardH }}
         onClick={() => pick(card)}
-        onDoubleClick={() => card.color && play(card)}
+        onDoubleClick={() => card.color && !needsTarget(card) && play(card)}
         aria-pressed={isSelected}
         aria-label={`${cardLabel(card)}${playable ? ", playable" : ""}`}
         className={cn(
@@ -508,25 +552,45 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
   }
 
   // ---- Option tray (only for the card that was picked) ----
+  const pickTarget = (card: UnoCard, label: string, extra: ReactNode) => (
+    <div className="flex items-center gap-2">
+      <span className="px-1 text-sm font-semibold">{label}</span>
+      {swapTargets.map((id) => (
+        <TrayButton key={id} tone="ghost" onClick={() => play(card, undefined, id)}>{state.players[id]!.name}<span className="rounded-full bg-white/15 px-1.5 text-xs">{state.players[id]!.cardCount}</span></TrayButton>
+      ))}
+      {extra}
+    </div>
+  )
   let tray: ReactNode = null
-  if (finished || !canAct) tray = null
-  else if (selected && view.drawnCardId) {
+  if (finished) tray = null
+  else if (!canAct) {
+    tray = !selected ? null : needsTarget(selected)
+      ? pickTarget(selected, "Jump in · swap with", <IconButton label="Cancel" onClick={() => setSelectedId(null)} />)
+      : <div className="flex items-center gap-2"><TrayButton onClick={() => play(selected)}>Jump in with {cardLabel(selected)}</TrayButton><IconButton label="Cancel" onClick={() => setSelectedId(null)} /></div>
+  } else if (selected && view.drawnCardId) {
     tray = selected.color === null
       ? <ColorPicker label="You drew a wild · pick a color" onPick={(color) => play(selected, color)} extra={<TrayButton tone="ghost" onClick={keep}>Keep it</TrayButton>} />
-      : <div className="flex items-center gap-2"><span className="px-1 text-sm font-semibold">You drew {cardLabel(selected)}</span><TrayButton onClick={() => play(selected)}>Play it</TrayButton><TrayButton tone="ghost" onClick={keep}>Keep it</TrayButton></div>
+      : needsTarget(selected)
+        ? pickTarget(selected, `You drew ${cardLabel(selected)} · swap with`, <TrayButton tone="ghost" onClick={keep}>Keep it</TrayButton>)
+        : <div className="flex items-center gap-2"><span className="px-1 text-sm font-semibold">You drew {cardLabel(selected)}</span><TrayButton onClick={() => play(selected)}>Play it</TrayButton><TrayButton tone="ghost" onClick={keep}>Keep it</TrayButton></div>
+  } else if (selected && selectedPlayable && needsTarget(selected)) {
+    tray = pickTarget(selected, "Swap hands with", <IconButton label="Cancel" onClick={() => setSelectedId(null)} />)
   } else if (selected && selectedPlayable && selected.color === null) {
     tray = <ColorPicker label={selected.value === "wild-draw-four" ? "Wild +4 · pick a color" : "Wild · pick a color"} onPick={(color) => play(selected, color)} extra={<IconButton label="Cancel" onClick={() => setSelectedId(null)} />} />
   } else if (selected && selectedPlayable) {
     tray = <div className="flex items-center gap-2"><span className="px-1 text-sm font-semibold">{cardLabel(selected)}</span><TrayButton onClick={() => play(selected)}>Play card</TrayButton><IconButton label="Cancel" onClick={() => setSelectedId(null)} /></div>
   } else if (selected) {
-    const why = selected.value === "wild-draw-four" && view.activeColor
-      ? `Wild +4 only works with no ${COLOR_NAME[view.activeColor]} cards in hand`
-      : `${cardLabel(selected)} doesn't match · needs ${matchText}`
+    const why = pendingDraw
+      ? rules.stacking ? `Only ${view.topCard?.value === "draw-two" ? "a +2 or +4" : "a +4"} can stack` : `Draw ${pendingDraw}${canChallenge ? " or challenge" : ""}`
+      : selected.value === "wild-draw-four" && view.activeColor
+        ? `Wild +4 only works with no ${COLOR_NAME[view.activeColor]} cards in hand`
+        : `${cardLabel(selected)} doesn't match · needs ${matchText}`
     tray = <div className="flex items-center gap-2"><span className="px-1 text-sm font-semibold text-white/80">{why}</span><IconButton label="Close" onClick={() => setSelectedId(null)} /></div>
   } else {
     tray = <div className="flex items-center gap-2">
-      <span className="px-1 text-sm font-semibold">{hasPlayable ? "Pick a glowing card" : "Nothing matches"}</span>
-      <TrayButton tone={hasPlayable ? "ghost" : "solid"} onClick={draw}><Layers className="size-4" />Draw</TrayButton>
+      <span className="px-1 text-sm font-semibold">{pendingDraw ? `${hasPlayable ? "Stack" : "Facing"} +${pendingDraw}` : hasPlayable ? "Pick a glowing card" : "Nothing matches"}</span>
+      {canChallenge && <TrayButton onClick={challenge}>Challenge</TrayButton>}
+      <TrayButton tone={hasPlayable || canChallenge ? "ghost" : "solid"} onClick={draw}><Layers className="size-4" />{pendingDraw ? `Draw ${pendingDraw}` : "Draw"}</TrayButton>
     </div>
   }
 
@@ -695,6 +759,15 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
         </div>
       </div>
 
+      {/* Active house rules. */}
+      {UNO_RULE_INFO.some((rule) => rules[rule.key]) && (
+        <ul aria-label="House rules" className="pointer-events-none absolute left-3 top-16 flex max-w-[45vw] flex-wrap gap-1 lg:left-6 lg:top-[76px] lg:max-w-56">
+          {UNO_RULE_INFO.filter((rule) => rules[rule.key]).map((rule) => (
+            <li key={rule.key} title={rule.description} className="pointer-events-auto rounded-full border border-white/10 bg-black/45 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white/75 backdrop-blur">{rule.label}</li>
+          ))}
+        </ul>
+      )}
+
       {/* Recent actions (wide screens). */}
       {logEntries.length > 0 && (
         <div className={cn(GLASS, "absolute right-6 top-24 hidden w-64 p-3 xl:block")}>
@@ -707,7 +780,7 @@ export function UnoGame({ state, playerId, isHost, roomLabel, message, connected
                 ) : (
                   <span className="grid h-[21px] w-[14px] shrink-0 place-items-center rounded-sm bg-white/10 text-[9px]">·</span>
                 )}
-                <span className="min-w-0 truncate">{storyOf(entry, playerId).line}</span>
+                <span className="min-w-0 truncate">{storyOf(entry, playerId, rules).line}</span>
               </li>
             ))}
           </ol>

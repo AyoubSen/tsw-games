@@ -27,6 +27,8 @@ export interface PokerGameProps {
   onRebuy: () => void
   onToggleSitOut: () => void
   onEndGame: () => void
+  onShowCards: (cards: number[]) => void
+  onMuck: () => void
   onLeave: () => void
 }
 
@@ -194,7 +196,8 @@ function logLine(entry: PokerLogEntry, me: string): { text: ReactNode; tone?: st
     case "raise": return { text: `${who} raised to ${n(entry.amount)}`, tone: "text-amber-100" }
     case "all-in": return { text: `${who} went all in · ${n(entry.amount)}`, tone: "text-rose-200" }
     case "street": return { text: <>{STREET_LABEL[entry.round ?? ""] ?? "Board"} <MiniCards cards={entry.cards ?? []} /></>, tone: "text-emerald-200 font-semibold" }
-    case "show": return { text: <>{who} showed <MiniCards cards={entry.cards ?? []} /> · {entry.hand}</> }
+    case "show": return { text: <>{who} showed <MiniCards cards={entry.cards ?? []} />{entry.hand && <> · {entry.hand}</>}</> }
+    case "muck": return { text: `${who} mucked`, tone: "text-white/45" }
     case "win": return { text: `${who} won ${n(entry.amount)}${entry.hand ? ` with ${entry.hand}` : ""}`, tone: "text-amber-300 font-semibold" }
     case "timeout": return { text: `${who} ran out of time`, tone: "text-rose-300" }
     case "rebuy": return { text: `${who} bought back in for ${n(entry.amount)}`, tone: "text-sky-200" }
@@ -276,7 +279,7 @@ function SeatPlate({ player, isMe, active, winner, compact, deadline, total, off
   )
 }
 
-export function PokerGame({ state, playerId, isHost, roomLabel, error, connected, onFold, onCheck, onCall, onRaise, onAllIn, onNextHand, onToggleAutoDeal, onRebuy, onToggleSitOut, onEndGame, onLeave }: PokerGameProps) {
+export function PokerGame({ state, playerId, isHost, roomLabel, error, connected, onFold, onCheck, onCall, onRaise, onAllIn, onNextHand, onToggleAutoDeal, onRebuy, onToggleSitOut, onEndGame, onShowCards, onMuck, onLeave }: PokerGameProps) {
   const reduced = useReducedMotion()
   const [stageRef, stage] = useElementSize<HTMLDivElement>()
   const geo = tableGeometry(stage.w || 1024, stage.h || 640)
@@ -421,12 +424,17 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
   const turnTotal = state.settings.turnTimeLimit * 1000
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
-    if (!state.turnDeadline && !state.nextHandAt) return
+    if (!state.turnDeadline && !state.nextHandAt && !state.showOffer) return
     const timer = window.setInterval(() => setNow(Date.now()), 250)
     return () => window.clearInterval(timer)
-  }, [state.turnDeadline, state.nextHandAt])
+  }, [state.turnDeadline, state.nextHandAt, state.showOffer])
   const secondsLeft = state.turnDeadline ? Math.max(0, Math.ceil((state.turnDeadline - (now + clockOffset.current)) / 1000)) : null
   const nextHandIn = state.nextHandAt ? Math.max(0, Math.ceil((state.nextHandAt - (now + clockOffset.current)) / 1000)) : null
+
+  // ---- Showing cards after a fold win, or mucking a beaten hand at showdown ----
+  const canShow = !!me && iHaveCards && state.showOffer?.playerId === playerId && state.showOffer.until > now + clockOffset.current
+  const canMuck = iHaveCards && state.muckable.includes(playerId)
+  const myShown = me?.shownCards ?? []
 
   const nameOf = (id: string | null) => (id === playerId ? "You" : id ? state.players[id]?.name ?? "Player" : "Player")
   const hostName = state.players[state.hostId]?.name ?? "the host"
@@ -645,13 +653,15 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
               if (!player.hasCards) return null
               const spot = cardSpot(id)
               const revealed = player.holeCards && player.holeCards.length === 2 ? player.holeCards : null
-              const w = revealed ? geo.showCardW : geo.seatCardW
+              const faces = revealed ?? player.shownCards
+              const anyUp = !!faces?.some((card) => card !== null)
+              const w = anyUp ? geo.showCardW : geo.seatCardW
               const dealer = state.dealerPlayerId ? buttonSpot(state.dealerPlayerId) : { x: geo.cx, y: geo.cy }
               const hand = revealed && state.communityCards.length >= 5 ? evaluateBestHand(revealed, state.communityCards).description : null
               const isWinner = winnerIds.has(id)
               return (
                 <div key={`${state.handNumber}-${id}`} className={cn("absolute z-10 -translate-x-1/2 -translate-y-1/2", player.folded && "poker-muck")} style={{ left: spot.x, top: spot.y }}>
-                  <div className="flex items-end" style={{ gap: revealed ? 3 : 0 }}>
+                  <div className="flex items-end" style={{ gap: anyUp ? 3 : 0 }}>
                     {[0, 1].map((index) => (
                       <div
                         key={index}
@@ -660,13 +670,13 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
                           ["--dx" as string]: `${dealer.x - spot.x}px`,
                           ["--dy" as string]: `${dealer.y - spot.y}px`,
                           animationDelay: `${dealDelay(id, index)}ms`,
-                          marginLeft: index === 1 && !revealed ? -w * 0.45 : 0,
+                          marginLeft: index === 1 && !anyUp ? -w * 0.45 : 0,
                         } as CSSProperties}
                       >
-                        <div className="transition-transform duration-500" style={{ transform: revealed ? undefined : `rotate(${index === 0 ? -8 : 8}deg)` }}>
+                        <div className="transition-transform duration-500" style={{ transform: anyUp ? undefined : `rotate(${index === 0 ? -8 : 8}deg)` }}>
                         <FlipCard
-                          card={revealed ? revealed[index] : null}
-                          faceUp={Boolean(revealed)}
+                          card={faces?.[index] ?? null}
+                          faceUp={faces?.[index] != null}
                           width={w}
                           delay={index * 140}
                           highlighted={handOver && revealed !== null && winningCards.has(revealed[index]) && isWinner}
@@ -704,7 +714,7 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
                           marginLeft: index === 1 ? -geo.heroW * 0.18 : 0,
                         } as CSSProperties}
                       >
-                        <div style={{ transform: `rotate(${index === 0 ? -6 : 6}deg) translateY(${index === 0 ? 2 : 0}px)` }}>
+                        <div className="transition-transform duration-300" style={{ transform: `rotate(${index === 0 ? -6 : 6}deg) translateY(${(index === 0 ? 2 : 0) - (myShown[index] != null ? geo.heroW * 0.12 : 0)}px)` }}>
                         <FlipCard
                           card={myCards[index] ?? null}
                           faceUp={iHaveCards}
@@ -718,6 +728,34 @@ export function PokerGame({ state, playerId, isHost, roomLabel, error, connected
                       </div>
                     ))}
                   </div>
+                  {(canShow || canMuck) && (
+                    <div className={cn(GLASS, "poker-rise absolute bottom-full left-1/2 mb-2 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap p-1")}>
+                      <span className="px-1.5 text-[10px] font-bold uppercase tracking-wider text-white/45">{canMuck ? "Beaten" : "Show"}</span>
+                      {canMuck ? (
+                        <>
+                          <button type="button" onClick={() => onShowCards([0, 1])} className="rounded-lg bg-white/[0.08] px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-white/85 ring-1 ring-white/15 transition-colors hover:bg-white/[0.14]">
+                            Show
+                          </button>
+                          <button type="button" onClick={onMuck} className="rounded-lg bg-white/[0.04] px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-white/55 ring-1 ring-white/10 transition-colors hover:bg-white/[0.1] hover:text-white">
+                            Muck
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          {[0, 1].map((index) => myShown[index] == null && (
+                            <button key={index} type="button" aria-label={`Show ${cardRankLabel(myCards[index])}`} onClick={() => onShowCards([index])} className="rounded-lg bg-white/[0.06] px-1.5 py-1 ring-1 ring-white/15 transition-colors hover:bg-white/[0.14]">
+                              <MiniCards cards={[myCards[index]]} />
+                            </button>
+                          ))}
+                          {myShown.every((card) => card == null) && (
+                            <button type="button" onClick={() => onShowCards([0, 1])} className="rounded-lg bg-gradient-to-b from-amber-300 to-amber-500 px-2.5 py-1 text-[11px] font-black uppercase tracking-wider text-[#2a1a00] ring-1 ring-amber-200/60 transition-all hover:from-amber-200">
+                              Show both
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })()}

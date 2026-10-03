@@ -185,6 +185,8 @@ function PokerPage() {
         onRebuy={multiplayer.rebuy}
         onToggleSitOut={multiplayer.toggleSitOut}
         onEndGame={multiplayer.endGame}
+        onShowCards={multiplayer.showCards}
+        onMuck={multiplayer.muck}
         onLeave={handleLeaveMultiplayer}
       />
     )

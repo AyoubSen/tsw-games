@@ -29,7 +29,7 @@ export interface SeatAction {
 
 export interface PokerLogEntry {
   id: number
-  kind: "hand" | "blinds-up" | "rebuy" | "sit-out" | "sit-in" | "sb" | "bb" | "fold" | "check" | "call" | "bet" | "raise" | "all-in" | "street" | "show" | "win" | "timeout"
+  kind: "hand" | "blinds-up" | "rebuy" | "sit-out" | "sit-in" | "sb" | "bb" | "fold" | "check" | "call" | "bet" | "raise" | "all-in" | "street" | "show" | "muck" | "win" | "timeout"
   playerId?: string
   name?: string
   amount?: number
@@ -45,6 +45,10 @@ const ROUND_PAUSE_MS = 1100
 const RUNOUT_PAUSE_MS = 1800
 const SHOWDOWN_PAUSE_MS = 2400
 const FOLD_WIN_PAUSE_MS = 900
+/** Showdown pause when a beaten player still has to choose between showing and mucking. */
+const SHOWDOWN_DECIDE_MS = 5000
+/** How long a fold winner may choose to show their cards. */
+const SHOW_WINDOW_MS = 5000
 /** Time to read the result before the next hand deals itself. */
 const NEXT_HAND_MS = 6000
 const DISCONNECT_FOLD_MS = 10000
@@ -120,6 +124,12 @@ export interface GameState {
   log: PokerLogEntry[]
   logSeq: number
   autoDealPaused: boolean
+  /** Hole card indices a fold winner chose to show. */
+  shownCards: Record<string, number[]>
+  /** The fold winner's window to show their cards. */
+  showOffer: { playerId: string; until: number } | null
+  /** Beaten players at showdown who may still muck instead of showing. */
+  muckable: string[]
 }
 
 export interface PublicPlayer {
@@ -139,6 +149,8 @@ export interface PublicPlayer {
   isBot?: boolean
   rebuys: number
   sittingOut: boolean
+  /** Cards shown voluntarily, by hole card position; null for a card kept hidden. */
+  shownCards: (number | null)[] | null
 }
 
 export interface PublicGameState {
@@ -167,6 +179,8 @@ export interface PublicGameState {
   log: PokerLogEntry[]
   nextHandAt: number | null
   autoDealPaused: boolean
+  showOffer: { playerId: string; until: number } | null
+  muckable: string[]
 }
 
 export type ClientMessage =
@@ -186,6 +200,8 @@ export type ClientMessage =
   | { type: "rebuy" }
   | { type: "toggle-sit-out" }
   | { type: "end-game" }
+  | { type: "show-cards"; cards: number[] }
+  | { type: "muck" }
 
 export type ServerMessage =
   | { type: "state"; state: PublicGameState }
@@ -285,6 +301,9 @@ class PokerParty implements Party.Server {
         parsed.log ??= []
         parsed.logSeq ??= 0
         parsed.autoDealPaused ??= false
+        parsed.shownCards ??= {}
+        parsed.showOffer ??= null
+        parsed.muckable ??= []
         parsed.settings.rebuys ??= false
         parsed.settings.rebuyCap ??= 0
         for (const player of Object.values(parsed.players) as Player[]) {
@@ -329,6 +348,7 @@ class PokerParty implements Party.Server {
       const showCards =
         s.showdownPlayers.includes(id) ||
         s.status === "finished"
+      const shown = s.shownCards[id]
 
       players[id] = {
         id: p.id,
@@ -347,6 +367,7 @@ class PokerParty implements Party.Server {
         isBot: p.isBot,
         rebuys: p.rebuys,
         sittingOut: p.sittingOut,
+        shownCards: shown?.length ? [0, 1].map((index) => (shown.includes(index) ? p.holeCards[index] ?? null : null)) : null,
       }
     }
 
@@ -383,6 +404,8 @@ class PokerParty implements Party.Server {
       log: s.log,
       nextHandAt: s.pending?.step === "next-hand" ? s.pending.at : null,
       autoDealPaused: s.autoDealPaused,
+      showOffer: s.showOffer,
+      muckable: s.muckable,
     }
   }
 
@@ -482,6 +505,9 @@ class PokerParty implements Party.Server {
     s.handNumber++
     s.winners = []
     s.showdownPlayers = []
+    s.shownCards = {}
+    s.showOffer = null
+    s.muckable = []
     s.communityCards = []
     s.bettingRound = "pre-flop"
     s.pot = 0
@@ -874,30 +900,63 @@ class PokerParty implements Party.Server {
     this.broadcastState()
   }
 
-  /** Turn the remaining hands face up, then pay out after a pause so everyone can read them. */
+  /**
+   * Turn the winning hands face up. Beaten players may muck instead: bots decide on the spot,
+   * people get a few seconds and show by default. Pay out after a pause so everyone can read them.
+   */
   revealShowdown() {
     if (!this.state) return
     const s = this.state
 
     s.bettingRound = "showdown"
-    const active = getActivePlayers(s)
-    s.showdownPlayers = active.map((p) => p.id)
-
-    const reveals = active
-      .filter((p) => p.holeCards.length === 2 && s.communityCards.length >= 5)
-      .map((p) => ({ id: p.id, holeCards: p.holeCards, handResult: evaluateBestHand(p.holeCards, s.communityCards) }))
-    for (const reveal of reveals) {
-      this.addLog({ kind: "show", playerId: reveal.id, name: s.players[reveal.id].name, cards: reveal.holeCards, hand: reveal.handResult.description })
+    s.showdownPlayers = []
+    s.muckable = []
+    const winnerIds = new Set(this.showdownWinners().map((w) => w.playerId))
+    for (const p of getActivePlayers(s)) {
+      if (winnerIds.has(p.id) || p.holeCards.length !== 2) this.revealHand(p)
+      else if (p.isBot && Math.random() < 0.6) this.muckHand(p)
+      else if (p.isBot) this.revealHand(p)
+      else s.muckable.push(p.id)
     }
-    this.broadcast({ type: "showdown", players: reveals })
 
-    this.schedule("award", SHOWDOWN_PAUSE_MS)
+    const deciding = s.muckable.some((id) => s.players[id]?.connected)
+    this.schedule("award", deciding ? SHOWDOWN_DECIDE_MS : SHOWDOWN_PAUSE_MS)
     this.broadcastState()
+  }
+
+  revealHand(p: Player) {
+    const s = this.state!
+    s.showdownPlayers.push(p.id)
+    s.muckable = s.muckable.filter((id) => id !== p.id)
+    if (p.holeCards.length !== 2 || s.communityCards.length < 5) return
+    const handResult = evaluateBestHand(p.holeCards, s.communityCards)
+    this.addLog({ kind: "show", playerId: p.id, name: p.name, cards: p.holeCards, hand: handResult.description })
+    this.broadcast({ type: "showdown", players: [{ id: p.id, holeCards: p.holeCards, handResult }] })
+  }
+
+  muckHand(p: Player) {
+    const s = this.state!
+    s.muckable = s.muckable.filter((id) => id !== p.id)
+    this.addLog({ kind: "muck", playerId: p.id, name: p.name })
   }
 
   awardShowdown() {
     if (!this.state) return
     const s = this.state
+    // Anyone who didn't choose shows their hand
+    for (const id of [...s.muckable]) {
+      const p = s.players[id]
+      if (p) this.revealHand(p)
+    }
+    s.muckable = []
+    const winners = this.showdownWinners()
+    for (const w of winners) s.players[w.playerId].chips += w.amount
+    this.finishHand(winners)
+  }
+
+  /** Who takes each pot at showdown. Doesn't move any chips. */
+  showdownWinners(): WinnerInfo[] {
+    const s = this.state!
     const active = getActivePlayers(s)
 
     const handResults: { playerId: string; result: HandResult }[] = []
@@ -929,7 +988,6 @@ class PokerParty implements Party.Server {
         // No eligible hand evaluated - give to first eligible player
         const winnerId = pot.eligiblePlayerIds.find((id) => s.players[id])
         if (winnerId) {
-          s.players[winnerId].chips += pot.amount
           winners.push({
             playerId: winnerId,
             playerName: s.players[winnerId].name,
@@ -952,7 +1010,6 @@ class PokerParty implements Party.Server {
       for (let i = 0; i < potWinners.length; i++) {
         const w = potWinners[i]
         const amount = share + (i === 0 ? remainder : 0)
-        s.players[w.playerId].chips += amount
         winners.push({
           playerId: w.playerId,
           playerName: s.players[w.playerId].name,
@@ -963,7 +1020,7 @@ class PokerParty implements Party.Server {
       }
     }
 
-    this.finishHand(winners)
+    return winners
   }
 
   awardFoldWin() {
@@ -982,6 +1039,28 @@ class PokerParty implements Party.Server {
       handResult: null,
       potIndex: 0,
     }])
+
+    // The winner may show their cards; bots now and then show off a bluff.
+    if (s.status !== "playing" || winner.holeCards.length !== 2) return
+    if (winner.isBot) {
+      if (this.botStrength(winner) < 0.3 && Math.random() < 0.35) this.showCards(winner, [0, 1])
+    } else {
+      s.showOffer = { playerId: winner.id, until: Date.now() + SHOW_WINDOW_MS }
+    }
+    this.broadcastState()
+  }
+
+  /** Turn some of a fold winner's hole cards face up for the table. */
+  showCards(p: Player, indices: number[]) {
+    const s = this.state!
+    const already = s.shownCards[p.id] ?? []
+    const fresh = [...new Set(indices)].filter((index) => (index === 0 || index === 1) && !already.includes(index)).sort()
+    if (fresh.length === 0) return
+    const all = [...already, ...fresh]
+    s.shownCards[p.id] = all
+    if (all.length === 2) s.showOffer = null
+    const hand = all.length === 2 && s.communityCards.length >= 3 ? evaluateBestHand(p.holeCards, s.communityCards).description : undefined
+    this.addLog({ kind: "show", playerId: p.id, name: p.name, cards: fresh.map((index) => p.holeCards[index]), hand })
   }
 
   finishHand(winners: WinnerInfo[]) {
@@ -1194,6 +1273,9 @@ class PokerParty implements Party.Server {
         log: [],
         logSeq: 0,
         autoDealPaused: false,
+        shownCards: {},
+        showOffer: null,
+        muckable: [],
       }
       await this.saveState()
     }
@@ -1279,6 +1361,7 @@ class PokerParty implements Party.Server {
             ...player,
             hasCards: false,
             holeCards: null,
+            shownCards: null,
           }
           this.broadcast({ type: "player-joined", player: publicPlayer })
           this.broadcastState()
@@ -1556,6 +1639,30 @@ class PokerParty implements Party.Server {
           this.state.status = "finished"
           this.state.pending = null
           await this.room.storage.deleteAlarm()
+          await this.saveState()
+          this.broadcastState()
+          break
+        }
+
+        case "show-cards": {
+          const p = this.state.players[sender.id]
+          if (!p || !Array.isArray(data.cards)) return
+          if (this.state.muckable.includes(sender.id)) {
+            this.revealHand(p)
+          } else if (this.state.showOffer?.playerId === sender.id && Date.now() <= this.state.showOffer.until && !this.state.handInProgress) {
+            this.showCards(p, data.cards)
+          } else {
+            return
+          }
+          await this.saveState()
+          this.broadcastState()
+          break
+        }
+
+        case "muck": {
+          const p = this.state.players[sender.id]
+          if (!p || !this.state.muckable.includes(sender.id)) return
+          this.muckHand(p)
           await this.saveState()
           this.broadcastState()
           break

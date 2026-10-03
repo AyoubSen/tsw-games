@@ -297,6 +297,14 @@ export function useMultiplayerPoker() {
     if (state.isHost) sendNow({ type: "end-game" })
   }, [sendNow, state.isHost])
 
+  const showCards = useCallback((cards: number[]) => {
+    sendNow({ type: "show-cards", cards })
+  }, [sendNow])
+
+  const muck = useCallback(() => {
+    sendNow({ type: "muck" })
+  }, [sendNow])
+
   useEffect(() => {
     return () => {
       if (socketRef.current) {
@@ -323,6 +331,8 @@ export function useMultiplayerPoker() {
     rebuy,
     toggleSitOut,
     endGame,
+    showCards,
+    muck,
     disconnect,
     abandonReconnect,
   }

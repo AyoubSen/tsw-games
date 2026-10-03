@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Crown, Eye, Layers, RotateCcw, Trophy, WifiOff, X } from "lucide-react"
+import { ArrowLeft, Bot, Crown, Eye, Layers, RotateCcw, ScrollText, Trophy, WifiOff, X } from "lucide-react"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import {
   canJumpInUno,
@@ -232,6 +232,7 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
   const [toast, setToast] = useState<string | null>(null)
   const [spunId, setSpunId] = useState<number | null>(null)
   const [shower, setShower] = useState<number | null>(null)
+  const [logOpen, setLogOpen] = useState(false)
 
   useEffect(() => {
     setToast(message)
@@ -839,12 +840,22 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
           {story?.sub && !beforeLanding && !wheelActive ? (
             <p key={action!.id} className="uno-rise self-center truncate rounded-full bg-black/55 px-3 py-1 text-xs font-semibold text-white/90 backdrop-blur">{story.sub}</p>
           ) : !active && lastStory && !finished ? (
-            <p className="self-center truncate px-3 text-[11px] text-white/50 xl:hidden">Last: {lastStory.line}</p>
+            <p className="self-center truncate px-3 text-[11px] text-white/50">Last: {lastStory.line}</p>
           ) : null}
         </div>
         {/* Above the finish screen, where the host seats spectators between hands. */}
         <div className="relative z-[60] ml-auto flex shrink-0 items-start gap-2">
           {watching}
+          <button
+            type="button"
+            onClick={() => setLogOpen((open) => !open)}
+            aria-pressed={logOpen}
+            aria-label="Recent plays"
+            className={cn(GLASS, "flex h-11 items-center gap-1.5 px-3 text-sm font-semibold transition hover:bg-black/60", logOpen && "border-white/30 bg-white/15")}
+          >
+            <ScrollText className="size-4" />
+            <span className="hidden sm:inline">Log</span>
+          </button>
           <SoundToggle />
           {!spectating && <ReactionPicker onReact={onReact} disabled={!connected} side="bottom" align="end" />}
         </div>
@@ -859,10 +870,14 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
         </ul>
       )}
 
-      {/* Recent actions (wide screens). */}
-      {logEntries.length > 0 && (
-        <div className={cn(GLASS, "absolute right-6 top-24 hidden w-64 p-3 xl:block")}>
-          <p className="px-1 pb-2 text-xs font-semibold uppercase tracking-wider text-white/50">Recent</p>
+      {/* Recent actions, opened from the top bar. */}
+      {logOpen && (
+        <div className={cn(GLASS, "uno-rise absolute right-3 top-16 z-40 w-[min(256px,calc(100%-24px))] p-3 lg:right-6 lg:top-[76px]")}>
+          <div className="flex items-center justify-between pb-2 pl-1">
+            <p className="text-xs font-semibold uppercase tracking-wider text-white/50">Recent</p>
+            <button type="button" onClick={() => setLogOpen(false)} aria-label="Close" className="grid size-6 place-items-center rounded-md text-white/60 transition hover:bg-white/10 hover:text-white"><X className="size-3.5" /></button>
+          </div>
+          {logEntries.length === 0 && <p className="px-1 text-xs text-white/50">Nothing played yet</p>}
           <ol className="space-y-1.5">
             {logEntries.map((entry, index) => (
               <li key={entry.id} className={cn("flex items-center gap-2 px-1 text-xs", index === 0 ? "text-white" : "text-white/55")}>

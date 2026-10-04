@@ -141,8 +141,9 @@ export function GameNightLounge() {
 
 	const trayGames: GameNightGameId[] =
 		phase === "vote" && vote ? (vote.any ? vote.options : []) : phase === "pick" ? [...GAME_NIGHT_GAMES.map((game) => game.id)].sort((a, b) => Number(Boolean(misfit(a))) - Number(Boolean(misfit(b)))) : [];
-	const flying = phase === "recap" && recapEntry?.scored && recapElapsed >= RECAP_BEATS.fly && recapElapsed < RECAP_BEATS.fly + FLY_MS;
-	const landed = phase === "recap" && recapEntry?.scored && recapElapsed >= RECAP_BEATS.land;
+	const recapPlaying = phase === "recap" && recap?.stage === "playing" && Boolean(recapEntry?.scored);
+	const flying = recapPlaying && recapElapsed >= RECAP_BEATS.fly && recapElapsed < RECAP_BEATS.fly + FLY_MS;
+	const landed = recapPlaying && recapElapsed >= RECAP_BEATS.land;
 
 	return (
 		<PartyTable tableRef={tableRef} background={LOUNGE_BG}>

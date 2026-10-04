@@ -26,12 +26,23 @@ export function useGameNightGameBridge({
 	connectPlayerRef.current = connectPlayer;
 	const connection = gameNight.connection?.gameId === gameId ? gameNight.connection : null;
 
+	const connectionRef = useRef(connection);
+	connectionRef.current = connection;
+	const enterMatchId = connection?.canEnter ? connection.matchId : null;
+	// Keyed on the match, not the connection object (it changes on every Game Night broadcast). The cleanup
+	// forgets the match so a remount (or StrictMode's double effects, which close the game socket) reconnects.
 	useEffect(() => {
-		if (!connection?.canEnter || connectedMatchRef.current === connection.matchId) return;
-		connectedMatchRef.current = connection.matchId;
-		if (connection.isHost) connectHostRef.current(connection.roomId, connection.playerName);
-		else connectPlayerRef.current(connection.roomId, connection.playerName);
-	}, [connection]);
+		const current = connectionRef.current;
+		if (!enterMatchId || !current) return;
+		if (connectedMatchRef.current !== enterMatchId) {
+			connectedMatchRef.current = enterMatchId;
+			if (current.isHost) connectHostRef.current(current.roomId, current.playerName);
+			else connectPlayerRef.current(current.roomId, current.playerName);
+		}
+		return () => {
+			connectedMatchRef.current = null;
+		};
+	}, [enterMatchId]);
 
 	useEffect(() => {
 		if (!connection?.isHost || !hasGameState || gameNight.state?.activeMatch?.status !== "launching" || readyMatchRef.current === connection.matchId) return;

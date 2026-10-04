@@ -255,7 +255,7 @@ export function Finale({ rows, awards, players, gamesPlayed, meId, actions }: {
 				<p className="text-[11px] font-black uppercase tracking-[0.35em] text-amber-200/80">That's a wrap</p>
 				<h2 className="mt-1 text-3xl font-black tracking-tight md:text-4xl">Game Night Champions</h2>
 				<p className="mt-1 text-sm text-white/60">{gamesPlayed} game{gamesPlayed === 1 ? "" : "s"} played</p>
-				<div className="mt-6">{rows.length > 0 && <Podium rows={rows} meId={meId} unit="wins" />}</div>
+				<div className="mt-6">{rows.length > 0 && <Podium rows={rows} meId={meId} unit={(wins) => (wins === 1 ? "win" : "wins")} />}</div>
 				{awards.length > 0 && (
 					<div className="mt-6 grid w-full gap-3 sm:grid-cols-3">
 						{awards.map((award, index) => (

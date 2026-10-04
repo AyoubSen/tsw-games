@@ -21,6 +21,7 @@ import { Route as GamesTimelineChaosRouteImport } from './routes/games/timeline-
 import { Route as GamesSyncUpRouteImport } from './routes/games/sync-up'
 import { Route as GamesSudokuRouteImport } from './routes/games/sudoku'
 import { Route as GamesPressureButtonRouteImport } from './routes/games/pressure-button'
+import { Route as GamesPoolRouteImport } from './routes/games/pool'
 import { Route as GamesPokerRouteImport } from './routes/games/poker'
 import { Route as GamesMemoryMatchRouteImport } from './routes/games/memory-match'
 import { Route as GamesMafiaRouteImport } from './routes/games/mafia'
@@ -92,6 +93,11 @@ const GamesPressureButtonRoute = GamesPressureButtonRouteImport.update({
   path: '/games/pressure-button',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GamesPoolRoute = GamesPoolRouteImport.update({
+  id: '/games/pool',
+  path: '/games/pool',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GamesPokerRoute = GamesPokerRouteImport.update({
   id: '/games/poker',
   path: '/games/poker',
@@ -156,6 +162,7 @@ export interface FileRoutesByFullPath {
   '/games/mafia': typeof GamesMafiaRoute
   '/games/memory-match': typeof GamesMemoryMatchRoute
   '/games/poker': typeof GamesPokerRoute
+  '/games/pool': typeof GamesPoolRoute
   '/games/pressure-button': typeof GamesPressureButtonRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/sync-up': typeof GamesSyncUpRoute
@@ -180,6 +187,7 @@ export interface FileRoutesByTo {
   '/games/mafia': typeof GamesMafiaRoute
   '/games/memory-match': typeof GamesMemoryMatchRoute
   '/games/poker': typeof GamesPokerRoute
+  '/games/pool': typeof GamesPoolRoute
   '/games/pressure-button': typeof GamesPressureButtonRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/sync-up': typeof GamesSyncUpRoute
@@ -205,6 +213,7 @@ export interface FileRoutesById {
   '/games/mafia': typeof GamesMafiaRoute
   '/games/memory-match': typeof GamesMemoryMatchRoute
   '/games/poker': typeof GamesPokerRoute
+  '/games/pool': typeof GamesPoolRoute
   '/games/pressure-button': typeof GamesPressureButtonRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/sync-up': typeof GamesSyncUpRoute
@@ -231,6 +240,7 @@ export interface FileRouteTypes {
     | '/games/mafia'
     | '/games/memory-match'
     | '/games/poker'
+    | '/games/pool'
     | '/games/pressure-button'
     | '/games/sudoku'
     | '/games/sync-up'
@@ -255,6 +265,7 @@ export interface FileRouteTypes {
     | '/games/mafia'
     | '/games/memory-match'
     | '/games/poker'
+    | '/games/pool'
     | '/games/pressure-button'
     | '/games/sudoku'
     | '/games/sync-up'
@@ -279,6 +290,7 @@ export interface FileRouteTypes {
     | '/games/mafia'
     | '/games/memory-match'
     | '/games/poker'
+    | '/games/pool'
     | '/games/pressure-button'
     | '/games/sudoku'
     | '/games/sync-up'
@@ -304,6 +316,7 @@ export interface RootRouteChildren {
   GamesMafiaRoute: typeof GamesMafiaRoute
   GamesMemoryMatchRoute: typeof GamesMemoryMatchRoute
   GamesPokerRoute: typeof GamesPokerRoute
+  GamesPoolRoute: typeof GamesPoolRoute
   GamesPressureButtonRoute: typeof GamesPressureButtonRoute
   GamesSudokuRoute: typeof GamesSudokuRoute
   GamesSyncUpRoute: typeof GamesSyncUpRoute
@@ -402,6 +415,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GamesPressureButtonRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/games/pool': {
+      id: '/games/pool'
+      path: '/games/pool'
+      fullPath: '/games/pool'
+      preLoaderRoute: typeof GamesPoolRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/games/poker': {
       id: '/games/poker'
       path: '/games/poker'
@@ -488,6 +508,7 @@ const rootRouteChildren: RootRouteChildren = {
   GamesMafiaRoute: GamesMafiaRoute,
   GamesMemoryMatchRoute: GamesMemoryMatchRoute,
   GamesPokerRoute: GamesPokerRoute,
+  GamesPoolRoute: GamesPoolRoute,
   GamesPressureButtonRoute: GamesPressureButtonRoute,
   GamesSudokuRoute: GamesSudokuRoute,
   GamesSyncUpRoute: GamesSyncUpRoute,

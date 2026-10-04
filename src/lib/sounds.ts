@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react"
 
 /** Table sound effects, synthesized with Web Audio so there are no files to load. */
-export type SoundName = "deal" | "flip" | "chip" | "pot" | "dice" | "capture" | "turn" | "win" | "howl" | "dawn" | "toll" | "knock" | "shot" | "clue" | "correct" | "wrong" | "assassin" | "tick" | "lockin" | "whoosh" | "group" | "lonewolf" | "roundEnd" | "merge" | "sync" | "thunk" | "accepted" | "rejected" | "buzzer" | "snip" | "keycap" | "toggle" | "beep" | "chime" | "defuse" | "explode"
+export type SoundName = "deal" | "flip" | "chip" | "pot" | "dice" | "capture" | "turn" | "win" | "howl" | "dawn" | "toll" | "knock" | "shot" | "clue" | "correct" | "wrong" | "assassin" | "tick" | "lockin" | "whoosh" | "group" | "lonewolf" | "roundEnd" | "merge" | "sync" | "thunk" | "accepted" | "rejected" | "buzzer" | "snip" | "keycap" | "toggle" | "beep" | "chime" | "defuse" | "explode" | "clack" | "clackSoft" | "cushion" | "pocket" | "cueHit"
 
 const MUTE_KEY = "tsw-games-muted"
 const VOLUME = 0.22
@@ -276,6 +276,29 @@ const SOUNDS: Record<SoundName, (c: AudioContext, at: number) => void> = {
     burst(c, at + 0.02, { type: "bandpass", freq: 300, q: 0.6, peak: 0.6, decay: 2.2 })
     tone(c, at, { freq: 90, type: "triangle", peak: 0.7, decay: 1.4, slideTo: 28 })
     tone(c, at, { freq: 60, type: "sine", peak: 0.6, decay: 2, slideTo: 24 })
+  },
+  clack: (c, at) => {
+    const base = 2300 + Math.random() * 500
+    tone(c, at, { freq: base, type: "triangle", peak: 0.45, decay: 0.045 })
+    tone(c, at, { freq: base * 1.9, peak: 0.12, decay: 0.03 })
+    burst(c, at, { type: "highpass", freq: 3500, peak: 0.45, decay: 0.025 })
+  },
+  clackSoft: (c, at) => {
+    tone(c, at, { freq: 2100 + Math.random() * 400, type: "triangle", peak: 0.16, decay: 0.035 })
+    burst(c, at, { type: "highpass", freq: 3500, peak: 0.12, decay: 0.018 })
+  },
+  cushion: (c, at) => {
+    tone(c, at, { freq: 140, type: "triangle", peak: 0.32, decay: 0.09, slideTo: 90 })
+    burst(c, at, { type: "lowpass", freq: 650, peak: 0.28, decay: 0.07 })
+  },
+  pocket: (c, at) => {
+    tone(c, at, { freq: 210, type: "triangle", peak: 0.4, decay: 0.16, slideTo: 95 })
+    burst(c, at, { type: "lowpass", freq: 800, peak: 0.35, decay: 0.1 })
+    for (let i = 0; i < 3; i++) burst(c, at + 0.14 + i * 0.07 + Math.random() * 0.03, { type: "bandpass", freq: 500 + Math.random() * 300, q: 2, peak: 0.16 - i * 0.04, decay: 0.05 })
+  },
+  cueHit: (c, at) => {
+    burst(c, at, { type: "bandpass", freq: 1700, q: 1.6, peak: 0.45, decay: 0.035 })
+    tone(c, at, { freq: 820, type: "triangle", peak: 0.22, decay: 0.05, slideTo: 600 })
   },
 }
 

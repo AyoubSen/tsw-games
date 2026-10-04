@@ -27,6 +27,7 @@
     "triviaquiz": "party/trivia-quiz.ts",
     "timelinechaos": "party/timeline-chaos.ts",
     "ludo": "party/ludo.ts",
+    "pool": "party/pool.ts",
     "uno": "party/uno.ts"
   },
   "compatibilityDate": "2024-01-01"

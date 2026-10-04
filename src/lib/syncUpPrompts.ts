@@ -142,13 +142,31 @@ function expandTemplate(template: PromptTemplate): SyncUpPrompt[] {
 	}));
 }
 
+/**
+ * Folds simple plurals onto their singular ("boxes" → "box", "cookies" and
+ * "cookie" → "cooky"). Deliberately conservative: short words and endings
+ * like -ss/-us/-is are left alone.
+ */
+function singularize(word: string): string {
+	if (word.length <= 3 || /(?:ss|us|is)$/.test(word)) return word;
+	if (word.length > 4 && word.endsWith("ies")) return `${word.slice(0, -3)}y`;
+	if (word.endsWith("ie")) return `${word.slice(0, -2)}y`;
+	if (/(?:sses|xes|ches|shes)$/.test(word)) return word.slice(0, -2);
+	if (word.endsWith("s")) return word.slice(0, -1);
+	return word;
+}
+
 export function normalizeSyncUpAnswer(answer: string): string {
 	return answer
-		.trim()
 		.toLowerCase()
 		.replace(/['’]/g, "")
 		.replace(/[^a-z0-9 ]+/g, " ")
-		.replace(/\s+/g, " ");
+		.replace(/\s+/g, " ")
+		.trim()
+		.replace(/^(?:a|an|the) (?=\S)/, "")
+		.split(" ")
+		.map(singularize)
+		.join(" ");
 }
 
 export function getSyncUpPromptPool(pack: SyncUpPromptPack): SyncUpPrompt[] {

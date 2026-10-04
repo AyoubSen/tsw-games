@@ -18,6 +18,12 @@ import {
 	validateGameNightConnection,
 	type GameNightMember,
 } from "./shared/gameNight";
+import {
+	isReaction,
+	takeReactionSlot,
+	type Reaction,
+	type ReactionMessage,
+} from "../src/lib/reactions";
 
 export interface SyncUpPlayer {
 	id: string;
@@ -48,9 +54,57 @@ export interface PublicAnswer {
 }
 
 export interface AnswerGroup {
-	normalized: string;
+	/** The normalized answer the group started from; stays put through merges. */
+	id: string;
 	answers: PublicAnswer[];
+	/** Zero until the score beat. */
 	points: number;
+	/** Groups the host merged into this one. */
+	merged: string[];
+}
+
+/**
+ * Server-paced reveal beats, advanced by the storage alarm so every client sees
+ * the same timeline. Client animations inside a beat must fit these durations.
+ */
+export const REVEAL_MS = {
+	tension: 1800,
+	/** Gap between one seat's card taking off and the next. */
+	flipStep: 520,
+	/** Landing + flip time after the last card takes off. */
+	flipLand: 1100,
+	cluster: 2200,
+	merge: 20000,
+	score: 3400,
+	/** Score beat when the whole room matched. */
+	perfect: 5200,
+} as const;
+
+export type RevealStage = "tension" | "flip" | "cluster" | "merge" | "score" | "done";
+
+export interface RevealPace {
+	seq: number;
+	stage: RevealStage;
+	endsAt: number | null;
+	/** The latest merge in the merge beat; `n` counts merges this round. */
+	merge: { n: number; from: string; into: string } | null;
+}
+
+export interface RoundSummary {
+	roundNumber: number;
+	prompt: SyncUpPrompt;
+	groups: AnswerGroup[];
+	/** Players in the round who did not answer. */
+	missingIds: string[];
+}
+
+export function flipDuration(answerCount: number): number {
+	return answerCount ? (answerCount - 1) * REVEAL_MS.flipStep + REVEAL_MS.flipLand : 0;
+}
+
+/** Everyone in the room landed in one group. */
+export function isPerfectSync(groups: AnswerGroup[], playerCount: number): boolean {
+	return groups.length === 1 && playerCount >= 2 && groups[0]!.answers.length >= playerCount;
 }
 
 export interface SyncUpGameState {
@@ -65,6 +119,9 @@ export interface SyncUpGameState {
 	usedPromptIds: string[];
 	answers: Record<string, StoredAnswer>;
 	answerGroups: AnswerGroup[];
+	reveal: RevealPace | null;
+	paceSeq: number;
+	history: RoundSummary[];
 	startedAt: number | null;
 	roundStartedAt: number | null;
 	finishedAt: number | null;
@@ -81,8 +138,13 @@ export interface PublicSyncUpGameState {
 	prompt: SyncUpPrompt | null;
 	usedPromptIds: string[];
 	submittedPlayerIds: string[];
+	/** From the flip beat on, in seat (join) order. */
 	revealedAnswers: PublicAnswer[];
+	/** From the cluster beat on; points from the score beat on. */
 	answerGroups: AnswerGroup[];
+	reveal: RevealPace | null;
+	/** Finished rounds; the current one joins once it has scored. */
+	history: RoundSummary[];
 	startedAt: number | null;
 	roundStartedAt: number | null;
 	finishedAt: number | null;
@@ -92,6 +154,9 @@ export type ClientMessage =
 	| { type: "join"; name: string }
 	| { type: "start" }
 	| { type: "submit-answer"; answer: string }
+	| { type: "merge-groups"; from: string; into: string }
+	| { type: "skip-merge" }
+	| { type: "react"; reaction: Reaction }
 	| { type: "next-round" }
 	| { type: "restart" }
 	| { type: "leave" };
@@ -101,9 +166,11 @@ export type ServerMessage =
 	| { type: "player-joined"; player: SyncUpPlayer }
 	| { type: "player-left"; playerId: string }
 	| { type: "round-started"; prompt: SyncUpPrompt; roundNumber: number }
-	| { type: "round-revealed"; answerGroups: AnswerGroup[] }
+	/** Only to its author: their own answer this round. */
+	| { type: "your-answer"; roundNumber: number; text: string }
 	| { type: "game-over" }
 	| { type: "game-restarted" }
+	| ReactionMessage
 	| { type: "error"; message: string };
 
 function clampRoundTime(value: string | null): number {
@@ -129,6 +196,17 @@ function parsePromptPack(value: string | null): SyncUpPromptPack {
 	return "mixed";
 }
 
+/** Biggest group first. */
+function sortGroups(groups: AnswerGroup[]): AnswerGroup[] {
+	return groups.sort((left, right) => {
+		if (right.answers.length !== left.answers.length) {
+			return right.answers.length - left.answers.length;
+		}
+
+		return left.id.localeCompare(right.id);
+	});
+}
+
 function buildAnswerGroups(answers: Record<string, StoredAnswer>): AnswerGroup[] {
 	const grouped = new Map<string, PublicAnswer[]>();
 
@@ -144,38 +222,59 @@ function buildAnswerGroups(answers: Record<string, StoredAnswer>): AnswerGroup[]
 		]);
 	}
 
-	return [...grouped.entries()]
-		.map(([normalized, groupAnswers]) => ({
-			normalized,
+	return sortGroups(
+		[...grouped.entries()].map(([normalized, groupAnswers]) => ({
+			id: normalized,
 			answers: groupAnswers.sort((left, right) =>
 				left.text.localeCompare(right.text),
 			),
-			points: groupAnswers.length > 1 ? groupAnswers.length : 0,
-		}))
-		.sort((left, right) => {
-			if (right.answers.length !== left.answers.length) {
-				return right.answers.length - left.answers.length;
-			}
-
-			return left.normalized.localeCompare(right.normalized);
-		});
+			points: 0,
+			merged: [],
+		})),
+	);
 }
 
 class SyncUpParty implements Party.Server {
 	constructor(readonly room: Party.Room) {}
 
 	state: SyncUpGameState | null = null;
+	reactedAt = new Map<string, number>();
 	gameNightMembers = new WeakMap<Party.Connection, GameNightMember>();
 
 	async onStart() {
 		const stored = await this.room.storage.get<SyncUpGameState>("state");
 		if (stored) {
+			stored.paceSeq ??= 0;
+			stored.history ??= [];
+			stored.answerGroups = (stored.answerGroups ?? []).map((group) => ({
+				...group,
+				id: group.id ?? (group as unknown as { normalized: string }).normalized,
+				merged: group.merged ?? [],
+			}));
+			// A reveal saved before reveals were paced just waits for the host.
+			stored.reveal ??= stored.status === "reveal"
+				? { seq: ++stored.paceSeq, stage: "done", endsAt: null, merge: null }
+				: null;
 			this.state = stored;
 			for (const player of Object.values(this.state.players)) {
 				player.connected = false;
 			}
 			await this.saveState();
+			await this.scheduleAlarm();
 		}
+	}
+
+	/** The alarm drives the answer timer and the reveal beats. */
+	async scheduleAlarm() {
+		const s = this.state;
+		const at =
+			s?.status === "submitting" && s.roundStartedAt
+				? s.roundStartedAt + s.settings.roundTimeLimit * 1000
+				: s?.status === "reveal"
+					? (s.reveal?.endsAt ?? null)
+					: null;
+		if (at) await this.room.storage.setAlarm(Math.max(Date.now() + 10, at));
+		else await this.room.storage.deleteAlarm();
 	}
 
 	async saveState() {
@@ -189,31 +288,43 @@ class SyncUpParty implements Party.Server {
 			throw new Error("No game state");
 		}
 
-		const shouldReveal =
-			this.state.status === "reveal" || this.state.status === "finished";
+		const s = this.state;
+		const stage = s.status === "reveal" ? (s.reveal?.stage ?? null) : null;
+		const finished = s.status === "finished";
+		// Each part of the round leaves the server only once its beat starts.
+		const answersShown = finished || (stage !== null && stage !== "tension");
+		const groupsShown = finished || stage === "cluster" || stage === "merge" || stage === "score" || stage === "done";
+		const scored = s.status !== "reveal" || stage === "score" || stage === "done";
+		const seatOrder = (id: string) => s.players[id]?.joinedAt ?? Number.MAX_SAFE_INTEGER;
 
 		return {
-			roomCode: this.state.roomCode,
-			hostId: this.state.hostId,
-			players: this.state.players,
-			status: this.state.status,
-			maxPlayers: this.state.maxPlayers,
-			settings: this.state.settings,
-			roundNumber: this.state.roundNumber,
-			prompt: this.state.prompt,
-			usedPromptIds: this.state.usedPromptIds,
-			submittedPlayerIds: Object.keys(this.state.answers),
-			revealedAnswers: shouldReveal
-				? Object.values(this.state.answers).map((answer) => ({
-						playerId: answer.playerId,
-						text: answer.text,
-						normalized: answer.normalized,
-					}))
+			roomCode: s.roomCode,
+			hostId: s.hostId,
+			players: s.players,
+			status: s.status,
+			maxPlayers: s.maxPlayers,
+			settings: s.settings,
+			roundNumber: s.roundNumber,
+			prompt: s.prompt,
+			usedPromptIds: s.usedPromptIds,
+			submittedPlayerIds: Object.keys(s.answers),
+			revealedAnswers: answersShown
+				? Object.values(s.answers)
+						.sort((left, right) => seatOrder(left.playerId) - seatOrder(right.playerId))
+						.map((answer) => ({
+							playerId: answer.playerId,
+							text: answer.text,
+							normalized: answer.normalized,
+						}))
 				: [],
-			answerGroups: shouldReveal ? this.state.answerGroups : [],
-			startedAt: this.state.startedAt,
-			roundStartedAt: this.state.roundStartedAt,
-			finishedAt: this.state.finishedAt,
+			answerGroups: groupsShown ? s.answerGroups : [],
+			reveal: s.reveal,
+			history: scored
+				? s.history
+				: s.history.filter((entry) => entry.roundNumber !== s.roundNumber),
+			startedAt: s.startedAt,
+			roundStartedAt: s.roundStartedAt,
+			finishedAt: s.finishedAt,
 		};
 	}
 
@@ -228,6 +339,27 @@ class SyncUpParty implements Party.Server {
 
 	send(connection: Party.Connection, message: ServerMessage) {
 		connection.send(JSON.stringify(message));
+	}
+
+	sendOwnAnswer(connection: Party.Connection) {
+		const s = this.state;
+		const answer = s?.status === "submitting" ? s.answers[connection.id] : undefined;
+		if (s && answer) {
+			this.send(connection, { type: "your-answer", roundNumber: s.roundNumber, text: answer.text });
+		}
+	}
+
+	async maybeRevealRound() {
+		if (!this.state || this.state.status !== "submitting") {
+			return;
+		}
+
+		if (
+			Object.keys(this.state.players).length > 0 &&
+			Object.keys(this.state.answers).length === Object.keys(this.state.players).length
+		) {
+			await this.revealRound();
+		}
 	}
 
 	async startRound() {
@@ -245,12 +377,11 @@ class SyncUpParty implements Party.Server {
 		this.state.usedPromptIds = [...this.state.usedPromptIds, prompt.id];
 		this.state.answers = {};
 		this.state.answerGroups = [];
+		this.state.reveal = null;
 		this.state.roundStartedAt = Date.now();
 
 		await this.saveState();
-		this.room.storage.setAlarm(
-			Date.now() + this.state.settings.roundTimeLimit * 1000,
-		);
+		await this.scheduleAlarm();
 		this.broadcast({
 			type: "round-started",
 			prompt,
@@ -260,31 +391,91 @@ class SyncUpParty implements Party.Server {
 	}
 
 	async revealRound() {
-		if (!this.state || this.state.status !== "submitting") {
+		const s = this.state;
+		if (!s || s.status !== "submitting") {
 			return;
 		}
 
-		const answerGroups = buildAnswerGroups(this.state.answers);
+		s.status = "reveal";
+		s.answerGroups = buildAnswerGroups(s.answers);
+		s.reveal = {
+			seq: ++s.paceSeq,
+			stage: "tension",
+			endsAt: Date.now() + REVEAL_MS.tension,
+			merge: null,
+		};
+		await this.commit();
+	}
 
-		for (const group of answerGroups) {
-			if (group.points === 0) {
-				continue;
-			}
+	/** Moves the reveal on one beat. Points are worked out after the merge beat and land at done. */
+	advanceReveal() {
+		const s = this.state;
+		const reveal = s?.reveal;
+		if (!s || s.status !== "reveal" || !reveal) return;
+		const next = (stage: RevealStage, ms: number) => {
+			s.reveal = { ...reveal, seq: ++s.paceSeq, stage, endsAt: Date.now() + ms };
+		};
 
+		if (reveal.stage === "tension") {
+			const count = Object.keys(s.answers).length;
+			if (count) next("flip", flipDuration(count));
+			else this.scoreRound();
+		} else if (reveal.stage === "flip") {
+			next("cluster", REVEAL_MS.cluster);
+		} else if (reveal.stage === "cluster") {
+			if (s.answerGroups.length >= 2) next("merge", REVEAL_MS.merge);
+			else this.scoreRound();
+		} else if (reveal.stage === "merge") {
+			this.scoreRound();
+		} else if (reveal.stage === "score") {
+			this.finishReveal();
+		}
+	}
+
+	scoreRound() {
+		const s = this.state;
+		if (!s?.reveal || !s.prompt) return;
+		for (const group of s.answerGroups) {
+			group.points = group.answers.length > 1 ? group.answers.length : 0;
+		}
+		const roundNumber = s.roundNumber;
+		s.history = [
+			...s.history.filter((entry) => entry.roundNumber !== roundNumber),
+			{
+				roundNumber,
+				prompt: s.prompt,
+				groups: s.answerGroups,
+				missingIds: Object.keys(s.players).filter((playerId) => !s.answers[playerId]),
+			},
+		];
+		if (!s.answerGroups.length) {
+			this.finishReveal();
+			return;
+		}
+		const perfect = isPerfectSync(s.answerGroups, Object.keys(s.players).length);
+		s.reveal = {
+			...s.reveal,
+			seq: ++s.paceSeq,
+			stage: "score",
+			endsAt: Date.now() + (perfect ? REVEAL_MS.perfect : REVEAL_MS.score),
+		};
+	}
+
+	finishReveal() {
+		const s = this.state;
+		if (!s?.reveal || s.reveal.stage === "done") return;
+		for (const group of s.answerGroups) {
 			for (const answer of group.answers) {
-				const player = this.state.players[answer.playerId];
-				if (player) {
-					player.score += group.points;
-				}
+				const player = s.players[answer.playerId];
+				if (player) player.score += group.points;
 			}
 		}
+		s.reveal = { ...s.reveal, seq: ++s.paceSeq, stage: "done", endsAt: null };
+	}
 
-		this.state.status = "reveal";
-		this.state.answerGroups = answerGroups;
-		await this.room.storage.deleteAlarm();
+	async commit() {
 		await this.saveState();
-
-		this.broadcast({ type: "round-revealed", answerGroups });
+		await this.scheduleAlarm();
 		this.broadcast({ type: "state", state: this.getPublicState() });
 	}
 
@@ -295,6 +486,7 @@ class SyncUpParty implements Party.Server {
 
 		this.state.status = "finished";
 		this.state.finishedAt = Date.now();
+		this.state.reveal = null;
 		await this.room.storage.deleteAlarm();
 		await this.saveState();
 		this.broadcast({ type: "game-over" });
@@ -328,6 +520,9 @@ class SyncUpParty implements Party.Server {
 				usedPromptIds: [],
 				answers: {},
 				answerGroups: [],
+				reveal: null,
+				paceSeq: 0,
+				history: [],
 				startedAt: null,
 				roundStartedAt: null,
 				finishedAt: null,
@@ -359,6 +554,7 @@ class SyncUpParty implements Party.Server {
 						await this.saveState();
 						this.broadcast({ type: "player-joined", player: returning });
 						this.broadcast({ type: "state", state: this.getPublicState() });
+						this.sendOwnAnswer(sender);
 						break;
 					}
 
@@ -404,6 +600,8 @@ class SyncUpParty implements Party.Server {
 
 					this.state.startedAt = Date.now();
 					this.state.roundNumber = 1;
+					this.state.finishedAt = null;
+					this.state.history = [];
 					for (const player of Object.values(this.state.players)) {
 						player.score = 0;
 					}
@@ -417,7 +615,7 @@ class SyncUpParty implements Party.Server {
 					}
 
 					const player = this.state.players[sender.id];
-					if (!player) {
+					if (!player || typeof data.answer !== "string") {
 						return;
 					}
 
@@ -432,6 +630,7 @@ class SyncUpParty implements Party.Server {
 						return;
 					}
 
+					// Re-sending replaces the answer: it stays editable until the round flips.
 					this.state.answers[sender.id] = {
 						playerId: sender.id,
 						text,
@@ -440,16 +639,46 @@ class SyncUpParty implements Party.Server {
 					};
 
 					await this.saveState();
-
-					if (
-						Object.keys(this.state.answers).length ===
-						Object.keys(this.state.players).length
-					) {
-						await this.revealRound();
-						return;
+					this.sendOwnAnswer(sender);
+					await this.maybeRevealRound();
+					if (this.state.status === "submitting") {
+						this.broadcast({ type: "state", state: this.getPublicState() });
 					}
+					break;
+				}
 
-					this.broadcast({ type: "state", state: this.getPublicState() });
+				case "merge-groups": {
+					const s = this.state;
+					if (!canControlGame(s.players, s.hostId, sender.id)) return;
+					if (s.status !== "reveal" || s.reveal?.stage !== "merge") return;
+					const from = s.answerGroups.find((group) => group.id === data.from);
+					const into = s.answerGroups.find((group) => group.id === data.into);
+					if (!from || !into || from === into) return;
+					into.answers = [...into.answers, ...from.answers];
+					into.merged = [...into.merged, from.id, ...from.merged];
+					s.answerGroups = sortGroups(s.answerGroups.filter((group) => group !== from));
+					s.reveal = {
+						...s.reveal,
+						merge: { n: (s.reveal.merge?.n ?? 0) + 1, from: from.id, into: into.id },
+					};
+					// Nothing left to merge: straight on to scoring.
+					if (s.answerGroups.length < 2) this.scoreRound();
+					await this.commit();
+					break;
+				}
+
+				case "skip-merge": {
+					if (!canControlGame(this.state.players, this.state.hostId, sender.id)) return;
+					if (this.state.status !== "reveal" || this.state.reveal?.stage !== "merge") return;
+					this.scoreRound();
+					await this.commit();
+					break;
+				}
+
+				case "react": {
+					if (!this.state.players[sender.id] || !isReaction(data.reaction)) return;
+					if (!takeReactionSlot(this.reactedAt, sender.id)) return;
+					this.broadcast({ type: "reaction", playerId: sender.id, reaction: data.reaction });
 					break;
 				}
 
@@ -462,7 +691,7 @@ class SyncUpParty implements Party.Server {
 						return;
 					}
 
-					if (this.state.status !== "reveal") {
+					if (this.state.status !== "reveal" || this.state.reveal?.stage !== "done") {
 						return;
 					}
 
@@ -488,6 +717,8 @@ class SyncUpParty implements Party.Server {
 					this.state.usedPromptIds = [];
 					this.state.answers = {};
 					this.state.answerGroups = [];
+					this.state.reveal = null;
+					this.state.history = [];
 					this.state.startedAt = null;
 					this.state.roundStartedAt = null;
 					this.state.finishedAt = null;
@@ -505,7 +736,7 @@ class SyncUpParty implements Party.Server {
 
 				case "leave": {
 					delete this.state.players[sender.id];
-					delete this.state.answers[sender.id];
+					if (this.state.status === "submitting") delete this.state.answers[sender.id];
 					if (Object.keys(this.state.players).length === 0) {
 						this.state = null;
 						await this.room.storage.delete("state");
@@ -520,6 +751,7 @@ class SyncUpParty implements Party.Server {
 
 					await this.saveState();
 					this.broadcast({ type: "player-left", playerId: sender.id });
+					await this.maybeRevealRound();
 					this.broadcast({ type: "state", state: this.getPublicState() });
 					break;
 				}
@@ -530,7 +762,18 @@ class SyncUpParty implements Party.Server {
 	}
 
 	async onAlarm() {
-		await this.revealRound();
+		const s = this.state;
+		if (!s) return;
+		const now = Date.now();
+		if (s.status === "submitting") {
+			const deadline = (s.roundStartedAt ?? 0) + s.settings.roundTimeLimit * 1000;
+			if (now < deadline - 500) return this.scheduleAlarm();
+			await this.revealRound();
+		} else if (s.status === "reveal" && s.reveal?.endsAt) {
+			if (now < s.reveal.endsAt - 50) return this.scheduleAlarm();
+			this.advanceReveal();
+			await this.commit();
+		}
 	}
 
 	async onClose(connection: Party.Connection) {

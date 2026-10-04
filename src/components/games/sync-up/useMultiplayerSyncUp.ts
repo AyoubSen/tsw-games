@@ -8,6 +8,8 @@ import {
 	PARTYKIT_HOST,
 	getPersistentPlayerId,
 } from "@/lib/partykit";
+import type { Reaction } from "@/lib/reactions";
+import { useReactionBubbles } from "@/components/multiplayer/Reactions";
 import type {
 	PublicSyncUpGameState,
 	ServerMessage,
@@ -26,6 +28,8 @@ export interface MultiplayerSyncUpState {
 	playerId: string | null;
 	error: string | null;
 	isHost: boolean;
+	/** My own answer this round, as the server has it; never broadcast. */
+	myAnswer: { roundNumber: number; text: string } | null;
 }
 
 export function useMultiplayerSyncUp() {
@@ -35,8 +39,10 @@ export function useMultiplayerSyncUp() {
 		playerId: null,
 		error: null,
 		isHost: false,
+		myAnswer: null,
 	});
 
+	const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles();
 	const socketRef = useRef<PartySocket | null>(null);
 	const roomCodeRef = useRef("");
 	const isHost = Boolean(
@@ -114,27 +120,23 @@ export function useMultiplayerSyncUp() {
 							submittedPlayerIds: [],
 							revealedAnswers: [],
 							answerGroups: [],
+							reveal: null,
 							roundStartedAt: Date.now(),
 						},
+						myAnswer: null,
 					};
 				});
 				break;
 
-			case "round-revealed":
-				setState((previous) => {
-					if (!previous.gameState) {
-						return previous;
-					}
+			case "your-answer":
+				setState((previous) => ({
+					...previous,
+					myAnswer: { roundNumber: message.roundNumber, text: message.text },
+				}));
+				break;
 
-					return {
-						...previous,
-						gameState: {
-							...previous.gameState,
-							status: "reveal",
-							answerGroups: message.answerGroups,
-						},
-					};
-				});
+			case "reaction":
+				receiveReaction(message);
 				break;
 
 			case "game-over":
@@ -167,7 +169,7 @@ export function useMultiplayerSyncUp() {
 				}));
 				break;
 		}
-	}, []);
+	}, [receiveReaction]);
 
 	const connect = useCallback(
 		(
@@ -192,6 +194,7 @@ export function useMultiplayerSyncUp() {
 				gameState: null,
 				error: null,
 				playerId,
+				myAnswer: null,
 			}));
 
 			const socket = new PartySocket({
@@ -268,6 +271,7 @@ export function useMultiplayerSyncUp() {
 			clearPersistentPlayerId("sync-up", roomCodeRef.current);
 			roomCodeRef.current = "";
 		}
+		clearReactions();
 
 		setState({
 			connectionStatus: "disconnected",
@@ -275,8 +279,9 @@ export function useMultiplayerSyncUp() {
 			playerId: null,
 			error: null,
 			isHost: false,
+			myAnswer: null,
 		});
-	}, []);
+	}, [clearReactions]);
 
 	const abandonReconnect = useCallback(() => {
 		const socket = socketRef.current;
@@ -289,6 +294,7 @@ export function useMultiplayerSyncUp() {
 			playerId: null,
 			error: null,
 			isHost: false,
+			myAnswer: null,
 		});
 	}, []);
 
@@ -316,6 +322,18 @@ export function useMultiplayerSyncUp() {
 		sendNow({ type: "submit-answer", answer });
 	}, [sendNow]);
 
+	const mergeGroups = useCallback((from: string, into: string) => {
+		if (isHost) sendNow({ type: "merge-groups", from, into });
+	}, [isHost, sendNow]);
+
+	const skipMerge = useCallback(() => {
+		if (isHost) sendNow({ type: "skip-merge" });
+	}, [isHost, sendNow]);
+
+	const react = useCallback((reaction: Reaction) => {
+		sendNow({ type: "react", reaction });
+	}, [sendNow]);
+
 	const nextRound = useCallback(() => {
 		if (isHost) sendNow({ type: "next-round" });
 	}, [isHost, sendNow]);
@@ -335,6 +353,10 @@ export function useMultiplayerSyncUp() {
 	return {
 		...state,
 		isHost,
+		reactions,
+		react,
+		mergeGroups,
+		skipMerge,
 		createGame,
 		joinGame,
 		startGame,

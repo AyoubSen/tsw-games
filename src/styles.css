@@ -565,3 +565,39 @@ html[data-home-layout="cards"] .home-layout-grid {
   .bomb-shake { animation: none !important; }
   .bomb-boom, .bomb-relief { animation-duration: 1ms !important; }
 }
+
+/* Drawing studio motion (beat lengths come from DRAW_PACE_MS) */
+@keyframes draw-handoff {
+  0% { opacity: 0; transform: translateX(-70px) skewX(-8deg); }
+  14% { opacity: 1; transform: none; }
+  84% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translateX(70px) skewX(-8deg); }
+}
+@keyframes draw-tile {
+  0% { opacity: 0; transform: translateY(-10px) rotateX(90deg); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes draw-word {
+  0% { opacity: 0; transform: scale(.5); letter-spacing: .5em; }
+  60% { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes draw-chip {
+  0% { opacity: 0; transform: translateY(-120px) rotate(-40deg) scale(.6); }
+  65% { opacity: 1; transform: translateY(5px) rotate(10deg) scale(1.06); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes draw-pencil {
+  0%, 100% { transform: rotate(-14deg) translateX(-6px); }
+  50% { transform: rotate(10deg) translateX(6px); }
+}
+.draw-handoff { animation: draw-handoff 2400ms cubic-bezier(.2,.8,.2,1) both; }
+.draw-tile { animation: draw-tile 420ms cubic-bezier(.2,.8,.2,1) both; }
+.draw-word { animation: draw-word 650ms cubic-bezier(.2,.8,.2,1) both; }
+.draw-chip { animation: draw-chip 520ms cubic-bezier(.3,.7,.2,1) backwards; }
+.draw-pencil { animation: draw-pencil 900ms ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .draw-tile, .draw-word, .draw-chip { animation-duration: 1ms !important; }
+  .draw-handoff, .draw-pencil { animation: none !important; }
+}

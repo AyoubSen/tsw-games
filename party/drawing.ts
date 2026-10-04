@@ -11,21 +11,36 @@ import {
   validateGameNightConnection,
   type GameNightMember,
 } from "./shared/gameNight"
+import {
+  isReaction,
+  takeReactionSlot,
+  type Reaction,
+  type ReactionMessage,
+} from "../src/lib/reactions"
 
 // Stroke data for drawing
 export interface Stroke {
   points: { x: number; y: number }[]
   color: string
   size: number
+  /** "fill" floods the region under its single point; a missing tool is a pen stroke. */
+  tool?: "pen" | "fill"
 }
 
-// Guess entry
+/**
+ * A line in the round's feed. `guess` is a wrong guess everyone sees,
+ * `correct` is the "✓ Name got it" event (its text is never sent), `close` is
+ * a near miss only its author sees, and `chat` is talk between the drawer and
+ * the players who already got it.
+ */
 export interface Guess {
   playerId: string
   playerName: string
   text: string
   isCorrect: boolean
   timestamp: number
+  kind: "guess" | "correct" | "close" | "chat"
+  points?: number
 }
 
 export type DrawingGameMode =
@@ -34,6 +49,37 @@ export type DrawingGameMode =
   | "valorant"
   | "draw-vote"
   | "telephone"
+
+/** Classic round beats: pick a word, hand off, draw, hold the reveal, land the points. */
+export type ClassicStage = "choosing" | "handoff" | "drawing" | "reveal" | "score"
+
+/**
+ * Server-paced beats, advanced by the storage alarm so every client sees the
+ * same timeline. Client animations are built to fit inside these.
+ */
+export const DRAW_PACE_MS = {
+  /** The drawer picks 1 of 3 words; a random one is taken on timeout. */
+  choose: 15000,
+  /** "Name is drawing" before the round timer starts. */
+  handoff: 2400,
+  /** The word is held on screen while the drawing replays. */
+  reveal: 5400,
+  /** Inside the reveal beat: the replay starts after `replayDelay` and runs for `replay`. */
+  replayDelay: 900,
+  replay: 3800,
+  /** Points float onto the seats. */
+  score: 2600,
+  /** Telephone reveal: a text entry flips in; a drawing replays and then holds. */
+  telephoneText: 3400,
+  telephoneDrawing: 7000,
+  telephoneReplay: 4200,
+  /** Draw & Vote results: each drawing reveals its artist and votes; then the winner. */
+  voteEntry: 3600,
+  voteSpotlight: 4200,
+} as const
+
+/** Letter hints land at these fractions of the drawing time. */
+export const HINT_AT = [0.5, 0.75] as const
 
 interface DrawVoteEntry {
   id: string
@@ -44,12 +90,21 @@ interface DrawVoteEntry {
   submitted: boolean
 }
 
+interface DrawVoteReveal {
+  /** Entry ids, fewest votes first, so the favourite lands last. */
+  order: string[]
+  /** 0..order.length-1 = that drawing, order.length = spotlight, order.length+1 = done. */
+  step: number
+  gains: Record<string, number>
+}
+
 interface DrawVoteState {
   phase: "drawing" | "voting" | "results"
   deadline: number | null
   participantIds: string[]
   entries: DrawVoteEntry[]
   votes: Record<string, string>
+  reveal?: DrawVoteReveal | null
 }
 
 export interface PublicDrawVoteState {
@@ -58,15 +113,19 @@ export interface PublicDrawVoteState {
   participantCount: number
   submittedCount: number
   votedCount: number
+  submittedIds: string[]
   draft: Stroke[]
   draftRevision: number
   submitted: boolean
   selectedEntryId: string | null
   canVote: boolean
+  /** Results pacing; null outside results. */
+  reveal: { order: string[]; step: number; spotlight: boolean; done: boolean } | null
   entries: {
     id: string
     strokes: Stroke[]
     isOwn: boolean
+    authorId: string | null
     authorName: string | null
     votes: number | null
   }[]
@@ -93,6 +152,17 @@ export type TelephoneAssignment =
   | { type: "write-prompt" }
   | { type: "draw"; prompt: string }
   | { type: "describe"; strokes: Stroke[] }
+
+/** One finished drawing from a Classic or Draw & Vote round, for the end-of-game gallery. */
+export interface GalleryItem {
+  id: string
+  artistId: string
+  artistName: string
+  word: string
+  round: number
+  strokes: Stroke[]
+  votes?: number
+}
 
 // Player state
 export interface Player {
@@ -127,6 +197,17 @@ export interface GameState {
   guesses: Guess[]
   usedWords: string[]
   correctGuessers: string[] // IDs of players who guessed correctly this round
+  stage: ClassicStage | null
+  /** The current paced beat (classic stage, telephone reveal entry, draw-vote reveal step). */
+  beatSeq: number
+  beatStartedAt: number | null
+  beatEndsAt: number | null
+  wordChoices: string[]
+  hintIndices: number[]
+  hintsGiven: number
+  /** Points earned this round; applied to scores when they land. */
+  roundGains: Record<string, number>
+  gallery: GalleryItem[]
   telephoneStage: number
   telephonePlayerOrder: string[]
   telephoneSubmittedIds: string[]
@@ -151,13 +232,25 @@ export interface PublicGameState {
   currentDrawerId: string | null
   currentWord: string | null // Only sent to drawer, null for others
   wordLength: number // Hint for guessers
+  /** The word as guessers see it: letters are null until hinted; spaces and punctuation show. */
+  wordMask: (string | null)[]
   roundNumber: number
   totalRounds: number
   roundStartedAt: number | null
   roundTimeLimit: number
+  serverNow: number
+  stage: ClassicStage | null
+  beatSeq: number
+  beatStartedAt: number | null
+  beatEndsAt: number | null
+  /** The drawer's three options while choosing; empty for everyone else. */
+  wordChoices: string[]
+  roundGains: Record<string, number>
   strokes: Stroke[]
   guesses: Guess[]
   correctGuessers: string[]
+  /** Every drawing from the game, sent once it is over. */
+  gallery: GalleryItem[]
   telephoneStage: number
   telephoneTotalStages: number
   telephoneSubmittedIds: string[]
@@ -174,10 +267,12 @@ export interface PublicGameState {
 export type ClientMessage =
   | { type: "join"; name: string }
   | { type: "start" }
+  | { type: "choose-word"; index: number }
   | { type: "draw"; stroke: Stroke }
   | { type: "undo"; requestId: string }
   | { type: "clear" }
   | { type: "guess"; text: string }
+  | { type: "react"; reaction: Reaction }
   | { type: "draw-vote-edit"; round: number; action: "stroke" | "undo" | "clear"; stroke?: Stroke }
   | { type: "draw-vote-submit"; round: number }
   | { type: "draw-vote-vote"; round: number; entryId: string }
@@ -202,16 +297,11 @@ export type ServerMessage =
   | { type: "state"; state: PublicGameState }
   | { type: "player-joined"; player: Player }
   | { type: "player-left"; playerId: string }
-  | { type: "round-started"; drawerId: string; word: string | null; wordLength: number }
-  | { type: "draw"; stroke: Stroke }
-  | { type: "clear" }
   | { type: "canvas-state"; strokes: Stroke[]; undoRequestId?: string }
-  | { type: "guess"; guess: Guess }
-  | { type: "correct-guess"; playerId: string; playerName: string }
-  | { type: "round-ended"; word: string; scores: Record<string, number> }
   | { type: "game-over"; results: PlayerResult[] }
   | { type: "game-restarted" }
   | { type: "error"; message: string }
+  | ReactionMessage
 
 export interface PlayerResult {
   id: string
@@ -277,6 +367,10 @@ const TELEPHONE_REACTIONS = new Set([
   "\u{2764}\u{FE0F}",
 ])
 
+const GUESS_COOLDOWN_MS = 3000
+const CHAT_COOLDOWN_MS = 800
+const MAX_STROKES = 1000
+
 function getWordPool(mode: DrawingGameMode): string[] {
   if (mode === "league-of-legends") return LEAGUE_CHAMPIONS
   if (mode === "valorant") return VALORANT_AGENTS
@@ -284,16 +378,66 @@ function getWordPool(mode: DrawingGameMode): string[] {
 }
 
 function getRandomWord(mode: DrawingGameMode, usedWords: string[]): string {
+  return getWordChoices(mode, usedWords, 1)[0]!
+}
+
+/** `count` distinct words, unused ones first. */
+function getWordChoices(mode: DrawingGameMode, usedWords: string[], count: number): string[] {
   const words = getWordPool(mode)
-  const available = words.filter((word) => !usedWords.includes(word))
-  if (available.length === 0) {
-    return words[Math.floor(Math.random() * words.length)]
+  const fresh = shuffle(words.filter((word) => !usedWords.includes(word)))
+  const stale = shuffle(words.filter((word) => usedWords.includes(word)))
+  return [...fresh, ...stale].slice(0, count)
+}
+
+function shuffle<T>(items: T[]): T[] {
+  const copy = [...items]
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[copy[i], copy[j]] = [copy[j]!, copy[i]!]
   }
-  return available[Math.floor(Math.random() * available.length)]
+  return copy
 }
 
 function normalizeAnswer(value: string): string {
   return value.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]/g, "")
+}
+
+const isLetter = (char: string) => /[\p{L}\p{N}]/u.test(char)
+
+/** One insertion, deletion or substitution apart. */
+function oneEditApart(a: string, b: string): boolean {
+  if (Math.abs(a.length - b.length) > 1 || a === b) return false
+  let i = 0
+  while (i < a.length && i < b.length && a[i] === b[i]) i++
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1)
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1)
+}
+
+function pluralVariants(word: string): string[] {
+  const variants = [`${word}s`, `${word}es`]
+  if (word.endsWith("s")) variants.push(word.slice(0, -1))
+  if (word.endsWith("es")) variants.push(word.slice(0, -2))
+  if (word.endsWith("y")) variants.push(`${word.slice(0, -1)}ies`)
+  if (word.endsWith("ies")) variants.push(`${word.slice(0, -3)}y`)
+  return variants
+}
+
+/** A near miss: one edit away, or the plural/singular of the word. */
+function isCloseGuess(guess: string, word: string): boolean {
+  if (!guess || guess === word || word.length < 3) return false
+  return oneEditApart(guess, word) || pluralVariants(word).includes(guess)
+}
+
+/** Time-based points for a correct guesser, plus a bonus for being first. */
+function guesserPoints(fractionLeft: number, first: boolean): number {
+  const base = 50 + 200 * Math.max(0, Math.min(1, fractionLeft))
+  return Math.round(base / 5) * 5 + (first ? 50 : 0)
+}
+
+/** Per correct guesser, scaled up the more of the room got it. */
+function drawerPoints(correct: number, eligible: number): number {
+  if (!correct || !eligible) return 0
+  return Math.round((correct * 60 * (0.5 + 0.5 * (correct / eligible))) / 5) * 5
 }
 
 function isDrawingAndGuessingMode(mode: DrawingGameMode): boolean {
@@ -303,11 +447,12 @@ function isDrawingAndGuessingMode(mode: DrawingGameMode): boolean {
 function sanitizeStrokes(value: unknown): Stroke[] {
   if (!Array.isArray(value)) return []
 
-  return value.slice(0, 1000).flatMap((candidate) => {
+  return value.slice(0, MAX_STROKES).flatMap((candidate) => {
     if (!candidate || typeof candidate !== "object") return []
 
     const stroke = candidate as Partial<Stroke>
     if (!Array.isArray(stroke.points)) return []
+    const fill = stroke.tool === "fill"
 
     const points = stroke.points
       .slice(0, 2000)
@@ -321,18 +466,18 @@ function sanitizeStrokes(value: unknown): Stroke[] {
           point.y >= 0 &&
           point.y <= 800
       )
-      .map((point) => ({ x: point.x, y: point.y }))
-    if (points.length < 2) return []
+      .map((point) => ({ x: Math.round(point.x * 10) / 10, y: Math.round(point.y * 10) / 10 }))
+    if (fill ? points.length !== 1 : points.length < 2) return []
 
     const color =
       typeof stroke.color === "string" && /^#[0-9a-f]{6}$/i.test(stroke.color)
-        ? stroke.color
+        ? stroke.color.toLowerCase()
         : "#000000"
     const size = Number.isFinite(stroke.size)
       ? Math.min(64, Math.max(1, stroke.size!))
       : 8
 
-    return [{ points, color, size }]
+    return [fill ? { points, color, size, tool: "fill" as const } : { points, color, size }]
   })
 }
 
@@ -340,9 +485,9 @@ class DrawingParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   state: GameState | null = null
-  roundTimer: ReturnType<typeof setTimeout> | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
   gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
+  reactedAt = new Map<string, number>()
 
   async onStart() {
     const stored = await this.room.storage.get<GameState>("state")
@@ -350,6 +495,20 @@ class DrawingParty implements Party.Server {
       this.state = {
         ...stored,
         mode: stored.mode ?? "classic",
+        guesses: (stored.guesses ?? []).map((guess) => ({
+          ...guess,
+          kind: guess.kind ?? (guess.isCorrect ? "correct" : "guess"),
+          text: guess.isCorrect ? "" : guess.text,
+        })),
+        stage: stored.stage ?? null,
+        beatSeq: stored.beatSeq ?? 0,
+        beatStartedAt: stored.beatStartedAt ?? null,
+        beatEndsAt: stored.beatEndsAt ?? null,
+        wordChoices: stored.wordChoices ?? [],
+        hintIndices: stored.hintIndices ?? [],
+        hintsGiven: stored.hintsGiven ?? 0,
+        roundGains: stored.roundGains ?? {},
+        gallery: stored.gallery ?? [],
         telephoneStage: stored.telephoneStage ?? 0,
         telephonePlayerOrder: stored.telephonePlayerOrder ?? [],
         telephoneSubmittedIds: stored.telephoneSubmittedIds ?? [],
@@ -363,22 +522,22 @@ class DrawingParty implements Party.Server {
         playerTokens: stored.playerTokens ?? {},
         drawVote: stored.drawVote ?? null,
       }
-		for (const player of Object.values(this.state.players)) {
-			player.connected = false
-		}
-		await this.saveState()
-      // Resume round timer if game was in progress
-      if (this.state.mode === "draw-vote" && this.state.drawVote?.deadline) {
-        this.startRoundTimer(Math.max(0, this.state.drawVote.deadline - Date.now()))
-      } else if (this.state.status === "playing" && this.state.roundStartedAt) {
-        const elapsed = (Date.now() - this.state.roundStartedAt) / 1000
-        const remaining = this.state.roundTimeLimit - elapsed
-        if (remaining > 0) {
-          this.startRoundTimer(remaining * 1000)
-        } else {
-          await this.endRound()
-        }
+      // A classic round persisted before stages existed carries on as a drawing round.
+      if (
+        isDrawingAndGuessingMode(this.state.mode) &&
+        this.state.status === "playing" &&
+        !this.state.stage &&
+        this.state.roundStartedAt
+      ) {
+        this.state.stage = "drawing"
+        this.state.beatStartedAt = this.state.roundStartedAt
+        this.state.beatEndsAt = this.state.roundStartedAt + this.state.roundTimeLimit * 1000
       }
+      for (const player of Object.values(this.state.players)) {
+        player.connected = false
+      }
+      await this.saveState()
+      await this.scheduleAlarm()
     }
   }
 
@@ -388,72 +547,188 @@ class DrawingParty implements Party.Server {
     }
   }
 
+  /** Persist, broadcast and re-arm the alarm after a change. */
+  async commit() {
+    await this.saveState()
+    this.broadcastState()
+    await this.scheduleAlarm()
+  }
+
   isAuthenticated(conn: Party.Connection): boolean {
     if (!this.state) return false
     const token = this.connectionTokens.get(conn)
     return Boolean(token && this.state.playerTokens[conn.id] === token)
   }
 
+  // ─── Pacing ──────────────────────────────────────────────────────────────
+
+  setBeat(duration: number | null) {
+    if (!this.state) return
+    const now = Date.now()
+    this.state.beatSeq++
+    this.state.beatStartedAt = now
+    this.state.beatEndsAt = duration === null ? null : now + duration
+  }
+
+  /** The one storage alarm drives every timer: stages, hints, deadlines and reveal beats. */
+  nextDueAt(): number | null {
+    const s = this.state
+    if (!s) return null
+    if (s.mode === "draw-vote") {
+      const round = s.drawVote
+      if (!round) return null
+      if (round.phase === "results") return round.reveal && s.status === "round-end" ? s.beatEndsAt : null
+      return s.status === "playing" ? round.deadline : null
+    }
+    if (s.mode === "telephone") {
+      if (s.status === "playing" && s.roundStartedAt) return s.roundStartedAt + s.roundTimeLimit * 1000
+      if (s.status === "finished" && !s.telephoneRevealComplete) return s.beatEndsAt
+      return null
+    }
+    if ((s.status !== "playing" && s.status !== "round-end") || !s.beatEndsAt) return null
+    const hint = s.stage === "drawing" ? this.nextHintAt() : null
+    return hint !== null ? Math.min(hint, s.beatEndsAt) : s.beatEndsAt
+  }
+
+  nextHintAt(): number | null {
+    const s = this.state
+    if (!s?.roundStartedAt || s.hintsGiven >= HINT_AT.length) return null
+    return s.roundStartedAt + s.roundTimeLimit * 1000 * HINT_AT[s.hintsGiven]!
+  }
+
+  async scheduleAlarm() {
+    const at = this.nextDueAt()
+    if (at) await this.room.storage.setAlarm(Math.max(Date.now() + 10, at))
+    else await this.room.storage.deleteAlarm()
+  }
+
+  async onAlarm() {
+    const s = this.state
+    if (!s) return
+    const now = Date.now()
+    const due = (at: number | null | undefined) => at != null && now >= at - 50
+
+    if (s.mode === "draw-vote") {
+      const round = s.drawVote
+      if (round?.phase === "results" && s.status === "round-end" && due(s.beatEndsAt)) {
+        await this.advanceDrawVoteReveal()
+        return
+      }
+      if (round && round.phase !== "results" && s.status === "playing" && due(round.deadline)) {
+        await this.advanceDrawVotePhase()
+        return
+      }
+    } else if (s.mode === "telephone") {
+      if (s.status === "playing" && s.roundStartedAt && due(s.roundStartedAt + s.roundTimeLimit * 1000)) {
+        await this.advanceTelephoneStage()
+        return
+      }
+      if (s.status === "finished" && !s.telephoneRevealComplete && due(s.beatEndsAt)) {
+        this.stepTelephoneReveal()
+        await this.commit()
+        return
+      }
+    } else if (s.status === "playing" || s.status === "round-end") {
+      if (s.stage === "drawing" && due(this.nextHintAt()) && !due(s.beatEndsAt)) {
+        this.giveHint()
+        await this.commit()
+        return
+      }
+      if (due(s.beatEndsAt)) {
+        await this.advanceStage()
+        return
+      }
+    }
+    await this.scheduleAlarm()
+  }
+
+  // ─── Public state ────────────────────────────────────────────────────────
+
   getPublicState(forPlayerId?: string): PublicGameState {
     if (!this.state) {
       throw new Error("No game state")
     }
+    const s = this.state
 
-    const isDrawer = forPlayerId === this.state.currentDrawerId
-    // Show word to everyone during round-end, or to drawer during playing
-    const showWord = this.state.status === "round-end" || isDrawer || this.state.mode === "draw-vote"
-    const telephoneChains = this.state.telephonePlayerOrder
-      .map((id) => this.state!.telephoneChains[id])
+    const isDrawer = forPlayerId === s.currentDrawerId
+    const revealing = s.stage === "reveal" || s.stage === "score"
+    // Show the word to everyone during the reveal, or to the drawer while playing
+    const showWord =
+      revealing ||
+      (s.status === "finished" && isDrawingAndGuessingMode(s.mode)) ||
+      isDrawer ||
+      Boolean(forPlayerId && s.correctGuessers.includes(forPlayerId)) ||
+      s.mode === "draw-vote"
+    const telephoneChains = s.telephonePlayerOrder
+      .map((id) => s.telephoneChains[id])
       .filter((chain): chain is TelephoneChain => Boolean(chain))
-    const revealedTelephoneChains = this.state.telephoneRevealComplete
+    const revealedTelephoneChains = s.telephoneRevealComplete
       ? telephoneChains
       : telephoneChains
-          .slice(0, this.state.telephoneRevealChainIndex + 1)
+          .slice(0, s.telephoneRevealChainIndex + 1)
           .map((chain, index) => ({
             ...chain,
             entries:
-              index < this.state!.telephoneRevealChainIndex
+              index < s.telephoneRevealChainIndex
                 ? chain.entries
-                : chain.entries.slice(0, this.state!.telephoneRevealEntryIndex + 1),
+                : chain.entries.slice(0, s.telephoneRevealEntryIndex + 1),
           }))
-    const reactionKey = `${this.state.telephoneRevealChainIndex}:${this.state.telephoneRevealEntryIndex}`
+    const reactionKey = `${s.telephoneRevealChainIndex}:${s.telephoneRevealEntryIndex}`
+    const word = s.currentWord ?? ""
+    const inCircle = Boolean(forPlayerId && (isDrawer || s.correctGuessers.includes(forPlayerId)))
+    const guesses = s.guesses.filter((guess) =>
+      guess.kind === "close"
+        ? guess.playerId === forPlayerId
+        : guess.kind === "chat"
+          ? inCircle || revealing
+          : true
+    )
 
     return {
-      roomCode: this.state.roomCode,
-      mode: this.state.mode,
-      hostId: this.state.hostId,
+      roomCode: s.roomCode,
+      mode: s.mode,
+      hostId: s.hostId,
       canControl: forPlayerId
-        ? canControlGame(this.state.players, this.state.hostId, forPlayerId)
+        ? canControlGame(s.players, s.hostId, forPlayerId)
         : false,
-      players: this.state.players,
-      status: this.state.status,
-      maxPlayers: this.state.maxPlayers,
-      currentDrawerId: this.state.currentDrawerId,
-      currentWord: showWord ? this.state.currentWord : null,
-      wordLength: this.state.currentWord
-        ? normalizeAnswer(this.state.currentWord).length
-        : 0,
-      roundNumber: this.state.roundNumber,
-      totalRounds: this.state.totalRounds,
-      roundStartedAt: this.state.roundStartedAt,
-      roundTimeLimit: this.state.roundTimeLimit,
-      strokes: this.state.strokes,
-      guesses: this.state.guesses,
-      correctGuessers: this.state.correctGuessers,
-      telephoneStage: this.state.telephoneStage,
-      telephoneTotalStages: this.state.telephonePlayerOrder.length,
-      telephoneSubmittedIds: this.state.telephoneSubmittedIds,
+      players: s.players,
+      status: s.status,
+      maxPlayers: s.maxPlayers,
+      currentDrawerId: s.currentDrawerId,
+      currentWord: showWord ? s.currentWord : null,
+      wordLength: s.currentWord ? normalizeAnswer(s.currentWord).length : 0,
+      wordMask: [...word].map((char, index) =>
+        !isLetter(char) || s.hintIndices.includes(index) ? char : null
+      ),
+      roundNumber: s.roundNumber,
+      totalRounds: s.totalRounds,
+      roundStartedAt: s.roundStartedAt,
+      roundTimeLimit: s.roundTimeLimit,
+      serverNow: Date.now(),
+      stage: s.stage,
+      beatSeq: s.beatSeq,
+      beatStartedAt: s.beatStartedAt,
+      beatEndsAt: s.beatEndsAt,
+      wordChoices: isDrawer && s.stage === "choosing" ? s.wordChoices : [],
+      roundGains: s.roundGains,
+      strokes: s.strokes,
+      guesses,
+      correctGuessers: s.correctGuessers,
+      gallery: s.status === "finished" ? s.gallery : [],
+      telephoneStage: s.telephoneStage,
+      telephoneTotalStages: s.telephonePlayerOrder.length,
+      telephoneSubmittedIds: s.telephoneSubmittedIds,
       telephoneAssignment: forPlayerId
         ? this.getTelephoneAssignment(forPlayerId)
         : null,
       telephoneChains:
-        this.state.mode === "telephone" && this.state.status === "finished"
+        s.mode === "telephone" && s.status === "finished"
           ? revealedTelephoneChains
           : [],
-      telephoneRevealChainIndex: this.state.telephoneRevealChainIndex,
-      telephoneRevealEntryIndex: this.state.telephoneRevealEntryIndex,
-      telephoneRevealComplete: this.state.telephoneRevealComplete,
-      telephoneReactions: this.state.telephoneReactions[reactionKey] ?? [],
+      telephoneRevealChainIndex: s.telephoneRevealChainIndex,
+      telephoneRevealEntryIndex: s.telephoneRevealEntryIndex,
+      telephoneRevealComplete: s.telephoneRevealComplete,
+      telephoneReactions: s.telephoneReactions[reactionKey] ?? [],
       drawVote: this.getPublicDrawVoteState(forPlayerId),
     }
   }
@@ -462,13 +737,17 @@ class DrawingParty implements Party.Server {
     const round = this.state?.drawVote
     if (this.state?.mode !== "draw-vote" || !round) return null
     const own = round.entries.find((entry) => entry.authorId === playerId)
-    const revealed = round.phase === "results"
+    const reveal = round.phase === "results" ? round.reveal ?? null : null
+    // An entry's artist and votes stay hidden until its reveal beat.
+    const shown = (entryId: string) =>
+      round.phase === "results" && (!reveal || reveal.order.indexOf(entryId) <= reveal.step)
     return {
       phase: round.phase,
       deadline: round.deadline,
       participantCount: round.participantIds.length,
       submittedCount: round.entries.filter((entry) => entry.submitted).length,
       votedCount: Object.keys(round.votes).length,
+      submittedIds: round.entries.filter((entry) => entry.submitted).map((entry) => entry.authorId),
       draft: own?.strokes ?? [],
       draftRevision: own?.revision ?? 0,
       submitted: own?.submitted ?? false,
@@ -476,17 +755,26 @@ class DrawingParty implements Party.Server {
       canVote: Boolean(playerId && round.phase === "voting" &&
         round.participantIds.includes(playerId) && !round.votes[playerId] &&
         round.entries.some((entry) => entry.authorId !== playerId && entry.strokes.length > 0)),
+      reveal: reveal && {
+        order: reveal.order,
+        step: reveal.step,
+        spotlight: reveal.step === reveal.order.length,
+        done: reveal.step > reveal.order.length,
+      },
       entries: round.phase === "drawing" ? [] : round.entries
         .filter((entry) => entry.strokes.length > 0)
         .map((entry) => ({
           id: entry.id,
           strokes: entry.strokes,
           isOwn: entry.authorId === playerId,
-          authorName: revealed ? entry.authorName : null,
-          votes: revealed ? Object.values(round.votes).filter((id) => id === entry.id).length : null,
+          authorId: shown(entry.id) ? entry.authorId : null,
+          authorName: shown(entry.id) ? entry.authorName : null,
+          votes: shown(entry.id) ? Object.values(round.votes).filter((id) => id === entry.id).length : null,
         })),
     }
   }
+
+  // ─── Draw & Vote ─────────────────────────────────────────────────────────
 
   async startDrawVoteRound() {
     if (!this.state || this.state.mode !== "draw-vote") return
@@ -500,6 +788,7 @@ class DrawingParty implements Party.Server {
     this.state.usedWords.push(this.state.currentWord)
     this.state.status = "playing"
     this.state.roundStartedAt = Date.now()
+    this.state.roundGains = {}
     this.state.drawVote = {
       phase: "drawing",
       deadline: Date.now() + this.state.roundTimeLimit * 1000,
@@ -509,49 +798,89 @@ class DrawingParty implements Party.Server {
         strokes: [], revision: 0, submitted: false,
       })),
       votes: {},
+      reveal: null,
     }
-    this.startRoundTimer(this.state.roundTimeLimit * 1000)
-    await this.saveState()
-    this.broadcastState()
+    await this.commit()
   }
 
   async advanceDrawVotePhase() {
     const round = this.state?.drawVote
     if (!this.state || this.state.mode !== "draw-vote" || !round || round.phase === "results") return
-    if (this.roundTimer) clearTimeout(this.roundTimer)
-    this.roundTimer = null
     if (round.phase === "drawing") {
       round.phase = "voting"
       for (const entry of round.entries) entry.submitted = true
       // Shuffle once, so anonymous labels stay stable for the whole room.
-      for (let i = round.entries.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1))
-        ;[round.entries[i], round.entries[j]] = [round.entries[j], round.entries[i]]
-      }
+      round.entries = shuffle(round.entries)
       this.state.roundStartedAt = Date.now()
       round.deadline = Date.now() + 30000
       if (this.drawVoteBallotsComplete()) {
         await this.advanceDrawVotePhase()
         return
       }
-      this.startRoundTimer(30000)
     } else {
       round.phase = "results"
       round.deadline = null
       this.state.roundStartedAt = null
       this.state.status = "round-end"
-      for (const entryId of Object.values(round.votes)) {
-        const entry = round.entries.find((candidate) => candidate.id === entryId)
-        const player = entry && this.state.players[entry.authorId]
-        if (player) player.score++
+      const tally = (entryId: string) => Object.values(round.votes).filter((id) => id === entryId).length
+      const drawn = round.entries.filter((entry) => entry.strokes.length > 0)
+      const gains: Record<string, number> = {}
+      for (const entry of drawn) if (tally(entry.id)) gains[entry.authorId] = tally(entry.id)
+      // Fewest votes first; the current shuffle breaks ties.
+      const order = [...drawn].sort((left, right) => tally(left.id) - tally(right.id)).map((entry) => entry.id)
+      round.reveal = { order, step: 0, gains }
+      for (const entry of drawn) {
+        this.state.gallery.push({
+          id: entry.id,
+          artistId: entry.authorId,
+          artistName: entry.authorName,
+          word: this.state.currentWord ?? "",
+          round: this.state.roundNumber,
+          strokes: entry.strokes,
+          votes: tally(entry.id),
+        })
       }
-      if (this.state.roundNumber >= this.state.totalRounds || Object.keys(this.state.players).length < 3) {
-        await this.endGame()
+      if (order.length === 0) {
+        await this.finishDrawVoteReveal()
         return
       }
+      this.setBeat(DRAW_PACE_MS.voteEntry)
     }
-    await this.saveState()
-    this.broadcastState()
+    await this.commit()
+  }
+
+  async advanceDrawVoteReveal() {
+    const round = this.state?.drawVote
+    const reveal = round?.reveal
+    if (!this.state || !round || !reveal || round.phase !== "results") return
+    reveal.step++
+    if (reveal.step < reveal.order.length) {
+      this.setBeat(DRAW_PACE_MS.voteEntry)
+    } else if (reveal.step === reveal.order.length && Object.keys(reveal.gains).length > 0) {
+      this.setBeat(DRAW_PACE_MS.voteSpotlight)
+    } else {
+      await this.finishDrawVoteReveal()
+      return
+    }
+    await this.commit()
+  }
+
+  /** Votes become points, then the host moves on (or the game ends). */
+  async finishDrawVoteReveal() {
+    const round = this.state?.drawVote
+    if (!this.state || !round?.reveal) return
+    round.reveal.step = round.reveal.order.length + 1
+    this.state.roundGains = round.reveal.gains
+    for (const [id, points] of Object.entries(round.reveal.gains)) {
+      const player = this.state.players[id]
+      if (player) player.score += points
+    }
+    this.setBeat(null)
+    if (this.state.roundNumber >= this.state.totalRounds || Object.keys(this.state.players).length < 3) {
+      await this.endGame()
+      return
+    }
+    await this.commit()
   }
 
   drawVoteBallotsComplete(): boolean {
@@ -560,6 +889,8 @@ class DrawingParty implements Party.Server {
     return round.participantIds.every((id) => Boolean(round.votes[id]) ||
       !round.entries.some((entry) => entry.authorId !== id && entry.strokes.length > 0))
   }
+
+  // ─── Telephone ───────────────────────────────────────────────────────────
 
   getTelephoneAssignment(playerId: string): TelephoneAssignment | null {
     if (
@@ -574,14 +905,7 @@ class DrawingParty implements Party.Server {
       return { type: "write-prompt" }
     }
 
-    const playerIndex = this.state.telephonePlayerOrder.indexOf(playerId)
-    if (playerIndex === -1) return null
-
-    const chainCount = this.state.telephonePlayerOrder.length
-    const chainIndex =
-      (playerIndex - this.state.telephoneStage + chainCount) % chainCount
-    const chainId = this.state.telephonePlayerOrder[chainIndex]
-    const chain = this.state.telephoneChains[chainId]
+    const chain = this.getTelephoneChainForPlayer(playerId)
     const previousEntry = chain?.entries[chain.entries.length - 1]
 
     if (this.state.telephoneStage % 2 === 1 && previousEntry?.type === "text") {
@@ -620,74 +944,103 @@ class DrawingParty implements Party.Server {
     conn.send(JSON.stringify(message))
   }
 
-  startRoundTimer(duration: number) {
-    if (this.roundTimer) {
-      clearTimeout(this.roundTimer)
-    }
-    const roundStartedAt = this.state?.roundStartedAt
-    const drawVotePhase = this.state?.drawVote?.phase
-    this.roundTimer = setTimeout(async () => {
-      if (this.state?.roundStartedAt !== roundStartedAt || this.state?.drawVote?.phase !== drawVotePhase) return
-      await this.endRound()
-    }, duration)
-  }
+  // ─── Classic ─────────────────────────────────────────────────────────────
 
   async startNewRound() {
     if (!this.state) return
 
-    // Find next drawer - player with fewest draws who hasn't reached roundsPerPlayer
+    // Next drawer: fewest draws, then join order. Someone who is away waits for a later turn.
     const players = Object.values(this.state.players)
-    const eligibleDrawers = players.filter((p) => p.drawCount < this.state!.roundsPerPlayer)
+    const eligibleDrawers = players.filter(
+      (p) => p.drawCount < this.state!.roundsPerPlayer && p.connected !== false
+    )
 
     if (eligibleDrawers.length === 0) {
-      // All players have drawn their required rounds, game over
       await this.endGame()
       return
     }
 
-    // Pick player with fewest draws, then by join order
     eligibleDrawers.sort((a, b) => {
       if (a.drawCount !== b.drawCount) return a.drawCount - b.drawCount
       return a.joinedAt - b.joinedAt
     })
-    const drawer = eligibleDrawers[0]
-
-    // Increment drawer's draw count
+    const drawer = eligibleDrawers[0]!
     drawer.drawCount++
 
-    // Reset round state
     this.state.currentDrawerId = drawer.id
-    this.state.currentWord = getRandomWord(this.state.mode, this.state.usedWords)
-    this.state.usedWords.push(this.state.currentWord)
+    this.state.currentWord = null
+    this.state.wordChoices = getWordChoices(this.state.mode, this.state.usedWords, 3)
     this.state.roundNumber++
-    this.state.roundStartedAt = Date.now()
+    this.state.roundStartedAt = null
     this.state.strokes = []
     this.state.guesses = []
     this.state.correctGuessers = []
+    this.state.hintIndices = []
+    this.state.hintsGiven = 0
+    this.state.roundGains = {}
     this.state.status = "playing"
-
-    // Reset hasGuessedCorrectly for all players
+    this.state.stage = "choosing"
     for (const player of Object.values(this.state.players)) {
       player.hasGuessedCorrectly = false
     }
+    this.setBeat(DRAW_PACE_MS.choose)
+    await this.commit()
+  }
 
-    await this.saveState()
+  async chooseWord(word: string) {
+    if (!this.state || this.state.stage !== "choosing") return
+    this.state.currentWord = word
+    this.state.usedWords.push(word)
+    this.state.wordChoices = []
+    this.state.stage = "handoff"
+    this.setBeat(DRAW_PACE_MS.handoff)
+    await this.commit()
+  }
 
-    // Notify all players
-    for (const conn of this.room.getConnections()) {
-      const isDrawer = this.isAuthenticated(conn) && conn.id === drawer.id
-      this.send(conn, {
-        type: "round-started",
-        drawerId: drawer.id,
-        word: isDrawer ? this.state.currentWord : null,
-        wordLength: normalizeAnswer(this.state.currentWord!).length,
-      })
+  async advanceStage() {
+    const s = this.state
+    if (!s) return
+    switch (s.stage) {
+      case "choosing": {
+        const choices = s.wordChoices.length ? s.wordChoices : getWordChoices(s.mode, s.usedWords, 1)
+        await this.chooseWord(choices[Math.floor(Math.random() * choices.length)]!)
+        return
+      }
+      case "handoff":
+        s.stage = "drawing"
+        this.setBeat(s.roundTimeLimit * 1000)
+        s.roundStartedAt = s.beatStartedAt
+        await this.commit()
+        return
+      case "drawing":
+        await this.endRound()
+        return
+      case "reveal":
+        s.stage = "score"
+        for (const [id, points] of Object.entries(s.roundGains)) {
+          const player = s.players[id]
+          if (player) player.score += points
+        }
+        this.setBeat(DRAW_PACE_MS.score)
+        await this.commit()
+        return
+      case "score":
+        await this.startNewRound()
+        return
     }
+  }
 
-    this.broadcastState()
-
-    // Start round timer
-    this.startRoundTimer(this.state.roundTimeLimit * 1000)
+  /** Reveals random hidden letters, never more than half of them in total. */
+  giveHint() {
+    const s = this.state
+    if (!s?.currentWord) return
+    s.hintsGiven++
+    const letters = [...s.currentWord].flatMap((char, index) => (isLetter(char) ? [index] : []))
+    const cap = Math.floor(letters.length / 2)
+    const perHint = Math.max(1, Math.round(letters.length / 6))
+    const hidden = shuffle(letters.filter((index) => !s.hintIndices.includes(index)))
+    const count = Math.min(perHint, cap - s.hintIndices.length)
+    if (count > 0) s.hintIndices.push(...hidden.slice(0, count))
   }
 
   async startTelephoneGame() {
@@ -721,9 +1074,7 @@ class DrawingParty implements Party.Server {
     this.state.totalRounds = players.length
     this.state.roundStartedAt = Date.now()
 
-    await this.saveState()
-    this.broadcastState()
-    this.startRoundTimer(this.state.roundTimeLimit * 1000)
+    await this.commit()
   }
 
   getTelephoneChainForPlayer(playerId: string): TelephoneChain | null {
@@ -735,7 +1086,7 @@ class DrawingParty implements Party.Server {
     const chainCount = this.state.telephonePlayerOrder.length
     const chainIndex =
       (playerIndex - this.state.telephoneStage + chainCount) % chainCount
-    const chainId = this.state.telephonePlayerOrder[chainIndex]
+    const chainId = this.state.telephonePlayerOrder[chainIndex]!
     return this.state.telephoneChains[chainId] ?? null
   }
 
@@ -790,18 +1141,12 @@ class DrawingParty implements Party.Server {
     ) {
       await this.advanceTelephoneStage()
     } else {
-      await this.saveState()
-      this.broadcastState()
+      await this.commit()
     }
   }
 
   async advanceTelephoneStage() {
     if (!this.state || this.state.mode !== "telephone") return
-
-    if (this.roundTimer) {
-      clearTimeout(this.roundTimer)
-      this.roundTimer = null
-    }
 
     const missingPlayers = this.state.telephonePlayerOrder.filter(
       (id) => !this.state!.telephoneSubmittedIds.includes(id)
@@ -842,65 +1187,92 @@ class DrawingParty implements Party.Server {
       return
     }
 
-    await this.saveState()
-    this.broadcastState()
-    this.startRoundTimer(this.state.roundTimeLimit * 1000)
+    await this.commit()
+  }
+
+  /** Beat length for the telephone entry being revealed: drawings replay, then hold. */
+  telephoneBeatLength(): number {
+    const s = this.state!
+    const chain = s.telephoneChains[s.telephonePlayerOrder[s.telephoneRevealChainIndex] ?? ""]
+    const entry = chain?.entries[s.telephoneRevealEntryIndex]
+    return entry?.type === "drawing" && entry.strokes.length > 0
+      ? DRAW_PACE_MS.telephoneDrawing
+      : DRAW_PACE_MS.telephoneText
+  }
+
+  /** Moves the telephone reveal on by one entry (the alarm, or the host skipping ahead). */
+  stepTelephoneReveal() {
+    const s = this.state
+    if (!s || s.telephoneRevealComplete) return
+    const chainId = s.telephonePlayerOrder[s.telephoneRevealChainIndex]
+    const chain = chainId ? s.telephoneChains[chainId] : undefined
+
+    if (chain && s.telephoneRevealEntryIndex + 1 < chain.entries.length) {
+      s.telephoneRevealEntryIndex++
+    } else if (s.telephoneRevealChainIndex + 1 < s.telephonePlayerOrder.length) {
+      s.telephoneRevealChainIndex++
+      s.telephoneRevealEntryIndex = 0
+    } else {
+      s.telephoneRevealComplete = true
+      this.setBeat(null)
+      return
+    }
+    this.setBeat(this.telephoneBeatLength())
   }
 
   async endRound() {
-    if (!this.state || this.state.status !== "playing") return
+    const s = this.state
+    if (!s || s.status !== "playing") return
 
-    if (this.state.mode === "draw-vote") {
+    if (s.mode === "draw-vote") {
       await this.advanceDrawVotePhase()
       return
     }
 
-    if (this.state.mode === "telephone") {
+    if (s.mode === "telephone") {
       await this.advanceTelephoneStage()
       return
     }
 
-    if (this.roundTimer) {
-      clearTimeout(this.roundTimer)
-      this.roundTimer = null
-    }
-
-    this.state.status = "round-end"
-    await this.saveState()
-
-    // Build scores object for this round
-    const scores: Record<string, number> = {}
-    for (const player of Object.values(this.state.players)) {
-      scores[player.id] = player.score
-    }
-
-    // Broadcast round end
-    this.broadcast({
-      type: "round-ended",
-      word: this.state.currentWord || "",
-      scores,
-    })
-    this.broadcastState()
-
-    // Wait 3 seconds then start next round
-    setTimeout(async () => {
+    // Nothing was drawn yet (the drawer left while choosing): straight on to the next turn.
+    if (s.stage === "choosing" || s.stage === "handoff" || !s.currentWord) {
       await this.startNewRound()
-    }, 3000)
+      return
+    }
+
+    const drawerId = s.currentDrawerId
+    if (drawerId && s.players[drawerId]) {
+      const eligible = Object.values(s.players).filter((p) => p.id !== drawerId).length
+      const points = drawerPoints(s.correctGuessers.length, eligible)
+      if (points) s.roundGains[drawerId] = points
+    }
+    if (s.strokes.length > 0) {
+      s.gallery.push({
+        id: `${s.roundNumber}:${drawerId}`,
+        artistId: drawerId ?? "",
+        artistName: (drawerId && s.players[drawerId]?.name) || "Someone who left",
+        word: s.currentWord,
+        round: s.roundNumber,
+        strokes: s.strokes,
+      })
+    }
+    s.status = "round-end"
+    s.stage = "reveal"
+    this.setBeat(DRAW_PACE_MS.reveal)
+    await this.commit()
   }
 
   async endGame() {
     if (!this.state) return
 
-    if (this.roundTimer) {
-      clearTimeout(this.roundTimer)
-      this.roundTimer = null
-    }
-
     this.state.status = "finished"
+    this.state.stage = null
+    this.setBeat(null)
     if (this.state.mode === "telephone") {
       this.state.telephoneRevealChainIndex = 0
       this.state.telephoneRevealEntryIndex = 0
       this.state.telephoneRevealComplete = false
+      this.setBeat(this.telephoneBeatLength())
     }
     await this.saveState()
 
@@ -914,6 +1286,7 @@ class DrawingParty implements Party.Server {
 
     this.broadcast({ type: "game-over", results })
     this.broadcastState()
+    await this.scheduleAlarm()
   }
 
   async onConnect(conn: Party.Connection, ctx: Party.ConnectionContext) {
@@ -953,13 +1326,22 @@ class DrawingParty implements Party.Server {
         currentWord: null,
         roundNumber: 0,
         totalRounds: 0, // Will be calculated when game starts
-        roundsPerPlayer: mode === "draw-vote" ? ([1, 2, 3].includes(roundsPerPlayer) ? roundsPerPlayer : 1) : roundsPerPlayer,
+        roundsPerPlayer: [1, 2, 3].includes(roundsPerPlayer) ? roundsPerPlayer : 1,
         roundStartedAt: null,
-        roundTimeLimit: mode === "draw-vote" ? ([30, 60, 90, 120].includes(roundTimeLimit) ? roundTimeLimit : 60) : roundTimeLimit,
+        roundTimeLimit: [30, 60, 90, 120].includes(roundTimeLimit) ? roundTimeLimit : 60,
         strokes: [],
         guesses: [],
         usedWords: [],
         correctGuessers: [],
+        stage: null,
+        beatSeq: 0,
+        beatStartedAt: null,
+        beatEndsAt: null,
+        wordChoices: [],
+        hintIndices: [],
+        hintsGiven: 0,
+        roundGains: {},
+        gallery: [],
         telephoneStage: 0,
         telephonePlayerOrder: [],
         telephoneSubmittedIds: [],
@@ -1093,23 +1475,36 @@ class DrawingParty implements Party.Server {
           } else {
             // Total rounds = number of players * rounds per player
             this.state.totalRounds = Object.keys(this.state.players).length * this.state.roundsPerPlayer
-            await this.saveState()
             await this.startNewRound()
           }
           break
         }
 
-        case "draw": {
+        case "choose-word": {
           if (
             !isDrawingAndGuessingMode(this.state.mode) ||
-            this.state.status !== "playing" ||
+            this.state.stage !== "choosing" ||
             sender.id !== this.state.currentDrawerId
+          ) return
+          const word = this.state.wordChoices[data.index]
+          if (word) await this.chooseWord(word)
+          break
+        }
+
+        case "draw": {
+          const stroke = sanitizeStrokes([data.stroke])[0]
+          if (
+            !isDrawingAndGuessingMode(this.state.mode) ||
+            this.state.stage !== "drawing" ||
+            sender.id !== this.state.currentDrawerId ||
+            !stroke ||
+            this.state.strokes.length >= MAX_STROKES
           ) {
             this.send(sender, { type: "canvas-state", strokes: this.state.strokes })
             return
           }
 
-          this.state.strokes.push(data.stroke)
+          this.state.strokes.push(stroke)
           await this.saveState()
 
           this.broadcast({ type: "canvas-state", strokes: this.state.strokes })
@@ -1119,7 +1514,7 @@ class DrawingParty implements Party.Server {
         case "undo": {
           if (
             !isDrawingAndGuessingMode(this.state.mode) ||
-            this.state.status !== "playing" ||
+            this.state.stage !== "drawing" ||
             sender.id !== this.state.currentDrawerId ||
             this.state.strokes.length === 0
           ) {
@@ -1144,7 +1539,7 @@ class DrawingParty implements Party.Server {
         case "clear": {
           if (
             !isDrawingAndGuessingMode(this.state.mode) ||
-            this.state.status !== "playing" ||
+            this.state.stage !== "drawing" ||
             sender.id !== this.state.currentDrawerId
           ) {
             this.send(sender, { type: "canvas-state", strokes: this.state.strokes })
@@ -1159,83 +1554,67 @@ class DrawingParty implements Party.Server {
         }
 
         case "guess": {
-          if (!isDrawingAndGuessingMode(this.state.mode)) return
-          if (this.state.status !== "playing") return
-          if (sender.id === this.state.currentDrawerId) return // Drawer can't guess
+          const s = this.state
+          if (!isDrawingAndGuessingMode(s.mode) || s.stage !== "drawing") return
+          const player = s.players[sender.id]
+          const text = typeof data.text === "string" ? data.text.trim().slice(0, 100) : ""
+          if (!player || !text) return
 
-          const player = this.state.players[sender.id]
-          if (!player || player.hasGuessedCorrectly) return // Already guessed correctly
-
-          // Check 3-second cooldown
           const now = Date.now()
-          const cooldownMs = 3000
+          const isDrawer = sender.id === s.currentDrawerId
+          // The drawer and those who already got it talk among themselves.
+          const inCircle = isDrawer || player.hasGuessedCorrectly
+          const cooldownMs = inCircle ? CHAT_COOLDOWN_MS : GUESS_COOLDOWN_MS
           if (player.lastGuessAt && now - player.lastGuessAt < cooldownMs) {
             this.send(sender, { type: "error", message: "Please wait before guessing again" })
             return
           }
-
-          // Update last guess timestamp
           player.lastGuessAt = now
 
-          const guessText = normalizeAnswer(data.text)
-          const correctWord = this.state.currentWord
-            ? normalizeAnswer(this.state.currentWord)
-            : undefined
-          const isCorrect = guessText === correctWord
-
-          const guess: Guess = {
-            playerId: sender.id,
-            playerName: player.name,
-            text: data.text.trim(),
-            isCorrect,
-            timestamp: now,
+          const base = { playerId: sender.id, playerName: player.name, timestamp: now }
+          if (inCircle) {
+            s.guesses.push({ ...base, text, isCorrect: false, kind: "chat" })
+            await this.commit()
+            return
           }
 
-          this.state.guesses.push(guess)
+          const guessText = normalizeAnswer(text)
+          const correctWord = normalizeAnswer(s.currentWord ?? "")
 
-          if (isCorrect) {
+          if (guessText && guessText === correctWord) {
+            const first = s.correctGuessers.length === 0
+            const fractionLeft = s.beatEndsAt ? (s.beatEndsAt - now) / (s.roundTimeLimit * 1000) : 0
+            const points = guesserPoints(fractionLeft, first)
             player.hasGuessedCorrectly = true
-            this.state.correctGuessers.push(sender.id)
+            s.correctGuessers.push(sender.id)
+            s.roundGains[sender.id] = points
+            s.guesses.push({ ...base, text: "", isCorrect: true, kind: "correct", points })
 
-            // Award points based on guess order
-            const guessOrder = this.state.correctGuessers.length
-            let points = 1
-            if (guessOrder === 1) points = 3
-            else if (guessOrder === 2) points = 2
-
-            player.score += points
-
-            // Give drawer 1 point per correct guesser
-            if (this.state.currentDrawerId && this.state.players[this.state.currentDrawerId]) {
-              this.state.players[this.state.currentDrawerId].score += 1
-            }
-
-            await this.saveState()
-
-            // Broadcast correct guess (without revealing the word in the guess)
-            this.broadcast({
-              type: "correct-guess",
-              playerId: sender.id,
-              playerName: player.name,
-            })
-
-            // Check if all non-drawers have guessed
-            const currentDrawerId = this.state.currentDrawerId
-            const nonDrawers = Object.values(this.state.players).filter(
-              (p) => p.id !== currentDrawerId
+            const waiting = Object.values(s.players).filter(
+              (p) => p.id !== s.currentDrawerId && p.connected !== false && !p.hasGuessedCorrectly
             )
-            const allGuessed = nonDrawers.every((p) => p.hasGuessedCorrectly)
-
-            if (allGuessed) {
+            if (waiting.length === 0) {
               await this.endRound()
             } else {
-              this.broadcastState()
+              await this.commit()
             }
-          } else {
-            await this.saveState()
-            // Broadcast incorrect guess to all
-            this.broadcast({ type: "guess", guess })
+            return
           }
+
+          s.guesses.push({
+            ...base,
+            text,
+            isCorrect: false,
+            kind: isCloseGuess(guessText, correctWord) ? "close" : "guess",
+          })
+          await this.commit()
+          break
+        }
+
+        case "react": {
+          if (!this.state.players[sender.id] || !isReaction(data.reaction)) return
+          if (!takeReactionSlot(this.reactedAt, sender.id)) return
+          this.broadcast({ type: "reaction", playerId: sender.id, reaction: data.reaction })
           break
         }
 
@@ -1246,12 +1625,13 @@ class DrawingParty implements Party.Server {
           const round = this.state.drawVote
           if (this.state.mode !== "draw-vote" || !round || data.round !== this.state.roundNumber ||
             !this.state.players[sender.id]) return
-          if (round.deadline && Date.now() >= round.deadline) {
+          if (round.phase !== "results" && round.deadline && Date.now() >= round.deadline) {
             await this.advanceDrawVotePhase()
             return
           }
           if (data.type === "draw-vote-next") {
             if (round.phase !== "results" || this.state.status !== "round-end" ||
+              (round.reveal && round.reveal.step <= round.reveal.order.length) ||
               !canControlGame(this.state.players, this.state.hostId, sender.id)) return
             await this.startDrawVoteRound()
             return
@@ -1272,7 +1652,7 @@ class DrawingParty implements Party.Server {
             if (data.type === "draw-vote-edit") {
               if (data.action === "stroke") {
                 const stroke = sanitizeStrokes([data.stroke])[0]
-                if (!stroke || entry.strokes.length >= 1000) return
+                if (!stroke || entry.strokes.length >= MAX_STROKES) return
                 entry.strokes.push(stroke)
               } else if (data.action === "undo") entry.strokes.pop()
               else if (data.action === "clear") entry.strokes = []
@@ -1288,8 +1668,7 @@ class DrawingParty implements Party.Server {
               return
             }
           }
-          await this.saveState()
-          this.broadcastState()
+          await this.commit()
           break
         }
 
@@ -1319,25 +1698,8 @@ class DrawingParty implements Party.Server {
             return
           }
 
-          const chainId =
-            this.state.telephonePlayerOrder[this.state.telephoneRevealChainIndex]
-          const chain = this.state.telephoneChains[chainId]
-          if (!chain) return
-
-          if (this.state.telephoneRevealEntryIndex + 1 < chain.entries.length) {
-            this.state.telephoneRevealEntryIndex++
-          } else if (
-            this.state.telephoneRevealChainIndex + 1 <
-            this.state.telephonePlayerOrder.length
-          ) {
-            this.state.telephoneRevealChainIndex++
-            this.state.telephoneRevealEntryIndex = 0
-          } else {
-            this.state.telephoneRevealComplete = true
-          }
-
-          await this.saveState()
-          this.broadcastState()
+          this.stepTelephoneReveal()
+          await this.commit()
           break
         }
 
@@ -1368,7 +1730,7 @@ class DrawingParty implements Party.Server {
               playerName: player.name,
               emoji: data.emoji,
             })
-          } else if (reactions[existingIndex].emoji === data.emoji) {
+          } else if (reactions[existingIndex]!.emoji === data.emoji) {
             reactions.splice(existingIndex, 1)
           } else {
             reactions[existingIndex] = {
@@ -1414,6 +1776,14 @@ class DrawingParty implements Party.Server {
           this.state.guesses = []
           this.state.usedWords = []
           this.state.correctGuessers = []
+          this.state.stage = null
+          this.state.beatStartedAt = null
+          this.state.beatEndsAt = null
+          this.state.wordChoices = []
+          this.state.hintIndices = []
+          this.state.hintsGiven = 0
+          this.state.roundGains = {}
+          this.state.gallery = []
           this.state.telephoneStage = 0
           this.state.telephonePlayerOrder = []
           this.state.telephoneSubmittedIds = []
@@ -1442,6 +1812,7 @@ class DrawingParty implements Party.Server {
           await this.saveState()
           this.broadcast({ type: "game-restarted" })
           this.broadcastState()
+          await this.scheduleAlarm()
           break
         }
 
@@ -1449,13 +1820,12 @@ class DrawingParty implements Party.Server {
           delete this.state.players[sender.id]
           delete this.state.playerTokens[sender.id]
 
-			  if (Object.keys(this.state.players).length === 0) {
-				if (this.roundTimer) clearTimeout(this.roundTimer)
-				this.roundTimer = null
-				this.state = null
-				await this.room.storage.delete("state")
-				return
-			  }
+          if (Object.keys(this.state.players).length === 0) {
+            this.state = null
+            await this.room.storage.delete("state")
+            await this.room.storage.deleteAlarm()
+            return
+          }
 
           if (sender.id === this.state.hostId) {
             const next = nextHost(this.state.players, sender.id)
@@ -1471,15 +1841,26 @@ class DrawingParty implements Party.Server {
             } else if (round.phase === "voting" && this.drawVoteBallotsComplete()) {
               await this.advanceDrawVotePhase()
             }
-            if (this.state.status !== "finished" && Object.keys(this.state.players).length < 3 && round.phase === "results") await this.endGame()
+            if (this.state.status === "round-end" && Object.keys(this.state.players).length < 3 &&
+              round.phase === "results" && round.reveal && round.reveal.step > round.reveal.order.length) await this.endGame()
           }
 
-          // If drawer leaves during a classic round, end the round
+          // The drawer leaving ends their turn (or skips it, if no word was picked yet)
           if (
             isDrawingAndGuessingMode(this.state.mode) &&
             this.state.status === "playing" &&
             sender.id === this.state.currentDrawerId
           ) {
+            await this.endRound()
+          } else if (
+            isDrawingAndGuessingMode(this.state.mode) &&
+            this.state.stage === "drawing" &&
+            this.state.correctGuessers.length > 0 &&
+            Object.values(this.state.players).every(
+              (p) => p.id === this.state!.currentDrawerId || p.connected === false || p.hasGuessedCorrectly
+            )
+          ) {
+            // The last player still guessing left; everyone else already has it.
             await this.endRound()
           }
 
@@ -1509,6 +1890,7 @@ class DrawingParty implements Party.Server {
           await this.saveState()
           this.broadcast({ type: "player-left", playerId: sender.id })
           this.broadcastState()
+          await this.scheduleAlarm()
           break
         }
       }
@@ -1520,21 +1902,21 @@ class DrawingParty implements Party.Server {
   async onClose(conn: Party.Connection) {
     this.gameNightMembers.delete(conn)
     if (!this.state) return
-	const replacementIsOpen = Array.from(this.room.getConnections()).some(
-	  connection => connection.id === conn.id && connection !== conn,
-	)
-	if (replacementIsOpen) {
-	  this.connectionTokens.delete(conn)
-	  return
-	}
+    const replacementIsOpen = Array.from(this.room.getConnections()).some(
+      connection => connection.id === conn.id && connection !== conn,
+    )
+    if (replacementIsOpen) {
+      this.connectionTokens.delete(conn)
+      return
+    }
 
     if (this.state.players[conn.id] && this.isAuthenticated(conn)) {
       markDisconnected(this.state.players, conn.id)
 
       // The round is deliberately NOT ended when the drawer's socket drops.
       // A brief blip would otherwise cost everyone the round, and the drawer
-      // can reconnect and carry on. If they never come back, the existing
-      // round timer ends it anyway. An explicit "leave" still ends the round.
+      // can reconnect and carry on. If they never come back, the round timer
+      // ends it anyway. An explicit "leave" still ends the round.
 
       await this.saveState()
       // No "player-left": they may be back shortly and clients remove on that.
@@ -1554,7 +1936,7 @@ class DrawingParty implements Party.Server {
     }
     const players = Object.values(this.state.players)
     const highestScore = Math.max(...players.map((player) => player.score), 0)
-    if (this.state.mode === "draw-vote" && highestScore === 0) {
+    if (highestScore === 0) {
       return Response.json({ finished: true, scored: true, winnerIds: [] })
     }
     return Response.json({

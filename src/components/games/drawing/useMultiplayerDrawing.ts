@@ -10,9 +10,10 @@ import {
 	leavePartySocket,
 	PARTYKIT_HOST,
 } from "@/lib/partykit";
+import type { Reaction } from "@/lib/reactions";
+import { useReactionBubbles } from "@/components/multiplayer/Reactions";
 import type {
 	ClientMessage,
-	Guess,
 	PublicGameState,
 	ServerMessage,
 	Stroke,
@@ -32,10 +33,23 @@ export interface MultiplayerState {
 	error: string | null;
 	isHost: boolean;
 	strokes: Stroke[];
-	guesses: Guess[];
 	undoPending: boolean;
 	canvasRevision: number;
+	/** Server clock minus ours, so paced beats line up across devices. */
+	clockOffset: number;
 }
+
+const EMPTY: MultiplayerState = {
+	connectionStatus: "disconnected",
+	gameState: null,
+	playerId: null,
+	error: null,
+	isHost: false,
+	strokes: [],
+	undoPending: false,
+	canvasRevision: 0,
+	clockOffset: 0,
+};
 
 function strokesMatch(left: Stroke[], right: Stroke[]): boolean {
 	if (left.length !== right.length) return false;
@@ -44,6 +58,7 @@ function strokesMatch(left: Stroke[], right: Stroke[]): boolean {
 		return (
 			stroke.color === other.color &&
 			stroke.size === other.size &&
+			stroke.tool === other.tool &&
 			stroke.points.length === other.points.length &&
 			stroke.points.every(
 				(point, pointIndex) =>
@@ -55,17 +70,8 @@ function strokesMatch(left: Stroke[], right: Stroke[]): boolean {
 }
 
 export function useMultiplayerDrawing() {
-	const [state, setState] = useState<MultiplayerState>({
-		connectionStatus: "disconnected",
-		gameState: null,
-		playerId: null,
-		error: null,
-		isHost: false,
-		strokes: [],
-		guesses: [],
-		undoPending: false,
-		canvasRevision: 0,
-	});
+	const [state, setState] = useState<MultiplayerState>(EMPTY);
+	const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles();
 
 	const socketRef = useRef<PartySocket | null>(null);
 	const roomCodeRef = useRef("");
@@ -87,7 +93,7 @@ export function useMultiplayerDrawing() {
 						isHost: message.state.canControl,
 						error: null,
 						strokes: message.state.strokes,
-						guesses: message.state.guesses,
+						clockOffset: message.state.serverNow - Date.now(),
 						canvasRevision:
 							prev.canvasRevision + (canvasChanged ? 1 : 0),
 					};
@@ -125,43 +131,6 @@ export function useMultiplayerDrawing() {
 				});
 				break;
 
-			case "round-started":
-				undoRequestIdRef.current = null;
-				setState((prev) => {
-					if (!prev.gameState) return prev;
-					return {
-						...prev,
-						strokes: [],
-						guesses: [],
-						undoPending: false,
-						canvasRevision: prev.canvasRevision + 1,
-						gameState: {
-							...prev.gameState,
-							status: "playing",
-							currentDrawerId: message.drawerId,
-							currentWord: message.word,
-							wordLength: message.wordLength,
-							strokes: [],
-							guesses: [],
-							correctGuessers: [],
-						},
-					};
-				});
-				break;
-
-			case "draw":
-				setState((prev) => {
-					const strokes = [...prev.strokes, message.stroke];
-					return {
-						...prev,
-						strokes,
-						gameState: prev.gameState
-							? { ...prev.gameState, strokes }
-							: null,
-					};
-				});
-				break;
-
 			case "canvas-state": {
 				const completesUndo =
 					message.undoRequestId === undoRequestIdRef.current;
@@ -178,90 +147,13 @@ export function useMultiplayerDrawing() {
 				break;
 			}
 
-			case "clear":
-				undoRequestIdRef.current = null;
-				setState((prev) => ({
-					...prev,
-					strokes: [],
-					undoPending: false,
-					canvasRevision: prev.canvasRevision + 1,
-					gameState: prev.gameState
-						? { ...prev.gameState, strokes: [] }
-						: null,
-				}));
-				break;
-
-			case "guess":
-				setState((prev) => ({
-					...prev,
-					guesses: [...prev.guesses, message.guess],
-				}));
-				break;
-
-			case "correct-guess":
-				setState((prev) => {
-					if (!prev.gameState) return prev;
-					return {
-						...prev,
-						gameState: {
-							...prev.gameState,
-							correctGuessers: [
-								...prev.gameState.correctGuessers,
-								message.playerId,
-							],
-						},
-					};
-				});
-				break;
-
-			case "round-ended":
-				undoRequestIdRef.current = null;
-				setState((prev) => {
-					if (!prev.gameState) return prev;
-					// Update player scores from the scores object
-					const updatedPlayers = { ...prev.gameState.players };
-					for (const [id, score] of Object.entries(message.scores)) {
-						if (updatedPlayers[id]) {
-							updatedPlayers[id] = { ...updatedPlayers[id], score };
-						}
-					}
-					return {
-						...prev,
-						undoPending: false,
-						gameState: {
-							...prev.gameState,
-							status: "round-end",
-							currentWord: message.word,
-							players: updatedPlayers,
-						},
-					};
-				});
+			case "reaction":
+				receiveReaction(message);
 				break;
 
 			case "game-over":
 				undoRequestIdRef.current = null;
-				setState((prev) => {
-					if (!prev.gameState) return prev;
-					// Update player scores from results
-					const updatedPlayers = { ...prev.gameState.players };
-					for (const result of message.results) {
-						if (updatedPlayers[result.id]) {
-							updatedPlayers[result.id] = {
-								...updatedPlayers[result.id],
-								score: result.score,
-							};
-						}
-					}
-					return {
-						...prev,
-						undoPending: false,
-						gameState: {
-							...prev.gameState,
-							status: "finished",
-							players: updatedPlayers,
-						},
-					};
-				});
+				setState((prev) => ({ ...prev, undoPending: false }));
 				break;
 
 			case "game-restarted":
@@ -269,7 +161,6 @@ export function useMultiplayerDrawing() {
 				setState((prev) => ({
 					...prev,
 					strokes: [],
-					guesses: [],
 					undoPending: false,
 					canvasRevision: prev.canvasRevision + 1,
 				}));
@@ -289,7 +180,7 @@ export function useMultiplayerDrawing() {
 				}));
 				break;
 		}
-	}, []);
+	}, [receiveReaction]);
 
 	const connect = useCallback(
 		(
@@ -319,7 +210,6 @@ export function useMultiplayerDrawing() {
 				isHost: false,
 				playerId,
 				strokes: [],
-				guesses: [],
 				undoPending: false,
 				canvasRevision: 0,
 			}));
@@ -400,36 +290,17 @@ export function useMultiplayerDrawing() {
 			clearPersistentPlayerToken("drawing", roomCodeRef.current);
 			roomCodeRef.current = "";
 		}
-		setState({
-			connectionStatus: "disconnected",
-			gameState: null,
-			playerId: null,
-			error: null,
-			isHost: false,
-			strokes: [],
-			guesses: [],
-			undoPending: false,
-			canvasRevision: 0,
-		});
+		clearReactions();
+		setState(EMPTY);
 		undoRequestIdRef.current = null;
-	}, []);
+	}, [clearReactions]);
 
 	const abandonReconnect = useCallback(() => {
 		const socket = socketRef.current;
 		socketRef.current = null;
 		socket?.close();
 		roomCodeRef.current = "";
-		setState({
-			connectionStatus: "disconnected",
-			gameState: null,
-			playerId: null,
-			error: null,
-			isHost: false,
-			strokes: [],
-			guesses: [],
-			undoPending: false,
-			canvasRevision: 0,
-		});
+		setState(EMPTY);
 		undoRequestIdRef.current = null;
 	}, []);
 
@@ -449,102 +320,75 @@ export function useMultiplayerDrawing() {
 		[connect],
 	);
 
+	const send = useCallback((message: ClientMessage) => {
+		if (socketRef.current?.readyState !== WebSocket.OPEN) return false;
+		socketRef.current.send(JSON.stringify(message));
+		return true;
+	}, []);
+
 	const startGame = useCallback(() => {
-		if (socketRef.current?.readyState === WebSocket.OPEN && state.isHost) {
-			socketRef.current.send(JSON.stringify({ type: "start" }));
-		}
-	}, [state.isHost]);
+		if (state.isHost) send({ type: "start" });
+	}, [state.isHost, send]);
+
+	const chooseWord = useCallback((index: number) => {
+		send({ type: "choose-word", index });
+	}, [send]);
 
 	const sendStroke = useCallback((stroke: Stroke) => {
-		if (
-			socketRef.current?.readyState === WebSocket.OPEN &&
-			!undoRequestIdRef.current
-		) {
-			socketRef.current.send(JSON.stringify({ type: "draw", stroke }));
-		}
-	}, []);
+		if (!undoRequestIdRef.current) send({ type: "draw", stroke });
+	}, [send]);
 
 	const clearCanvas = useCallback(() => {
-		if (
-			socketRef.current?.readyState === WebSocket.OPEN &&
-			!undoRequestIdRef.current
-		) {
-			socketRef.current.send(JSON.stringify({ type: "clear" }));
-		}
-	}, []);
+		if (!undoRequestIdRef.current) send({ type: "clear" });
+	}, [send]);
 
 	const undoStroke = useCallback(() => {
-		if (
-			socketRef.current?.readyState === WebSocket.OPEN &&
-			!undoRequestIdRef.current
-		) {
+		if (socketRef.current?.readyState === WebSocket.OPEN && !undoRequestIdRef.current) {
 			const requestId = crypto.randomUUID();
 			undoRequestIdRef.current = requestId;
 			setState((prev) => ({ ...prev, undoPending: true }));
-			socketRef.current.send(JSON.stringify({ type: "undo", requestId }));
+			send({ type: "undo", requestId });
 		}
-	}, []);
+	}, [send]);
 
 	const sendGuess = useCallback((text: string) => {
-		if (socketRef.current?.readyState === WebSocket.OPEN && text.trim()) {
-			socketRef.current.send(
-				JSON.stringify({ type: "guess", text: text.trim() }),
-			);
-		}
-	}, []);
+		if (text.trim()) send({ type: "guess", text: text.trim() });
+	}, [send]);
 
+	const react = useCallback((reaction: Reaction) => {
+		send({ type: "react", reaction });
+	}, [send]);
+
+	const telephoneStage = state.gameState?.telephoneStage;
 	const submitTelephoneEntry = useCallback(
 		(submission: { text?: string; strokes?: Stroke[] }) => {
-			if (socketRef.current?.readyState === WebSocket.OPEN && state.gameState) {
-				socketRef.current.send(
-					JSON.stringify({
-						type: "telephone-submit",
-						stage: state.gameState.telephoneStage,
-						...submission,
-					}),
-				);
+			if (telephoneStage !== undefined) {
+				send({ type: "telephone-submit", stage: telephoneStage, ...submission });
 			}
 		},
-		[state.gameState],
+		[telephoneStage, send],
 	);
 
+	const revealChainIndex = state.gameState?.telephoneRevealChainIndex;
+	const revealEntryIndex = state.gameState?.telephoneRevealEntryIndex;
 	const advanceTelephoneReveal = useCallback(() => {
-		if (
-			socketRef.current?.readyState === WebSocket.OPEN &&
-			state.isHost &&
-			state.gameState
-		) {
-			socketRef.current.send(
-				JSON.stringify({
-					type: "telephone-reveal-next",
-					chainIndex: state.gameState.telephoneRevealChainIndex,
-					entryIndex: state.gameState.telephoneRevealEntryIndex,
-				}),
-			);
+		if (state.isHost && revealChainIndex !== undefined && revealEntryIndex !== undefined) {
+			send({ type: "telephone-reveal-next", chainIndex: revealChainIndex, entryIndex: revealEntryIndex });
 		}
-	}, [state.isHost, state.gameState]);
+	}, [state.isHost, revealChainIndex, revealEntryIndex, send]);
 
 	const sendTelephoneReaction = useCallback(
 		(emoji: string) => {
-			if (socketRef.current?.readyState === WebSocket.OPEN && state.gameState) {
-				socketRef.current.send(
-					JSON.stringify({
-						type: "telephone-react",
-						chainIndex: state.gameState.telephoneRevealChainIndex,
-						entryIndex: state.gameState.telephoneRevealEntryIndex,
-						emoji,
-					}),
-				);
+			if (revealChainIndex !== undefined && revealEntryIndex !== undefined) {
+				send({ type: "telephone-react", chainIndex: revealChainIndex, entryIndex: revealEntryIndex, emoji });
 			}
 		},
-		[state.gameState],
+		[revealChainIndex, revealEntryIndex, send],
 	);
 
 	const restartGame = useCallback(() => {
-		if (socketRef.current?.readyState === WebSocket.OPEN && state.isHost) {
-			socketRef.current.send(JSON.stringify({ type: "restart" }));
-		}
-	}, [state.isHost]);
+		if (state.isHost) send({ type: "restart" });
+	}, [state.isHost, send]);
 
 	const drawVoteRoundNumber = state.gameState?.roundNumber;
 	const sendDrawVoteAction = useCallback((
@@ -554,11 +398,10 @@ export function useMultiplayerDrawing() {
 			| { type: "draw-vote-vote"; entryId: string }
 			| { type: "draw-vote-next" },
 	) => {
-		if (socketRef.current?.readyState === WebSocket.OPEN && drawVoteRoundNumber !== undefined) {
-			const message: ClientMessage = { ...action, round: drawVoteRoundNumber };
-			socketRef.current.send(JSON.stringify(message));
+		if (drawVoteRoundNumber !== undefined) {
+			send({ ...action, round: drawVoteRoundNumber } as ClientMessage);
 		}
-	}, [drawVoteRoundNumber]);
+	}, [drawVoteRoundNumber, send]);
 
 	useEffect(() => {
 		return () => {
@@ -570,13 +413,16 @@ export function useMultiplayerDrawing() {
 
 	return {
 		...state,
+		reactions,
 		createGame,
 		joinGame,
 		startGame,
+		chooseWord,
 		sendStroke,
 		clearCanvas,
 		undoStroke,
 		sendGuess,
+		react,
 		submitTelephoneEntry,
 		advanceTelephoneReveal,
 		sendTelephoneReaction,

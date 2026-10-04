@@ -357,7 +357,7 @@ function DrawingPage() {
 								<p className="mt-1">
 									{mode === "draw-vote" ? "Get the same prompt and draw on your own private canvas. Finished strokes are submitted when time runs out." : mode === "telephone"
 										? "Everyone secretly starts a new chain with an original idea."
-										: "The active drawer sees the word and sketches it live."}
+										: "The drawer picks one of three words and sketches it live."}
 								</p>
 							</div>
 							<div className="rounded-2xl border p-4">
@@ -367,7 +367,7 @@ function DrawingPage() {
 								<p className="mt-1">
 									{mode === "draw-vote" ? "Browse the shuffled gallery and lock in one vote for another artist. Names and vote totals stay hidden." : mode === "telephone"
 										? "Chains rotate privately while turns alternate between pictures and words."
-										: "Guesses stream in as chat while the timer keeps everyone moving."}
+										: "Faster guesses score more. Letter hints appear as time runs down, and near misses get a private nudge."}
 								</p>
 							</div>
 							<div className="rounded-2xl border p-4">
@@ -455,78 +455,50 @@ function DrawingPage() {
 		multiplayer.gameState &&
 		multiplayer.playerId
 	) {
-		return (
-			<div className="min-h-[calc(100vh-73px)] bg-background">
-				<GameTopBar
-					title={
-						multiplayer.gameState.mode === "telephone"
-							? "Drawing Telephone"
-							: multiplayer.gameState.mode === "draw-vote" ? "Draw & Vote" : `${getModeOption(multiplayer.gameState.mode).label} Drawing`
-					}
-					subtitle={`Room ${displayedRoomCode}`}
-					onBack={handleBackToSelect}
-					rightAction={
-						<Button
-							variant="ghost"
-							size="sm"
-							onClick={multiplayer.restartGame}
-							disabled={
-								!multiplayer.isHost ||
-								multiplayer.gameState.status !== "finished" ||
-								(multiplayer.gameState.mode === "telephone" &&
-									!multiplayer.gameState.telephoneRevealComplete)
-							}
-						>
-							<RotateCcw className="w-4 h-4 mr-1" />
-							Rematch
-						</Button>
-					}
-				/>
-				{multiplayer.gameState.mode === "draw-vote" ? (
-					<DrawVoteGame
-						gameState={multiplayer.gameState}
-						playerId={multiplayer.playerId}
-						isHost={multiplayer.isHost}
-						connected={multiplayer.connectionStatus === "connected"}
-						onStroke={(stroke) => multiplayer.sendDrawVoteAction({ type: "draw-vote-edit", action: "stroke", stroke })}
-						onUndo={() => multiplayer.sendDrawVoteAction({ type: "draw-vote-edit", action: "undo" })}
-						onClear={() => multiplayer.sendDrawVoteAction({ type: "draw-vote-edit", action: "clear" })}
-						onSubmit={() => multiplayer.sendDrawVoteAction({ type: "draw-vote-submit" })}
-						onVote={(entryId) => multiplayer.sendDrawVoteAction({ type: "draw-vote-vote", entryId })}
-						onNext={() => multiplayer.sendDrawVoteAction({ type: "draw-vote-next" })}
-						onRestart={multiplayer.restartGame}
-						onLeave={handleLeaveMultiplayer}
-					/>
-				) : multiplayer.gameState.mode === "telephone" ? (
-					<TelephoneGame
-						gameState={multiplayer.gameState}
-						playerId={multiplayer.playerId}
-						isHost={multiplayer.isHost}
-						onSubmit={multiplayer.submitTelephoneEntry}
-						onRevealNext={multiplayer.advanceTelephoneReveal}
-						onReact={multiplayer.sendTelephoneReaction}
-						onRestart={multiplayer.restartGame}
-						onLeave={handleLeaveMultiplayer}
-					/>
-				) : (
-					<MultiplayerGame
-						gameState={multiplayer.gameState}
-						playerId={multiplayer.playerId}
-						isHost={multiplayer.isHost}
-						strokes={multiplayer.strokes}
-						guesses={multiplayer.guesses}
-						undoPending={multiplayer.undoPending}
-						canvasRevision={multiplayer.canvasRevision}
-						connected={multiplayer.connectionStatus === "connected"}
-						onStroke={multiplayer.sendStroke}
-						onClear={multiplayer.clearCanvas}
-						onUndo={multiplayer.undoStroke}
-						onGuess={multiplayer.sendGuess}
-						onRestart={multiplayer.restartGame}
-						onLeave={handleLeaveMultiplayer}
-					/>
-				)}
-			</div>
+		const shared = {
+			gameState: multiplayer.gameState,
+			playerId: multiplayer.playerId,
+			isHost: multiplayer.isHost,
+			roomLabel: displayedRoomCode,
+			connected: multiplayer.connectionStatus === "connected",
+			clockOffset: multiplayer.clockOffset,
+			error: multiplayer.error,
+			reactions: multiplayer.reactions,
+			onRestart: multiplayer.restartGame,
+			onLeave: handleLeaveMultiplayer,
+		};
+		return multiplayer.gameState.mode === "draw-vote" ? (
+			<DrawVoteGame
+				{...shared}
+				onReact={multiplayer.react}
+				onStroke={(stroke) => multiplayer.sendDrawVoteAction({ type: "draw-vote-edit", action: "stroke", stroke })}
+				onUndo={() => multiplayer.sendDrawVoteAction({ type: "draw-vote-edit", action: "undo" })}
+				onClear={() => multiplayer.sendDrawVoteAction({ type: "draw-vote-edit", action: "clear" })}
+				onSubmit={() => multiplayer.sendDrawVoteAction({ type: "draw-vote-submit" })}
+				onVote={(entryId) => multiplayer.sendDrawVoteAction({ type: "draw-vote-vote", entryId })}
+				onNext={() => multiplayer.sendDrawVoteAction({ type: "draw-vote-next" })}
+			/>
+		) : multiplayer.gameState.mode === "telephone" ? (
+			<TelephoneGame
+				{...shared}
+				onSubmit={multiplayer.submitTelephoneEntry}
+				onRevealNext={multiplayer.advanceTelephoneReveal}
+				onReact={multiplayer.sendTelephoneReaction}
+				onTableReact={multiplayer.react}
+			/>
+		) : (
+			<MultiplayerGame
+				{...shared}
+				strokes={multiplayer.strokes}
+				undoPending={multiplayer.undoPending}
+				canvasRevision={multiplayer.canvasRevision}
+				onStroke={multiplayer.sendStroke}
+				onClear={multiplayer.clearCanvas}
+				onUndo={multiplayer.undoStroke}
+				onGuess={multiplayer.sendGuess}
+				onChooseWord={multiplayer.chooseWord}
+				onReact={multiplayer.react}
+			/>
 		);
 	}
 

@@ -1,16 +1,21 @@
-import { useEffect, useState } from "react"
-import { ArrowRight, Clock, MessageSquare, Pencil, RotateCcw } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import type {
-  PublicGameState,
-  Stroke,
-  TelephoneChain,
+import { ArrowRight, Check, Hourglass, MessageSquare, Pencil, Phone, SkipForward, Trophy, Users } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import type { ReactionBubbles } from "@/components/multiplayer/Reactions"
+import type { Reaction } from "@/lib/reactions"
+import { playSound } from "@/lib/sounds"
+import { cn } from "@/lib/utils"
+import {
+  DRAW_PACE_MS,
+  type PublicGameState,
+  type Stroke,
+  type TelephoneChain,
+  type TelephoneEntry,
 } from "../../../../party/drawing"
-import { Canvas } from "./Canvas"
+import { GLASS, GlassButton, PartyTable, TableTopBar, TimerRing, useElementSize, useNow, useSoundCue } from "../party-shell/shell"
+import { PartyAvatar } from "../party-shell/SeatRing"
+import { Canvas, DrawingView, type DrawTool } from "./Canvas"
 import { Toolbar } from "./Toolbar"
+import { BeatBar, DockPanel, Easel, GameOverOverlay, STUDIO_BG, SeatColumn, fitSheet, type GalleryGroup, type SeatRowData } from "./studio"
 
 const REACTION_OPTIONS = [
   "\u{1F602}",
@@ -20,398 +25,471 @@ const REACTION_OPTIONS = [
   "\u{2764}\u{FE0F}",
 ]
 
+const SIDE_W = 230
+/** A text entry flips over this long at the start of its beat. */
+const FLIP_MS = 700
+
 interface TelephoneGameProps {
   gameState: PublicGameState
   playerId: string
   isHost: boolean
+  roomLabel: string
+  connected: boolean
+  clockOffset: number
+  error: string | null
+  reactions: ReactionBubbles
   onSubmit: (submission: { text?: string; strokes?: Stroke[] }) => void
   onRevealNext: () => void
   onReact: (emoji: string) => void
+  onTableReact: (reaction: Reaction) => void
   onRestart: () => void
   onLeave: () => void
 }
 
-export function TelephoneGame({
-  gameState,
-  playerId,
-  isHost,
-  onSubmit,
-  onRevealNext,
-  onReact,
-  onRestart,
-  onLeave,
-}: TelephoneGameProps) {
-  const [text, setText] = useState("")
-  const [strokes, setStrokes] = useState<Stroke[]>([])
-  const [selectedColor, setSelectedColor] = useState("#000000")
-  const [selectedSize, setSelectedSize] = useState(8)
-  const [timeLeft, setTimeLeft] = useState(gameState.roundTimeLimit)
-  const [revealPending, setRevealPending] = useState(false)
+export function TelephoneGame(props: TelephoneGameProps) {
+  const { gameState: state, playerId, connected } = props
+  const me = state.players[playerId]
+  const playing = state.status === "playing"
+  const revealing = state.status === "finished" && !state.telephoneRevealComplete
+  const complete = state.status === "finished" && state.telephoneRevealComplete
+  const assignment = state.telephoneAssignment
+  const hasSubmitted = state.telephoneSubmittedIds.includes(playerId)
 
-  const assignment = gameState.telephoneAssignment
-  const hasSubmitted = gameState.telephoneSubmittedIds.includes(playerId)
-  const isFinished = gameState.status === "finished"
-  const currentRevealChain =
-    gameState.telephoneChains[gameState.telephoneChains.length - 1]
+  const [tableRef, box] = useElementSize<HTMLDivElement>()
+  const wide = box.w >= 1024
+  const compact = box.w < 640 || box.h < 560
+  const [playersOpen, setPlayersOpen] = useState(false)
+  const [resultsHidden, setResultsHidden] = useState(false)
 
-  useEffect(() => {
-    setText("")
-    setStrokes([])
-  }, [gameState.telephoneStage])
+  const now = useNow(playing || revealing, 200) + props.clockOffset
+  const secondsLeft = playing && state.roundStartedAt ? Math.max(0, Math.ceil((state.roundStartedAt + state.roundTimeLimit * 1000 - now) / 1000)) : null
+  const elapsed = state.beatStartedAt ? now - state.beatStartedAt : Infinity
+  const beatLen = state.beatStartedAt && state.beatEndsAt ? state.beatEndsAt - state.beatStartedAt : 0
 
-  useEffect(() => {
-    if (gameState.status !== "playing" || !gameState.roundStartedAt) {
-      setTimeLeft(gameState.roundTimeLimit)
-      return
+  const chain = state.status === "finished" ? state.telephoneChains[state.telephoneChains.length - 1] : undefined
+  const entry = chain?.entries[chain.entries.length - 1]
+  useSoundCue(playing ? `s${state.telephoneStage}` : null, () => playSound("turn"))
+  useSoundCue(playing && secondsLeft !== null && secondsLeft <= 10 && secondsLeft > 0 ? `t${state.telephoneStage}:${secondsLeft}` : null, () => playSound("tick"))
+  useSoundCue(revealing ? `c${state.telephoneRevealChainIndex}` : null, () => playSound("whoosh"))
+  useSoundCue(revealing && state.telephoneRevealEntryIndex > 0 ? `e${state.telephoneRevealChainIndex}:${state.telephoneRevealEntryIndex}` : null, () => playSound("flip"))
+  useSoundCue(complete ? `done${state.telephoneTotalStages}` : null, () => playSound("win"))
+
+  // ─── Layout ──────────────────────────────────────────────────────────────
+  const top = 68
+  const left = wide ? 12 + SIDE_W + 12 : 12
+  const right = 12
+  const areaW = Math.max(0, box.w - left - right)
+  const areaH = Math.max(0, box.h - top - 12)
+
+  const players = useMemo(() => Object.values(state.players).sort((a, b) => a.joinedAt - b.joinedAt), [state.players])
+  const seatRows: SeatRowData[] = players.map((player) => {
+    const done = state.telephoneSubmittedIds.includes(player.id)
+    const onScreen = revealing && entry?.authorId === player.id
+    return {
+      id: player.id,
+      name: player.name,
+      connected: player.connected !== false,
+      isHost: player.id === state.hostId,
+      badge: playing ? (
+        done
+          ? <span className="uno-tag flex shrink-0 items-center gap-0.5 rounded-full bg-emerald-400 px-1.5 py-px text-[9px] font-black text-emerald-950"><Check className="size-2.5" strokeWidth={3} />Passed</span>
+          : <span className="shrink-0 rounded-full bg-black/50 px-1.5 py-px text-[9px] font-bold uppercase text-white/55">Working</span>
+      ) : onScreen ? (
+        <span className="shrink-0 rounded-full bg-amber-300 px-1.5 py-px text-[9px] font-black uppercase text-amber-950">On screen</span>
+      ) : null,
+      glow: onScreen ? "#fbbf24" : null,
+      dim: playing && done,
     }
+  })
+  const seats = <SeatColumn rows={seatRows} meId={playerId} bubbles={props.reactions} floatKey="" ranked={false} />
 
-    const updateTimer = () => {
-      const elapsed = Math.floor(
-        (Date.now() - gameState.roundStartedAt!) / 1000,
-      )
-      setTimeLeft(Math.max(0, gameState.roundTimeLimit - elapsed))
-    }
+  const stepLabel = state.telephoneStage === 0 ? "Write a prompt" : state.telephoneStage % 2 === 1 ? "Draw" : "Describe"
+  const status = (
+    <>
+      <Phone className="size-4 shrink-0 text-amber-200" />
+      <div className="min-w-0 flex-1 leading-tight">
+        <p className="truncate text-sm font-semibold">
+          {playing ? `Turn ${state.telephoneStage + 1} / ${state.telephoneTotalStages}` : revealing ? `Chain ${state.telephoneRevealChainIndex + 1} / ${state.telephoneTotalStages}` : "Every chain revealed"}
+        </p>
+        <p className="truncate text-[11px] text-white/60">
+          {playing ? `${stepLabel} · ${state.telephoneSubmittedIds.length} / ${state.telephoneTotalStages} passed` : revealing ? `${chain?.originPlayerName ?? ""}'s chain` : "The gallery"}
+        </p>
+      </div>
+      {secondsLeft !== null && <TimerRing left={secondsLeft} limit={state.roundTimeLimit} />}
+    </>
+  )
 
-    updateTimer()
-    const interval = window.setInterval(updateTimer, 1000)
-    return () => window.clearInterval(interval)
-  }, [gameState.status, gameState.roundStartedAt, gameState.roundTimeLimit])
+  const groups: GalleryGroup[] = state.telephoneChains.map((item) => ({
+    title: `${item.originPlayerId === playerId ? "Your" : `${item.originPlayerName}'s`} chain`,
+    items: item.entries.flatMap((candidate, index) => {
+      if (candidate.type !== "drawing" || candidate.strokes.length === 0) return []
+      const before = item.entries[index - 1]
+      const after = item.entries[index + 1]
+      return [{
+        id: `${item.id}:${index}`,
+        strokes: candidate.strokes,
+        title: before?.type === "text" ? before.text : "Untitled",
+        artistId: candidate.authorId,
+        artistName: candidate.authorId === playerId ? "You" : candidate.authorName,
+        caption: after?.type === "text" ? <>guessed as <b className="text-white/80">“{after.text}”</b></> : undefined,
+      }]
+    }),
+  }))
 
-  useEffect(() => {
-    setRevealPending(false)
-  }, [
-    gameState.telephoneRevealChainIndex,
-    gameState.telephoneRevealEntryIndex,
-    gameState.telephoneRevealComplete,
-  ])
+  return (
+    <PartyTable tableRef={tableRef} background={STUDIO_BG}>
+      <TableTopBar
+        title="Drawing Telephone"
+        roomLabel={props.roomLabel}
+        onLeave={props.onLeave}
+        connected={connected}
+        status={status}
+        onReact={props.onTableReact}
+        canReact={Boolean(me)}
+        actions={!wide && <GlassButton icon={<Users className="size-4" />} label="Players" pressed={playersOpen} onClick={() => setPlayersOpen(!playersOpen)} />}
+      />
 
-  useEffect(() => {
-    if (!revealPending) return
-    const timeout = window.setTimeout(() => setRevealPending(false), 2000)
-    return () => window.clearTimeout(timeout)
-  }, [revealPending])
+      {props.error && connected && (
+        <p className="uno-rise absolute left-1/2 top-[64px] z-40 -translate-x-1/2 rounded-full bg-rose-500/90 px-3 py-1 text-xs font-semibold shadow-lg">{props.error}</p>
+      )}
 
-  if (isFinished && !gameState.telephoneRevealComplete) {
-    const isLastEntry =
-      gameState.telephoneRevealEntryIndex + 1 >= gameState.telephoneTotalStages
-    const isLastChain =
-      gameState.telephoneRevealChainIndex + 1 >= gameState.telephoneTotalStages
-    const revealLabel = !isLastEntry
-      ? "Reveal Next Entry"
-      : !isLastChain
-        ? "Reveal Next Chain"
-        : "View All Chains"
+      {box.w > 0 && (
+        <div className="absolute flex flex-col items-center justify-center gap-3" style={{ left, top, width: areaW, height: areaH }}>
+          {playing && (
+            hasSubmitted ? (
+              <PassedAlong state={state} />
+            ) : assignment?.type === "draw" ? (
+              <DrawTurn key={state.telephoneStage} prompt={assignment.prompt} areaW={areaW} areaH={areaH} compact={compact} disabled={!connected || secondsLeft === 0} onSubmit={(strokes) => props.onSubmit({ strokes })} />
+            ) : assignment?.type === "describe" ? (
+              <DescribeTurn key={state.telephoneStage} strokes={assignment.strokes} areaW={areaW} areaH={areaH} disabled={!connected || secondsLeft === 0} onSubmit={(text) => props.onSubmit({ text })} />
+            ) : assignment?.type === "write-prompt" ? (
+              <PromptTurn key={state.telephoneStage} disabled={!connected || secondsLeft === 0} onSubmit={(text) => props.onSubmit({ text })} />
+            ) : (
+              <p className={cn(GLASS, "px-5 py-4 text-sm text-white/60")}>Preparing your next turn…</p>
+            )
+          )}
 
-    return (
-      <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-6">
-        <div className="text-center">
-          <Badge variant="secondary">
-            Chain {gameState.telephoneRevealChainIndex + 1}/
-            {gameState.telephoneTotalStages}
-          </Badge>
-          <h2 className="mt-3 text-3xl font-bold">The big reveal</h2>
-          <p className="mt-2 text-muted-foreground">
-            Entries appear one at a time for everyone in the room.
-          </p>
+          {(revealing || complete) && chain && entry && (
+            <RevealStage
+              key={`${state.telephoneRevealChainIndex}:${state.telephoneRevealEntryIndex}`}
+              state={state}
+              chain={chain}
+              entry={entry}
+              playerId={playerId}
+              isHost={props.isHost}
+              areaW={areaW}
+              areaH={areaH}
+              compact={compact}
+              elapsed={elapsed}
+              beatLen={beatLen}
+              replayStartAt={(state.beatStartedAt ?? 0) - props.clockOffset + 400}
+              onReact={props.onReact}
+              onRevealNext={props.onRevealNext}
+            />
+          )}
         </div>
+      )}
 
-        {currentRevealChain ? (
-          <TelephoneChainCard chain={currentRevealChain} />
+      {wide ? (
+        <DockPanel title="Players" icon={<Users className="size-3.5 text-white/60" />} className="absolute left-3 top-[68px] z-20 max-h-[calc(100%-80px)]" style={{ width: SIDE_W }}>
+          {seats}
+        </DockPanel>
+      ) : playersOpen && (
+        <DockPanel title="Players" icon={<Users className="size-3.5 text-white/60" />} onClose={() => setPlayersOpen(false)} className="uno-rise absolute left-3 top-[68px] z-40 max-h-[calc(100%-80px)] w-[min(280px,calc(100%-24px))] bg-[#14110e]/95">
+          {seats}
+        </DockPanel>
+      )}
+
+      {complete && resultsHidden && (
+        <button type="button" onClick={() => setResultsHidden(false)} className={cn(GLASS, "absolute bottom-3 left-1/2 z-40 flex h-11 -translate-x-1/2 items-center gap-2 px-4 text-sm font-semibold hover:bg-black/65")}>
+          <Trophy className="size-4 text-amber-300" /> Show gallery
+        </button>
+      )}
+      {complete && !resultsHidden && (
+        <GameOverOverlay
+          title="Every chain revealed"
+          subtitle={`${state.telephoneChains.length} chains · ${state.telephoneTotalStages} hands each`}
+          rows={null}
+          meId={playerId}
+          groups={groups}
+          isHost={props.isHost}
+          onRestart={props.onRestart}
+          onHide={() => setResultsHidden(true)}
+          onLeave={props.onLeave}
+        />
+      )}
+    </PartyTable>
+  )
+}
+
+function PassedAlong({ state }: { state: PublicGameState }) {
+  const waiting = Object.values(state.players).filter((player) => !state.telephoneSubmittedIds.includes(player.id))
+  return (
+    <div className={cn(GLASS, "uno-pop w-full max-w-md px-6 py-8 text-center")}>
+      <span className="mx-auto grid size-12 place-items-center rounded-full bg-emerald-400/20">
+        <ArrowRight className="size-5 text-emerald-300" />
+      </span>
+      <p className="mt-3 text-xl font-black">Passed along</p>
+      <p className="mt-1 text-sm text-white/60">Waiting for {waiting.length} other player{waiting.length === 1 ? "" : "s"}…</p>
+      <div className="mt-4 flex flex-wrap justify-center gap-2">
+        {waiting.map((player) => (
+          <span key={player.id} className="flex items-center gap-1.5 rounded-full bg-white/10 py-0.5 pl-0.5 pr-2 text-xs">
+            <PartyAvatar id={player.id} name={player.name} size={20} className="ring-1" />
+            {player.name}
+            <Hourglass className="size-3 animate-pulse text-white/50" />
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** An index card to start a chain. */
+function PromptTurn({ disabled, onSubmit }: { disabled: boolean; onSubmit: (text: string) => void }) {
+  const [text, setText] = useState("")
+  return (
+    <form
+      className="uno-pop w-full max-w-lg -rotate-1 rounded-md bg-[#fdf8ec] p-6 text-[#2b1d10] shadow-[0_24px_50px_rgb(0_0_0/.55)]"
+      style={{ backgroundImage: "repeating-linear-gradient(transparent 0 31px, rgb(56 120 200 / .22) 31px 32px)", backgroundPositionY: 54 }}
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (text.trim() && !disabled) onSubmit(text.trim())
+      }}
+    >
+      <p className="text-xs font-black uppercase tracking-[0.25em] text-rose-700/80">Start a chain</p>
+      <p className="mt-1 text-sm text-[#2b1d10]/70">Write something fun for the next player to draw.</p>
+      <input
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        maxLength={120}
+        placeholder="A penguin running a bakery…"
+        autoFocus
+        className="mt-5 w-full border-b-2 border-[#2b1d10]/30 bg-transparent pb-1 text-xl font-bold outline-none placeholder:text-[#2b1d10]/35 focus:border-rose-600"
+      />
+      <button type="submit" disabled={disabled || !text.trim()} className="mt-5 w-full rounded-xl bg-[#2b1d10] py-3 text-sm font-black text-[#fdf8ec] transition hover:bg-black disabled:opacity-40">
+        Start my chain
+      </button>
+    </form>
+  )
+}
+
+function DrawTurn({ prompt, areaW, areaH, compact, disabled, onSubmit }: {
+  prompt: string
+  areaW: number
+  areaH: number
+  compact: boolean
+  disabled: boolean
+  onSubmit: (strokes: Stroke[]) => void
+}) {
+  const [strokes, setStrokes] = useState<Stroke[]>([])
+  const [color, setColor] = useState("#111111")
+  const [size, setSize] = useState(8)
+  const [tool, setTool] = useState<DrawTool>("pen")
+  const promptH = compact ? 46 : 56
+  const paletteH = compact ? 58 : 70
+  const sheet = fitSheet(areaW - 8, areaH - promptH - 34 - paletteH - 56 - 36)
+  return (
+    <>
+      <div className={cn(GLASS, "flex max-w-full items-center gap-3 px-4")} style={{ height: promptH }}>
+        <Pencil className="size-4 shrink-0 text-amber-200" />
+        <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.2em] text-white/55">Draw this</span>
+        <span className={cn("truncate font-black text-amber-100", compact ? "text-base" : "text-xl")}>{prompt}</span>
+      </div>
+      <Easel width={sheet.width}>
+        <Canvas strokes={strokes} isDrawer onStroke={(stroke) => setStrokes((current) => [...current, stroke])} color={color} size={size} tool={tool} disabled={disabled} />
+      </Easel>
+      <Toolbar
+        selectedColor={color}
+        selectedSize={size}
+        tool={tool}
+        onColorChange={setColor}
+        onSizeChange={setSize}
+        onToolChange={setTool}
+        onClear={() => setStrokes([])}
+        onUndo={() => setStrokes((current) => current.slice(0, -1))}
+        canUndo={strokes.length > 0}
+        disabled={disabled}
+        compact={compact}
+      />
+      <button type="button" disabled={disabled} onClick={() => onSubmit(strokes)} className="flex h-11 shrink-0 items-center gap-2 rounded-2xl bg-amber-300 px-6 text-sm font-black text-amber-950 shadow-[0_10px_30px_rgb(0_0_0/.5)] transition hover:scale-[1.03] disabled:opacity-40">
+        Pass it on <ArrowRight className="size-4" />
+      </button>
+    </>
+  )
+}
+
+function DescribeTurn({ strokes, areaW, areaH, disabled, onSubmit }: {
+  strokes: Stroke[]
+  areaW: number
+  areaH: number
+  disabled: boolean
+  onSubmit: (text: string) => void
+}) {
+  const [text, setText] = useState("")
+  const sheet = fitSheet(areaW - 8, areaH - 50 - 34 - 56 - 36)
+  return (
+    <>
+      <div className={cn(GLASS, "flex h-[50px] max-w-full items-center gap-2 px-4")}>
+        <MessageSquare className="size-4 shrink-0 text-amber-200" />
+        <span className="truncate text-sm font-semibold">What do you think this is? <span className="text-white/50">Describe only what you see.</span></span>
+      </div>
+      <Easel width={sheet.width}>
+        {strokes.length > 0 ? (
+          <DrawingView strokes={strokes} />
         ) : (
-          <Card>
-            <CardContent className="py-12 text-center text-muted-foreground">
-              Preparing the first chain...
-            </CardContent>
-          </Card>
+          <p className="grid h-full place-items-center text-sm text-black/45">The previous player handed in a blank page.</p>
         )}
+      </Easel>
+      <form
+        className={cn(GLASS, "flex h-12 w-full max-w-xl shrink-0 items-center gap-2 bg-[#14110e]/90 pl-3 pr-1.5")}
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (text.trim() && !disabled) onSubmit(text.trim())
+        }}
+      >
+        <input
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          maxLength={120}
+          placeholder="Type your interpretation…"
+          autoFocus
+          className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/40"
+        />
+        <button type="submit" disabled={disabled || !text.trim()} className="h-9 shrink-0 rounded-xl bg-amber-300 px-4 text-sm font-black text-amber-950 disabled:bg-white/10 disabled:text-white/40">
+          Pass it on
+        </button>
+      </form>
+    </>
+  )
+}
 
-        {currentRevealChain && (
-          <div className="flex flex-wrap items-center justify-center gap-2">
+/**
+ * One entry of one chain at a time, paced by the server: text flips in,
+ * drawings replay stroke by stroke and then hold. The chain so far sits
+ * underneath so the room can see where it drifted.
+ */
+function RevealStage({ state, chain, entry, playerId, isHost, areaW, areaH, compact, elapsed, beatLen, replayStartAt, onReact, onRevealNext }: {
+  state: PublicGameState
+  chain: TelephoneChain
+  entry: TelephoneEntry
+  playerId: string
+  isHost: boolean
+  areaW: number
+  areaH: number
+  compact: boolean
+  elapsed: number
+  beatLen: number
+  replayStartAt: number
+  onReact: (emoji: string) => void
+  onRevealNext: () => void
+}) {
+  const [skipPending, setSkipPending] = useState(false)
+  useEffect(() => {
+    if (!skipPending) return
+    const timer = window.setTimeout(() => setSkipPending(false), 2000)
+    return () => window.clearTimeout(timer)
+  }, [skipPending])
+
+  const live = !state.telephoneRevealComplete
+  const index = chain.entries.length - 1
+  const earlier = chain.entries.slice(0, -1)
+  const stripH = earlier.length && !compact ? 78 : 0
+  const sheet = fitSheet(Math.min(areaW - 8, 900), areaH - 48 - 34 - 60 - (stripH ? stripH + 12 : 0) - 24)
+  const author = entry.authorId === playerId ? "You" : entry.authorName
+  // Pin the replay to this beat, so reconnect echoes don't restart it.
+  const [replay] = useState(() => ({ startAt: replayStartAt, duration: DRAW_PACE_MS.telephoneReplay }))
+
+  return (
+    <>
+      <div className={cn(GLASS, "flex h-12 max-w-full shrink-0 items-center gap-3 px-3")}>
+        <PartyAvatar id={chain.originPlayerId} name={chain.originPlayerName} size={28} />
+        <p className="truncate text-sm font-black">{chain.originPlayerId === playerId ? "Your" : `${chain.originPlayerName}'s`} chain</p>
+        <span className="flex shrink-0 gap-1" aria-label={`Step ${index + 1} of ${state.telephoneTotalStages}`}>
+          {Array.from({ length: state.telephoneTotalStages }, (_, step) => (
+            <span key={step} className={cn("size-2 rounded-full transition", step < index ? "bg-white/60" : step === index ? "scale-125 bg-amber-300" : "bg-white/15")} />
+          ))}
+        </span>
+      </div>
+
+      {entry.type === "text" ? (
+        <div className="grid place-items-center [perspective:1200px]" style={{ width: sheet.width, height: sheet.height + 14 }}>
+          <div className="mafia-flip w-full max-w-xl -rotate-1 rounded-md bg-[#fdf8ec] px-6 py-8 text-center text-[#2b1d10] shadow-[0_24px_50px_rgb(0_0_0/.55)]" style={{ animationDuration: `${FLIP_MS}ms` }}>
+            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-rose-700/80">{index === 0 ? "The prompt" : "Guessed as"}</p>
+            <p className={cn("mt-2 font-black leading-tight", compact ? "text-2xl" : "text-4xl")}>“{entry.text}”</p>
+            <p className="mt-3 text-xs text-[#2b1d10]/60">— {author}</p>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center">
+          <Easel width={sheet.width}>
+            {entry.strokes.length > 0 ? (
+              <DrawingView strokes={entry.strokes} replay={live ? replay : null} />
+            ) : (
+              <p className="grid h-full place-items-center text-sm text-black/45">No drawing submitted</p>
+            )}
+          </Easel>
+          <p className="mt-1 text-xs text-white/60">drawn by <b className="text-white/85">{author}</b></p>
+        </div>
+      )}
+
+      {stripH > 0 && (
+        <ol className="flex max-w-full shrink-0 items-center gap-2 overflow-x-auto pb-1" style={{ height: stripH }}>
+          {earlier.map((item, step) => (
+            <li key={step} className="flex shrink-0 items-center gap-2">
+              {item.type === "text" ? (
+                <span className="grid h-16 w-28 place-items-center rounded bg-[#fdf8ec] px-2 text-center text-[11px] font-bold leading-tight text-[#2b1d10] shadow">
+                  <span className="line-clamp-3">“{item.text}”</span>
+                </span>
+              ) : (
+                <span className="block h-16 w-24 overflow-hidden rounded shadow">
+                  <DrawingView strokes={item.strokes} resolution={0.2} />
+                </span>
+              )}
+              <ArrowRight className="size-3.5 text-white/40" />
+            </li>
+          ))}
+          <li className="grid h-16 w-16 shrink-0 place-items-center rounded border-2 border-dashed border-amber-300/60 text-[10px] font-bold uppercase text-amber-200">Now</li>
+        </ol>
+      )}
+
+      {live && (
+        <div className="flex w-full max-w-xl shrink-0 flex-col items-center gap-2">
+          <div className="flex flex-wrap items-center justify-center gap-1.5">
             {REACTION_OPTIONS.map((emoji) => {
-              const matchingReactions = gameState.telephoneReactions.filter(
-                (reaction) => reaction.emoji === emoji,
-              )
-              const selected = matchingReactions.some(
-                (reaction) => reaction.playerId === playerId,
-              )
-
+              const matching = state.telephoneReactions.filter((reaction) => reaction.emoji === emoji)
+              const selected = matching.some((reaction) => reaction.playerId === playerId)
               return (
                 <button
                   key={emoji}
                   type="button"
                   onClick={() => onReact(emoji)}
-                  className={`flex min-w-12 items-center justify-center gap-1 rounded-full border px-3 py-2 text-lg transition-colors ${
-                    selected
-                      ? "border-primary bg-primary/10"
-                      : "border-border bg-background hover:bg-accent"
-                  }`}
-                  title={matchingReactions
-                    .map((reaction) => reaction.playerName)
-                    .join(", ")}
+                  title={matching.map((reaction) => reaction.playerName).join(", ")}
                   aria-label={`React with ${emoji}`}
+                  aria-pressed={selected}
+                  className={cn(GLASS, "flex h-10 min-w-12 items-center justify-center gap-1 px-3 text-lg transition hover:scale-105", selected && "border-amber-300/70 bg-amber-300/20")}
                 >
                   <span>{emoji}</span>
-                  {matchingReactions.length > 0 && (
-                    <span className="text-xs font-semibold">
-                      {matchingReactions.length}
-                    </span>
-                  )}
+                  {matching.length > 0 && <span key={matching.length} className="uno-tag text-xs font-bold">{matching.length}</span>}
                 </button>
               )
             })}
-          </div>
-        )}
-
-        <div className="text-center">
-          {isHost ? (
-            <Button
-              onClick={() => {
-                setRevealPending(true)
-                onRevealNext()
-              }}
-              disabled={!currentRevealChain || revealPending}
-            >
-              {revealLabel}
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Waiting for the host to continue the reveal...
-            </p>
-          )}
-        </div>
-      </div>
-    )
-  }
-
-  if (isFinished) {
-    return (
-      <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-6">
-        <div className="text-center">
-          <Badge variant="secondary">Final reveal</Badge>
-          <h2 className="mt-3 text-3xl font-bold">See how every story changed</h2>
-          <p className="mt-2 text-muted-foreground">
-            Each chain started as one prompt and passed through the whole room.
-          </p>
-        </div>
-
-        <div className="space-y-6">
-          {gameState.telephoneChains.map((chain) => (
-            <TelephoneChainCard key={chain.id} chain={chain} />
-          ))}
-        </div>
-
-        <div className="flex flex-col justify-center gap-2 sm:flex-row">
-          {isHost && (
-            <Button onClick={onRestart}>
-              <RotateCcw className="mr-2 h-4 w-4" />
-              Play Again
-            </Button>
-          )}
-          <Button variant="outline" onClick={onLeave}>
-            Back to Menu
-          </Button>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-4 px-4 py-5">
-      <div className="flex items-center justify-between">
-        <Badge variant="outline">
-          Turn {gameState.telephoneStage + 1}/{gameState.telephoneTotalStages}
-        </Badge>
-        <div
-          className={`flex items-center gap-1 text-sm font-medium ${
-            timeLeft <= 10 ? "text-destructive" : ""
-          }`}
-        >
-          <Clock className="h-4 w-4" />
-          {timeLeft}s
-        </div>
-        <Badge variant="secondary" className="font-mono">
-          {gameState.roomCode}
-        </Badge>
-      </div>
-
-      {hasSubmitted ? (
-        <Card className="mx-auto w-full max-w-xl">
-          <CardContent className="py-14 text-center">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-              <ArrowRight className="h-5 w-5 text-primary" />
-            </div>
-            <h2 className="text-xl font-semibold">Passed along</h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Waiting for {gameState.telephoneTotalStages - gameState.telephoneSubmittedIds.length} other player
-              {gameState.telephoneTotalStages - gameState.telephoneSubmittedIds.length === 1 ? "" : "s"}.
-            </p>
-          </CardContent>
-        </Card>
-      ) : assignment?.type === "draw" ? (
-        <div className="space-y-3">
-          <Card>
-            <CardContent className="py-4 text-center">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Draw this prompt
-              </p>
-              <p className="mt-1 text-xl font-bold">{assignment.prompt}</p>
-            </CardContent>
-          </Card>
-          <Canvas
-            strokes={strokes}
-            isDrawer
-            onStroke={(stroke) => setStrokes((current) => [...current, stroke])}
-            color={selectedColor}
-            size={selectedSize}
-          />
-          <Toolbar
-            selectedColor={selectedColor}
-            selectedSize={selectedSize}
-            onColorChange={setSelectedColor}
-            onSizeChange={setSelectedSize}
-            onClear={() => setStrokes([])}
-            onUndo={() => setStrokes((current) => current.slice(0, -1))}
-            canUndo={strokes.length > 0}
-          />
-          <Button
-            className="mx-auto w-full max-w-sm"
-            onClick={() => onSubmit({ strokes })}
-            disabled={timeLeft <= 0}
-          >
-            Submit Drawing
-          </Button>
-        </div>
-      ) : assignment?.type === "describe" ? (
-        <div className="mx-auto w-full max-w-[1200px] space-y-4">
-          <div className="text-center">
-            <h2 className="text-xl font-bold">What do you think this is?</h2>
-            <p className="text-sm text-muted-foreground">
-              Describe only what you see. You cannot view the earlier prompt.
-            </p>
-          </div>
-          {assignment.strokes.length > 0 ? (
-            <Canvas
-              strokes={assignment.strokes}
-              isDrawer={false}
-              onStroke={() => {}}
-              color="#000000"
-              size={8}
-              disabled
-            />
-          ) : (
-            <div className="rounded-2xl border border-dashed px-5 py-24 text-center text-muted-foreground">
-              The previous player submitted a blank drawing.
-            </div>
-          )}
-          <form
-            className="flex gap-2"
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (text.trim() && timeLeft > 0) onSubmit({ text: text.trim() })
-            }}
-          >
-            <Input
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              maxLength={120}
-              placeholder="Type your interpretation..."
-              autoFocus
-            />
-            <Button type="submit" disabled={!text.trim() || timeLeft <= 0}>
-              Submit
-            </Button>
-          </form>
-        </div>
-      ) : assignment?.type === "write-prompt" ? (
-        <Card className="mx-auto w-full max-w-xl">
-          <CardHeader className="text-center">
-            <CardTitle>Start a chain</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Write something fun for another player to draw.
-            </p>
-          </CardHeader>
-          <CardContent>
-            <form
-              className="space-y-3"
-              onSubmit={(event) => {
-                event.preventDefault()
-                if (text.trim() && timeLeft > 0) onSubmit({ text: text.trim() })
-              }}
-            >
-              <Input
-                value={text}
-                onChange={(event) => setText(event.target.value)}
-                maxLength={120}
-                placeholder="A penguin running a bakery..."
-                autoFocus
-              />
-              <Button
-                className="w-full"
-                type="submit"
-                disabled={!text.trim() || timeLeft <= 0}
+            {isHost && (
+              <button
+                type="button"
+                disabled={skipPending}
+                onClick={() => {
+                  setSkipPending(true)
+                  onRevealNext()
+                }}
+                className={cn(GLASS, "flex h-10 items-center gap-1.5 px-3 text-xs font-bold transition hover:bg-black/65 disabled:opacity-50")}
               >
-                Start My Chain
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card className="mx-auto w-full max-w-xl">
-          <CardContent className="py-12 text-center text-muted-foreground">
-            Preparing your next turn...
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  )
-}
-
-function TelephoneChainCard({ chain }: { chain: TelephoneChain }) {
-  return (
-    <Card className="overflow-hidden">
-      <CardHeader className="border-b bg-muted/40">
-        <CardTitle className="text-lg">
-          {chain.originPlayerName}&apos;s chain
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4 p-4 md:p-6">
-        {chain.entries.map((entry, index) => (
-          <div key={`${entry.authorId}-${index}`}>
-            <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground">
-              {entry.type === "text" ? (
-                <MessageSquare className="h-4 w-4" />
-              ) : (
-                <Pencil className="h-4 w-4" />
-              )}
-              <span>{entry.authorName}</span>
-            </div>
-            {entry.type === "text" ? (
-              <div className="rounded-2xl border bg-background px-5 py-6 text-center text-xl font-semibold">
-                {entry.text}
-              </div>
-            ) : entry.strokes.length > 0 ? (
-              <div className="mx-auto max-w-4xl">
-                <Canvas
-                  strokes={entry.strokes}
-                  isDrawer={false}
-                  onStroke={() => {}}
-                  color="#000000"
-                  size={8}
-                  disabled
-                />
-              </div>
-            ) : (
-              <div className="rounded-2xl border border-dashed px-5 py-10 text-center text-muted-foreground">
-                No drawing submitted
-              </div>
-            )}
-            {index < chain.entries.length - 1 && (
-              <ArrowRight className="mx-auto mt-4 h-5 w-5 rotate-90 text-muted-foreground" />
+                <SkipForward className="size-3.5" /> Next
+              </button>
             )}
           </div>
-        ))}
-      </CardContent>
-    </Card>
+          <BeatBar elapsed={elapsed} duration={beatLen || DRAW_PACE_MS.telephoneText} className="w-full max-w-xs" />
+        </div>
+      )}
+    </>
   )
 }

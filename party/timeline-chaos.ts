@@ -4,13 +4,18 @@ import {
   getCorrectTimeline,
   isTimelinePack,
   isValidTimelineOrder,
+  nextRevealStage,
   pickTimelineEvents,
   publicTimelineEvents,
+  revealStageMs,
   scoreTimelineOrder,
+  TIMELINE_PACE_MS,
   type PublicTimelineEvent,
   type TimelineEvent,
   type TimelinePack,
+  type TimelineRevealStage,
 } from "../src/lib/timelineChaos"
+import { isReaction, takeReactionSlot, type Reaction, type ReactionMessage } from "../src/lib/reactions"
 import {
   canControlGame,
   markConnected,
@@ -40,7 +45,10 @@ export interface TimelinePlayer {
   score: number
   perfectRounds: number
   correctPositions: number
+  correctPairs: number
   totalAnswerMs: number
+  /** Quickest lock-in of the match (ms after the deal); null until they lock one in. */
+  fastestLockMs: number | null
   joinedAt: number
   connected?: boolean
   disconnectedAt?: number | null
@@ -51,13 +59,32 @@ export type PublicTimelinePlayer = Omit<TimelinePlayer, "disconnectedAt">
 interface TimelineSubmission {
   order: string[]
   submittedAt: number
+  /** Taken from their full arrangement when time ran out, not locked in. */
+  auto: boolean
 }
 
 export interface TimelineRoundResult {
   order: string[] | null
   points: number
+  correctPairs: number
   correctPositions: number
   perfect: boolean
+  /** Time to lock in; null when the order was taken at the buzzer or missing. */
+  lockMs: number | null
+}
+
+export interface TimelineReveal {
+  seq: number
+  stage: TimelineRevealStage
+  startedAt: number
+  endsAt: number
+}
+
+export interface TimelineHistoryEntry {
+  roundNumber: number
+  events: PublicTimelineEvent[]
+  correctOrder: string[]
+  results: Record<string, TimelineRoundResult>
 }
 
 export interface TimelineGameState {
@@ -69,10 +96,13 @@ export interface TimelineGameState {
   settings: TimelineSettings
   status: "waiting" | "playing" | "finished"
   phase: TimelinePhase | null
+  reveal: TimelineReveal | null
+  revealSeq: number
   events: TimelineEvent[]
   usedEventIds: string[]
   submissions: Record<string, TimelineSubmission>
   roundResults: Record<string, TimelineRoundResult>
+  history: TimelineHistoryEntry[]
   roundNumber: number
   roundId: string
   roundStartedAt: number | null
@@ -89,11 +119,18 @@ export interface PublicTimelineGameState {
   settings: TimelineSettings
   status: TimelineGameState["status"]
   phase: TimelinePhase | null
+  reveal: TimelineReveal | null
   events: PublicTimelineEvent[]
+  /** Empty until the years are stamped. */
   correctOrder: string[]
+  /** Players who locked in (not those whose order was taken at the buzzer). */
   submittedPlayerIds: string[]
   myOrder: string[] | null
+  /** My full, unlocked arrangement, so a reload keeps it. */
+  myDraft: string[] | null
+  /** Everyone's round results, from the room beat on. */
   roundResults: Record<string, TimelineRoundResult>
+  history: TimelineHistoryEntry[]
   roundNumber: number
   roundId: string
   roundEndsAt: number | null
@@ -105,18 +142,21 @@ export interface PublicTimelineGameState {
 export type ClientMessage =
   | { type: "join"; name: string }
   | { type: "start" }
+  | { type: "arrange"; roundId: unknown; order: unknown }
   | { type: "submit-order"; roundId: unknown; order: unknown }
+  | { type: "react"; reaction: Reaction }
   | { type: "restart" }
   | { type: "leave" }
 
 export type ServerMessage =
   | { type: "state"; state: PublicTimelineGameState }
   | { type: "error"; message: string }
+  | ReactionMessage
 
 const ROUND_COUNTS = new Set([5, 8, 10])
 const ROUND_SECONDS = new Set([15, 20, 30])
-const REVEAL_MS = 6_000
 const PLAYER_TTL_MS = 30 * 60 * 1000
+const RESULT_STAGES = new Set<TimelineRevealStage>(["room", "score"])
 
 function parseSettings(url: URL): TimelineSettings {
   const pack = url.searchParams.get("pack")
@@ -147,59 +187,83 @@ function winners(players: Record<string, TimelinePlayer>): string[] {
     .map((player) => player.id)
 }
 
+function resetStats(player: TimelinePlayer) {
+  player.score = 0
+  player.perfectRounds = 0
+  player.correctPositions = 0
+  player.correctPairs = 0
+  player.totalAnswerMs = 0
+  player.fastestLockMs = null
+}
+
 class TimelineChaosParty implements Party.Server {
   constructor(readonly room: Party.Room) {}
   state: TimelineGameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
   gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
+  /** Full arrangements that aren't locked in yet, used if time runs out. Memory only. */
+  drafts = new Map<string, { roundId: string; order: string[] }>()
+  reactedAt = new Map<string, number>()
 
   async onStart() {
     const stored = await this.room.storage.get<TimelineGameState>("state")
     if (!stored) return
+    stored.reveal ??= null
+    stored.revealSeq ??= 0
+    stored.history ??= []
+    if (stored.status === "playing" && stored.phase === "reveal" && !stored.reveal) {
+      stored.reveal = { seq: 0, stage: "score", startedAt: Date.now(), endsAt: Date.now() }
+    }
     this.state = stored
     for (const player of Object.values(stored.players)) {
       player.connected = false
       player.disconnectedAt ??= Date.now()
+      player.correctPairs ??= 0
+      player.fastestLockMs ??= null
     }
-    if (stored.status === "playing" && stored.roundEndsAt) {
-      if (stored.roundEndsAt <= Date.now()) {
-        if (stored.phase === "ordering") await this.revealRound()
-        else await this.advanceRound()
-      } else await this.room.storage.setAlarm(stored.roundEndsAt)
-    }
+    await this.scheduleAlarm()
     await this.save()
   }
 
   publicState(playerId?: string): PublicTimelineGameState {
     if (!this.state) throw new Error("No timeline state")
-    const revealed = this.state.phase === "reveal" || this.state.status === "finished"
+    const s = this.state
+    const stage = s.reveal?.stage ?? null
+    const finished = s.status === "finished"
+    const revealed = finished || (s.phase === "reveal" && stage !== "tension")
+    const draft = playerId ? this.drafts.get(playerId) : undefined
     return {
-      roomCode: this.state.roomCode,
-      hostId: this.state.hostId,
-      players: Object.fromEntries(Object.entries(this.state.players).map(([id, player]) => [id, {
+      roomCode: s.roomCode,
+      hostId: s.hostId,
+      players: Object.fromEntries(Object.entries(s.players).map(([id, player]) => [id, {
         id: player.id,
         name: player.name,
         score: player.score,
         perfectRounds: player.perfectRounds,
         correctPositions: player.correctPositions,
+        correctPairs: player.correctPairs,
         totalAnswerMs: player.totalAnswerMs,
+        fastestLockMs: player.fastestLockMs,
         joinedAt: player.joinedAt,
         connected: player.connected,
       }])),
-      maxPlayers: this.state.maxPlayers,
-      settings: this.state.settings,
-      status: this.state.status,
-      phase: this.state.phase,
-      events: publicTimelineEvents(this.state.events, revealed),
-      correctOrder: revealed ? getCorrectTimeline(this.state.events) : [],
-      submittedPlayerIds: Object.keys(this.state.submissions),
-      myOrder: playerId ? (this.state.submissions[playerId]?.order ?? null) : null,
-      roundResults: revealed ? this.state.roundResults : {},
-      roundNumber: this.state.roundNumber,
-      roundId: this.state.roundId,
-      roundEndsAt: this.state.roundEndsAt,
-      finishedAt: this.state.finishedAt,
-      winnerIds: this.state.winnerIds,
+      maxPlayers: s.maxPlayers,
+      settings: s.settings,
+      status: s.status,
+      phase: s.phase,
+      reveal: s.reveal,
+      events: publicTimelineEvents(s.events, revealed),
+      correctOrder: revealed ? getCorrectTimeline(s.events) : [],
+      submittedPlayerIds: Object.entries(s.submissions).filter(([, submission]) => !submission.auto).map(([id]) => id),
+      myOrder: playerId ? (s.submissions[playerId]?.order ?? null) : null,
+      myDraft: s.phase === "ordering" && draft?.roundId === s.roundId ? draft.order : null,
+      roundResults: finished || (stage && RESULT_STAGES.has(stage)) ? s.roundResults : {},
+      history: s.history,
+      roundNumber: s.roundNumber,
+      roundId: s.roundId,
+      roundEndsAt: s.roundEndsAt,
+      finishedAt: s.finishedAt,
+      winnerIds: s.winnerIds,
       serverNow: Date.now(),
     }
   }
@@ -217,10 +281,18 @@ class TimelineChaosParty implements Party.Server {
     return Boolean(this.state && token && this.state.playerTokens[connection.id] === token)
   }
 
-  broadcast() {
+  broadcast(message?: ServerMessage) {
     for (const connection of this.room.getConnections()) {
-      if (this.authenticated(connection)) this.send(connection, { type: "state", state: this.publicState(connection.id) })
+      if (this.authenticated(connection)) this.send(connection, message ?? { type: "state", state: this.publicState(connection.id) })
     }
+  }
+
+  /** The alarm drives the ordering clock and every reveal beat. */
+  async scheduleAlarm() {
+    const s = this.state
+    const at = s?.status === "playing" ? (s.phase === "ordering" ? s.roundEndsAt : s.reveal?.endsAt) : null
+    if (at) await this.room.storage.setAlarm(Math.max(Date.now() + 10, at))
+    else await this.room.storage.deleteAlarm()
   }
 
   async startRound() {
@@ -230,50 +302,96 @@ class TimelineChaosParty implements Party.Server {
     this.state.usedEventIds = picked.usedEventIds
     this.state.submissions = {}
     this.state.roundResults = {}
+    this.drafts.clear()
     this.state.roundNumber += 1
     this.state.roundId = crypto.randomUUID()
     this.state.phase = "ordering"
-    this.state.roundStartedAt = Date.now()
+    this.state.reveal = null
+    // The clock starts once the cards have been dealt.
+    this.state.roundStartedAt = Date.now() + TIMELINE_PACE_MS.deal
     this.state.roundEndsAt = this.state.roundStartedAt + this.state.settings.roundSeconds * 1000
-    await this.room.storage.setAlarm(this.state.roundEndsAt)
   }
 
-  async revealRound() {
-    if (!this.state || this.state.status !== "playing" || this.state.phase !== "ordering" || !this.state.roundStartedAt || !this.state.roundEndsAt) return
-    const correctOrder = getCorrectTimeline(this.state.events)
-    for (const player of Object.values(this.state.players)) {
-      const submission = this.state.submissions[player.id]
-      const result = submission
-        ? scoreTimelineOrder(submission.order, correctOrder, submission.submittedAt, this.state.roundStartedAt, this.state.roundEndsAt)
-        : { points: 0, correctPositions: 0, perfect: false }
-      player.score += result.points
-      player.correctPositions += result.correctPositions
-      if (result.perfect) {
-        player.perfectRounds += 1
-        player.totalAnswerMs += submission!.submittedAt - this.state.roundStartedAt
+  beginStage(stage: TimelineRevealStage) {
+    if (!this.state) return
+    const startedAt = Date.now()
+    this.state.revealSeq += 1
+    this.state.reveal = { seq: this.state.revealSeq, stage, startedAt, endsAt: startedAt + revealStageMs(stage, this.state.events.length) }
+  }
+
+  /** Closes the round. Results are worked out now; points only land on the score beat. */
+  revealRound() {
+    const s = this.state
+    if (!s || s.status !== "playing" || s.phase !== "ordering" || !s.roundStartedAt || !s.roundEndsAt) return
+    const correctOrder = getCorrectTimeline(s.events)
+    for (const player of Object.values(s.players)) {
+      const draft = this.drafts.get(player.id)
+      if (!s.submissions[player.id] && draft?.roundId === s.roundId) {
+        s.submissions[player.id] = { order: draft.order, submittedAt: s.roundEndsAt, auto: true }
       }
-      this.state.roundResults[player.id] = { order: submission?.order ?? null, ...result }
+      const submission = s.submissions[player.id]
+      const result = submission
+        ? scoreTimelineOrder(submission.order, correctOrder, submission.submittedAt, s.roundStartedAt, s.roundEndsAt)
+        : { points: 0, correctPairs: 0, correctPositions: 0, perfect: false }
+      s.roundResults[player.id] = {
+        order: submission?.order ?? null,
+        ...result,
+        lockMs: submission && !submission.auto ? Math.max(0, submission.submittedAt - s.roundStartedAt) : null,
+      }
     }
-    this.state.phase = "reveal"
-    this.state.roundEndsAt = Date.now() + REVEAL_MS
-    await this.room.storage.setAlarm(this.state.roundEndsAt)
+    this.drafts.clear()
+    s.phase = "reveal"
+    s.roundEndsAt = null
+    this.beginStage("tension")
   }
 
-  async advanceRound() {
-    if (!this.state || this.state.status !== "playing" || this.state.phase !== "reveal") return
-    if (this.state.roundNumber >= this.state.settings.rounds) {
-      this.state.status = "finished"
-      this.state.finishedAt = Date.now()
-      this.state.winnerIds = winners(this.state.players)
-      this.state.roundEndsAt = null
-      await this.room.storage.deleteAlarm()
+  async advanceReveal() {
+    const s = this.state
+    if (!s || s.status !== "playing" || s.phase !== "reveal" || !s.reveal) return
+    const next = nextRevealStage(s.reveal.stage, true)
+    if (next) {
+      if (next === "score") this.applyPoints()
+      this.beginStage(next)
+      return
+    }
+    if (s.roundNumber >= s.settings.rounds) {
+      s.status = "finished"
+      s.phase = null
+      s.reveal = null
+      s.finishedAt = Date.now()
+      s.winnerIds = winners(s.players)
     } else await this.startRound()
   }
 
+  applyPoints() {
+    const s = this.state
+    if (!s) return
+    for (const player of Object.values(s.players)) {
+      const result = s.roundResults[player.id]
+      if (!result) continue
+      player.score += result.points
+      player.correctPairs += result.correctPairs
+      player.correctPositions += result.correctPositions
+      const submission = s.submissions[player.id]
+      if (result.perfect && submission && s.roundStartedAt) {
+        player.perfectRounds += 1
+        player.totalAnswerMs += Math.max(0, submission.submittedAt - s.roundStartedAt)
+      }
+      if (result.lockMs !== null) player.fastestLockMs = Math.min(player.fastestLockMs ?? Infinity, result.lockMs)
+    }
+    s.history.push({
+      roundNumber: s.roundNumber,
+      events: publicTimelineEvents(s.events, true),
+      correctOrder: getCorrectTimeline(s.events),
+      results: { ...s.roundResults },
+    })
+  }
+
+  /** Everyone still at the table has locked in. */
   allAnswered() {
     if (!this.state) return false
-    const players = Object.values(this.state.players)
-    return players.length > 0 && players.every((player) => this.state && Object.hasOwn(this.state.submissions, player.id))
+    const present = Object.values(this.state.players).filter((player) => player.connected !== false)
+    return present.length > 0 && present.every((player) => this.state && Object.hasOwn(this.state.submissions, player.id))
   }
 
   async onConnect(connection: Party.Connection, context: Party.ConnectionContext) {
@@ -292,8 +410,8 @@ class TimelineChaosParty implements Party.Server {
     if (canCreate && !this.state) {
       this.state = {
         roomCode: this.room.id, hostId: connection.id, players: {}, playerTokens: {}, maxPlayers: 12,
-        settings: parseSettings(url), status: "waiting", phase: null, events: [], usedEventIds: [],
-        submissions: {}, roundResults: {}, roundNumber: 0, roundId: crypto.randomUUID(),
+        settings: parseSettings(url), status: "waiting", phase: null, reveal: null, revealSeq: 0, events: [], usedEventIds: [],
+        submissions: {}, roundResults: {}, history: [], roundNumber: 0, roundId: crypto.randomUUID(),
         roundStartedAt: null, roundEndsAt: null, finishedAt: null, winnerIds: [],
       }
       await this.save()
@@ -332,7 +450,10 @@ class TimelineChaosParty implements Party.Server {
         if (Object.keys(this.state.players).length >= 12) return this.send(sender, { type: "error", message: "Game is full" })
         const name = gameNightMember?.name ?? data.name.trim().slice(0, 20)
         if (!name) return this.send(sender, { type: "error", message: "Enter a player name" })
-        this.state.players[sender.id] = { id: sender.id, name, score: 0, perfectRounds: 0, correctPositions: 0, totalAnswerMs: 0, joinedAt: Date.now(), connected: true, disconnectedAt: null }
+        this.state.players[sender.id] = {
+          id: sender.id, name, score: 0, perfectRounds: 0, correctPositions: 0, correctPairs: 0, totalAnswerMs: 0, fastestLockMs: null,
+          joinedAt: Date.now(), connected: true, disconnectedAt: null,
+        }
         this.state.playerTokens[sender.id] = token
         if (!this.state.players[this.state.hostId]) this.state.hostId = sender.id
         await this.save(); this.broadcast(); return
@@ -342,18 +463,33 @@ class TimelineChaosParty implements Party.Server {
         if (presentCount(this.state.players) < 2) return this.send(sender, { type: "error", message: "Need at least 2 players" })
         for (const player of Object.values(this.state.players)) {
           if (player.connected === false) { delete this.state.players[player.id]; delete this.state.playerTokens[player.id] }
-          else { player.score = 0; player.perfectRounds = 0; player.correctPositions = 0; player.totalAnswerMs = 0 }
+          else resetStats(player)
         }
-        this.state.status = "playing"; this.state.usedEventIds = []; this.state.roundNumber = 0; this.state.finishedAt = null; this.state.winnerIds = []
-        await this.startRound(); await this.save(); this.broadcast(); return
+        Object.assign(this.state, { status: "playing", usedEventIds: [], history: [], roundNumber: 0, finishedAt: null, winnerIds: [] })
+        await this.startRound(); await this.scheduleAlarm(); await this.save(); this.broadcast(); return
+      }
+      if (data.type === "arrange") {
+        const s = this.state
+        if (s.status !== "playing" || s.phase !== "ordering" || data.roundId !== s.roundId || s.submissions[sender.id]) return
+        if (data.order === null) this.drafts.delete(sender.id)
+        else if (isValidTimelineOrder(data.order, s.events.map((event) => event.id))) this.drafts.set(sender.id, { roundId: s.roundId, order: [...data.order] })
+        return
       }
       if (data.type === "submit-order") {
-        if (this.state.status !== "playing" || this.state.phase !== "ordering" || data.roundId !== this.state.roundId || !this.state.roundEndsAt) return
-        if (Date.now() >= this.state.roundEndsAt) { await this.revealRound(); await this.save(); this.broadcast(); return }
-        if (this.state.submissions[sender.id] || !isValidTimelineOrder(data.order, this.state.events.map((event) => event.id))) return
-        this.state.submissions[sender.id] = { order: [...data.order], submittedAt: Date.now() }
-        if (this.allAnswered()) await this.revealRound()
+        const s = this.state
+        if (s.status !== "playing" || s.phase !== "ordering" || data.roundId !== s.roundId || !s.roundEndsAt) return
+        if (Date.now() >= s.roundEndsAt) { this.revealRound(); await this.scheduleAlarm(); await this.save(); this.broadcast(); return }
+        if (s.submissions[sender.id] || !isValidTimelineOrder(data.order, s.events.map((event) => event.id))) return
+        s.submissions[sender.id] = { order: [...data.order], submittedAt: Date.now(), auto: false }
+        this.drafts.delete(sender.id)
+        if (this.allAnswered()) { this.revealRound(); await this.scheduleAlarm() }
         await this.save(); this.broadcast(); return
+      }
+      if (data.type === "react") {
+        if (!this.state.players[sender.id] || !isReaction(data.reaction)) return
+        if (!takeReactionSlot(this.reactedAt, sender.id)) return
+        this.broadcast({ type: "reaction", playerId: sender.id, reaction: data.reaction })
+        return
       }
       if (data.type === "restart") {
         if (this.state.status !== "finished" || !canControlGame(this.state.players, this.state.hostId, sender.id)) return
@@ -361,22 +497,22 @@ class TimelineChaosParty implements Party.Server {
           if (player.connected === false) {
             delete this.state!.players[player.id]
             delete this.state!.playerTokens[player.id]
-          } else {
-            player.score = 0
-            player.perfectRounds = 0
-            player.correctPositions = 0
-            player.totalAnswerMs = 0
-          }
+          } else resetStats(player)
         })
-        Object.assign(this.state, { status: "waiting", phase: null, events: [], usedEventIds: [], submissions: {}, roundResults: {}, roundNumber: 0, roundId: crypto.randomUUID(), roundStartedAt: null, roundEndsAt: null, finishedAt: null, winnerIds: [] })
-        await this.room.storage.deleteAlarm(); await this.save(); this.broadcast(); return
+        Object.assign(this.state, {
+          status: "waiting", phase: null, reveal: null, events: [], usedEventIds: [], submissions: {}, roundResults: {}, history: [],
+          roundNumber: 0, roundId: crypto.randomUUID(), roundStartedAt: null, roundEndsAt: null, finishedAt: null, winnerIds: [],
+        })
+        this.drafts.clear()
+        await this.scheduleAlarm(); await this.save(); this.broadcast(); return
       }
       if (data.type === "leave") {
         delete this.state.players[sender.id]; delete this.state.playerTokens[sender.id]; delete this.state.submissions[sender.id]; delete this.state.roundResults[sender.id]
+        this.drafts.delete(sender.id)
         if (Object.keys(this.state.players).length === 0) { this.state = null; await this.room.storage.delete("state"); await this.room.storage.deleteAlarm(); return }
         if (sender.id === this.state.hostId) this.state.hostId = nextHost(this.state.players, sender.id) ?? ""
         if (this.state.status === "finished") this.state.winnerIds = winners(this.state.players)
-        if (this.state.phase === "ordering" && this.allAnswered()) await this.revealRound()
+        if (this.state.phase === "ordering" && this.allAnswered()) { this.revealRound(); await this.scheduleAlarm() }
         await this.save(); this.broadcast()
       }
     } catch (error) {
@@ -386,9 +522,13 @@ class TimelineChaosParty implements Party.Server {
   }
 
   async onAlarm() {
-    if (!this.state || this.state.status !== "playing") return
-    if (this.state.roundEndsAt && Date.now() < this.state.roundEndsAt) return this.room.storage.setAlarm(this.state.roundEndsAt)
-    if (this.state.phase === "ordering") await this.revealRound(); else await this.advanceRound()
+    const s = this.state
+    if (!s || s.status !== "playing") return
+    const due = s.phase === "ordering" ? s.roundEndsAt : s.reveal?.endsAt
+    if (due && Date.now() < due - 50) return this.scheduleAlarm()
+    if (s.phase === "ordering") this.revealRound()
+    else await this.advanceReveal()
+    await this.scheduleAlarm()
     await this.save(); this.broadcast()
   }
 
@@ -412,6 +552,7 @@ class TimelineChaosParty implements Party.Server {
     if (Array.from(this.room.getConnections()).some((candidate) => candidate.id === connection.id && candidate !== connection)) return
     markDisconnected(this.state.players, connection.id)
     this.state.players[connection.id].disconnectedAt = Date.now()
+    if (this.state.phase === "ordering" && this.allAnswered()) { this.revealRound(); await this.scheduleAlarm() }
     await this.save(); this.broadcast()
   }
 }

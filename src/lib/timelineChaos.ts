@@ -97,23 +97,95 @@ export function isValidTimelineOrder(order: unknown, eventIds: readonly string[]
   return new Set(order).size === order.length && order.every((id) => typeof id === "string" && expected.has(id))
 }
 
+export const TIMELINE_PAIR_POINTS = 150
+export const TIMELINE_PERFECT_BONUS = 500
+export const TIMELINE_SPEED_BONUS = 500
+
+/** Pairs of events (6 for 4 events) that sit in the right order relative to each other. */
+export function countCorrectPairs(order: readonly string[], correctOrder: readonly string[]): number {
+  const rank = new Map(correctOrder.map((id, index) => [id, index]))
+  let pairs = 0
+  for (let i = 0; i < order.length; i++) {
+    for (let j = i + 1; j < order.length; j++) {
+      if ((rank.get(order[i]!) ?? 0) < (rank.get(order[j]!) ?? 0)) pairs++
+    }
+  }
+  return pairs
+}
+
+export function pairCount(eventCount: number) {
+  return (eventCount * (eventCount - 1)) / 2
+}
+
 export function scoreTimelineOrder(
   order: readonly string[],
   correctOrder: readonly string[],
   submittedAt: number,
   roundStartedAt: number,
   roundEndsAt: number,
-): { points: number; correctPositions: number; perfect: boolean } {
+): { points: number; correctPairs: number; correctPositions: number; perfect: boolean } {
   const correctPositions = order.filter((id, index) => id === correctOrder[index]).length
+  const correctPairs = countCorrectPairs(order, correctOrder)
   const perfect = correctPositions === correctOrder.length
   const duration = Math.max(1, roundEndsAt - roundStartedAt)
   const remaining = Math.max(0, Math.min(duration, roundEndsAt - submittedAt))
-  const speedBonus = perfect ? Math.floor((remaining / duration) * 500) : 0
+  const speedBonus = perfect ? Math.floor((remaining / duration) * TIMELINE_SPEED_BONUS) : 0
   return {
-    points: correctPositions * 250 + (perfect ? 500 + speedBonus : 0),
+    points: correctPairs * TIMELINE_PAIR_POINTS + (perfect ? TIMELINE_PERFECT_BONUS + speedBonus : 0),
+    correctPairs,
     correctPositions,
     perfect,
   }
+}
+
+/**
+ * Reveal beats, paced by the server's storage alarm (and by the solo timer):
+ * a tension hold, the years stamped oldest first, the cards sliding into the
+ * true order with their facts, the room's orders (multiplayer only), then the
+ * points landing. Client animations are timed to fit these.
+ */
+export type TimelineRevealStage = "tension" | "stamp" | "sort" | "room" | "score"
+
+export const TIMELINE_PACE_MS = {
+  /** Cards fly from the archive box before the clock matters. */
+  deal: 1200,
+  dealStep: 140,
+  tension: 1500,
+  stampStep: 650,
+  stampLand: 800,
+  sort: 4200,
+  room: 3200,
+  score: 2800,
+} as const
+
+export function revealStageMs(stage: TimelineRevealStage, eventCount: number): number {
+  if (stage === "stamp") return Math.max(0, eventCount - 1) * TIMELINE_PACE_MS.stampStep + TIMELINE_PACE_MS.stampLand
+  return TIMELINE_PACE_MS[stage]
+}
+
+export function nextRevealStage(stage: TimelineRevealStage, withRoom: boolean): TimelineRevealStage | null {
+  const order: TimelineRevealStage[] = withRoom ? ["tension", "stamp", "sort", "room", "score"] : ["tension", "stamp", "sort", "score"]
+  return order[order.indexOf(stage) + 1] ?? null
+}
+
+/** Moves `id` into `slot`, shifting neighbours toward the nearest empty slot so a gap opens where it lands. */
+export function insertIntoSlots(slots: readonly (string | null)[], id: string, slot: number): (string | null)[] {
+  const next = slots.map((value) => (value === id ? null : value))
+  if (next[slot] === null) {
+    next[slot] = id
+    return next
+  }
+  let left = -1
+  for (let i = slot - 1; i >= 0; i--) if (next[i] === null) { left = i; break }
+  let right = -1
+  for (let i = slot + 1; i < next.length; i++) if (next[i] === null) { right = i; break }
+  if (right >= 0 && (left < 0 || right - slot <= slot - left)) {
+    for (let i = right; i > slot; i--) next[i] = next[i - 1]!
+  } else if (left >= 0) {
+    for (let i = left; i < slot; i++) next[i] = next[i + 1]!
+  } else return slots.slice()
+  next[slot] = id
+  return next
 }
 
 export function publicTimelineEvents(

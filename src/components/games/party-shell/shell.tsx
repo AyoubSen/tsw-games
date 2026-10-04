@@ -108,7 +108,7 @@ export function TableTopBar({ title, roomLabel, onLeave, connected, status, acti
       </button>
       <div className="hidden pl-2 xl:block">
         <p className="text-lg font-black leading-none tracking-tight">{title}</p>
-        <p className="text-xs text-white/60">Room {roomLabel}</p>
+        {roomLabel && <p className="text-xs text-white/60">Room {roomLabel}</p>}
       </div>
       <div className="pointer-events-auto flex min-w-0 flex-1 justify-center lg:absolute lg:left-1/2 lg:w-[min(460px,40vw)] lg:-translate-x-1/2">
         <div aria-live="polite" className={cn(GLASS, "flex h-11 w-full min-w-0 items-center gap-3 px-3")}>

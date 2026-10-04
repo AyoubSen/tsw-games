@@ -10,6 +10,8 @@ import {
   leavePartySocket,
   PARTYKIT_HOST,
 } from "@/lib/partykit"
+import type { Reaction } from "@/lib/reactions"
+import { useReactionBubbles } from "@/components/multiplayer/Reactions"
 import type {
   PublicTimelineGameState,
   ServerMessage,
@@ -21,11 +23,13 @@ const INITIAL_STATE = {
   gameState: null as PublicTimelineGameState | null,
   playerId: null as string | null,
   error: null as string | null,
-  stateReceivedAt: 0,
+  /** Server clock minus local clock, from the last state message. */
+  clockOffset: 0,
 }
 
 export function useMultiplayerTimelineChaos() {
   const [state, setState] = useState(INITIAL_STATE)
+  const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles()
   const socketRef = useRef<PartySocket | null>(null)
   const roomCodeRef = useRef("")
   const isHost = Boolean(state.gameState && state.playerId && state.gameState.hostId === state.playerId)
@@ -64,8 +68,9 @@ export function useMultiplayerTimelineChaos() {
       try {
         const message = JSON.parse(event.data) as ServerMessage
         if (message.type === "state") {
-          setState((previous) => ({ ...previous, connectionStatus: "connected", gameState: message.state, error: null, stateReceivedAt: Date.now() }))
-        } else setState((previous) => ({ ...previous, error: message.message }))
+          setState((previous) => ({ ...previous, connectionStatus: "connected", gameState: message.state, error: null, clockOffset: message.state.serverNow - Date.now() }))
+        } else if (message.type === "reaction") receiveReaction(message)
+        else setState((previous) => ({ ...previous, error: message.message }))
       } catch (error) {
         console.error("Failed to parse Timeline Chaos message:", error)
       }
@@ -76,7 +81,7 @@ export function useMultiplayerTimelineChaos() {
     }
     socket.addEventListener("close", reconnecting)
     socket.addEventListener("error", reconnecting)
-  }, [])
+  }, [receiveReaction])
 
   const send = useCallback((message: object) => {
     const socket = socketRef.current
@@ -94,8 +99,9 @@ export function useMultiplayerTimelineChaos() {
       clearPersistentPlayerToken("timeline-chaos", roomCodeRef.current)
     }
     roomCodeRef.current = ""
+    clearReactions()
     setState(INITIAL_STATE)
-  }, [])
+  }, [clearReactions])
 
   const abandonReconnect = useCallback(() => {
     socketRef.current?.close()
@@ -122,6 +128,9 @@ export function useMultiplayerTimelineChaos() {
     createGame,
     joinGame,
     startGame: () => isHost && send({ type: "start" }),
+    reactions,
+    react: (reaction: Reaction) => send({ type: "react", reaction }),
+    arrange: (roundId: string, order: string[] | null) => send({ type: "arrange", roundId, order }),
     submitOrder: (roundId: string, order: string[]) => send({ type: "submit-order", roundId, order }),
     restartGame: () => isHost && send({ type: "restart" }),
     disconnect,

@@ -17,12 +17,60 @@ import {
 	validateGameNightConnection,
 	type GameNightMember,
 } from "./shared/gameNight";
+import {
+	isReaction,
+	takeReactionSlot,
+	type Reaction,
+	type ReactionMessage,
+} from "../src/lib/reactions";
+
+export const PASSES_PER_GAME = 2;
+
+/** Points for each way a turn can end. */
+export const POINTS = {
+	/** Answered your own prompt and the room accepted it. */
+	selfAccepted: 2,
+	/** Answered your own prompt and the room rejected it (or the clock ran out). */
+	selfFailed: -1,
+	/** Pressured into answering and the room accepted it. */
+	pressuredAccepted: 3,
+	/** The pressured player was rejected or ran out of time: the pressurer scores. */
+	pressureLanded: 2,
+} as const;
+
+/**
+ * Server-paced beats, advanced by the storage alarm so every client sees the
+ * same timeline. Client animations inside a beat must fit these durations.
+ */
+export const PACE_MS = {
+	/** The hot potato's flight to its target; the answer clock starts after it lands. */
+	potato: 900,
+	/** The answer card (or "said it out loud" stamp) turning over. */
+	flip: 1500,
+	/** The room's vote; ends early once everyone has voted. */
+	verdict: 12000,
+	/** Before the first thumb turns over in the tally. */
+	tallyLead: 400,
+	/** Gap between one thumb turning over and the next. */
+	tallyStep: 280,
+	/** After the last thumb, while the count settles. */
+	tallyHold: 900,
+	/** Result stamp and points flying to the seats. */
+	result: 2800,
+	/** Scores land and the hot seat sweeps to the next player. */
+	handoff: 2000,
+} as const;
+
+export function tallyDuration(voterCount: number): number {
+	return PACE_MS.tallyLead + Math.max(0, voterCount - 1) * PACE_MS.tallyStep + PACE_MS.tallyHold;
+}
 
 export interface PressureButtonPlayer {
 	id: string;
 	name: string;
 	score: number;
 	joinedAt: number;
+	passesLeft: number;
 	/** False while their socket is away; they are not removed from the game. */
 	connected?: boolean;
 }
@@ -33,20 +81,38 @@ export interface PressureButtonSettings {
 	promptPack: PressurePromptPack;
 }
 
-interface SubmittedAnswer {
-	playerId: string;
-	text: string;
-	submittedAt: number;
+export interface TurnAnswer {
+	/** Null when they said it out loud instead of typing. */
+	text: string | null;
+	spoken: boolean;
 }
 
-export interface PressureRoundResult {
-	mode: "answer" | "pass" | "pressure";
+export type TurnOutcome = "accepted" | "rejected" | "timed-out" | "passed";
+
+export interface TurnSummary {
+	turnNumber: number;
+	prompt: PressurePrompt;
 	activePlayerId: string;
+	mode: "answer" | "pass" | "pressure";
 	responderId: string | null;
-	pressuredPlayerId: string | null;
-	answerText: string | null;
-	outcome: "answered" | "passed" | "timed-out";
+	/** The player who pressured, on pressure turns. */
+	pressuredById: string | null;
+	answer: TurnAnswer | null;
+	outcome: TurnOutcome;
+	/** Votes by voter id: true = accept. Missing voters counted as accept. */
+	votes: Record<string, boolean>;
+	voterIds: string[];
 	scoreChanges: Record<string, number>;
+}
+
+export type RevealStage = "flip" | "verdict" | "tally" | "result" | "handoff";
+
+export interface RevealPace {
+	seq: number;
+	stage: RevealStage;
+	endsAt: number | null;
+	/** Handoff only: who takes the hot seat next (null after the last turn). */
+	nextPlayerId: string | null;
 }
 
 export interface PressureButtonGameState {
@@ -60,11 +126,19 @@ export interface PressureButtonGameState {
 	activePlayerId: string | null;
 	responderId: string | null;
 	pressuredByPlayerId: string | null;
+	mode: "answer" | "pass" | "pressure" | null;
 	prompt: PressurePrompt | null;
 	usedPromptIds: string[];
-	currentAnswer: SubmittedAnswer | null;
-	roundResult: PressureRoundResult | null;
+	answer: TurnAnswer | null;
+	voterIds: string[];
+	votes: Record<string, boolean>;
+	outcome: TurnOutcome | null;
+	scoreChanges: Record<string, number>;
+	reveal: RevealPace | null;
+	paceSeq: number;
+	history: TurnSummary[];
 	startedAt: number | null;
+	/** When the answer clock started (after the potato lands on pressure turns). */
 	turnStartedAt: number | null;
 	finishedAt: number | null;
 	playerOrder: string[];
@@ -81,10 +155,25 @@ export interface PublicPressureButtonGameState {
 	activePlayerId: string | null;
 	responderId: string | null;
 	pressuredByPlayerId: string | null;
+	mode: PressureButtonGameState["mode"];
 	prompt: PressurePrompt | null;
 	usedPromptIds: string[];
-	currentAnswerText: string | null;
-	roundResult: PressureRoundResult | null;
+	/** From the flip beat on. */
+	answer: TurnAnswer | null;
+	/** Who judges this answer (from the verdict beat on). */
+	voterIds: string[];
+	/** Who has voted so far; how they voted stays hidden until the tally. */
+	votedIds: string[];
+	/** From the tally beat on. */
+	votes: Record<string, boolean>;
+	/** From the result beat on. */
+	outcome: TurnOutcome | null;
+	scoreChanges: Record<string, number>;
+	reveal: RevealPace | null;
+	/** Finished turns; the current one joins once its points land. */
+	history: TurnSummary[];
+	/** Seat order: the hot seat moves around it. */
+	playerOrder: string[];
 	startedAt: number | null;
 	turnStartedAt: number | null;
 	finishedAt: number | null;
@@ -96,8 +185,9 @@ export type ClientMessage =
 	| { type: "choose-answer" }
 	| { type: "choose-pass" }
 	| { type: "choose-pressure"; targetPlayerId: string }
-	| { type: "submit-answer"; answer: string }
-	| { type: "next-turn" }
+	| { type: "submit-answer"; answer?: string; spoken?: boolean }
+	| { type: "vote"; accept: boolean }
+	| { type: "react"; reaction: Reaction }
 	| { type: "restart" }
 	| { type: "leave" };
 
@@ -105,12 +195,16 @@ export type ServerMessage =
 	| { type: "state"; state: PublicPressureButtonGameState }
 	| { type: "player-joined"; player: PressureButtonPlayer }
 	| { type: "player-left"; playerId: string }
-	| { type: "turn-started"; prompt: PressurePrompt; turnNumber: number; activePlayerId: string }
-	| { type: "decision-made"; responderId: string | null; pressuredByPlayerId: string | null; mode: "answer" | "pass" | "pressure" }
-	| { type: "turn-revealed"; result: PressureRoundResult }
 	| { type: "game-over" }
 	| { type: "game-restarted" }
+	| ReactionMessage
 	| { type: "error"; message: string };
+
+/** No vote counts as accept, and a tie is accepted. */
+export function verdictOf(voterIds: string[], votes: Record<string, boolean>): boolean {
+	const rejects = voterIds.filter((id) => votes[id] === false).length;
+	return rejects * 2 <= voterIds.length;
+}
 
 function clampAnswerTime(value: string | null): number {
 	return Math.max(15, Math.min(60, Number.parseInt(value || "25", 10)));
@@ -139,6 +233,7 @@ class PressureButtonParty implements Party.Server {
 	constructor(readonly room: Party.Room) {}
 
 	state: PressureButtonGameState | null = null;
+	reactedAt = new Map<string, number>();
 	gameNightMembers = new WeakMap<Party.Connection, GameNightMember>();
 
 	async onStart() {
@@ -147,18 +242,53 @@ class PressureButtonParty implements Party.Server {
 			stored.playerOrder ??= Object.values(stored.players)
 				.sort((left, right) => left.joinedAt - right.joinedAt)
 				.map((player) => player.id);
+			stored.paceSeq ??= 0;
+			stored.history ??= [];
+			stored.voterIds ??= [];
+			stored.votes ??= {};
+			stored.scoreChanges ??= {};
+			stored.answer ??= null;
+			stored.outcome ??= null;
+			stored.mode ??= stored.pressuredByPlayerId ? "pressure" : stored.responderId ? "answer" : null;
+			for (const player of Object.values(stored.players)) {
+				player.passesLeft ??= PASSES_PER_GAME;
+			}
+			// A reveal saved before reveals were paced (its points already landed) just hands off.
+			stored.reveal ??= stored.status === "reveal"
+				? { seq: ++stored.paceSeq, stage: "handoff", endsAt: Date.now() + PACE_MS.handoff, nextPlayerId: null }
+				: null;
 			this.state = stored;
 			for (const player of Object.values(this.state.players)) {
 				player.connected = false;
 			}
 			await this.saveState();
+			await this.scheduleAlarm();
 		}
+	}
+
+	/** The alarm drives the answer clock and the reveal beats. */
+	async scheduleAlarm() {
+		const s = this.state;
+		const at =
+			s?.status === "answering" && s.turnStartedAt
+				? s.turnStartedAt + s.settings.answerTimeLimit * 1000
+				: s?.status === "reveal"
+					? (s.reveal?.endsAt ?? null)
+					: null;
+		if (at) await this.room.storage.setAlarm(Math.max(Date.now() + 10, at));
+		else await this.room.storage.deleteAlarm();
 	}
 
 	async saveState() {
 		if (this.state) {
 			await this.room.storage.put("state", this.state);
 		}
+	}
+
+	async commit() {
+		await this.saveState();
+		await this.scheduleAlarm();
+		this.broadcast({ type: "state", state: this.getPublicState() });
 	}
 
 	getOrderedPlayerIds() {
@@ -169,32 +299,57 @@ class PressureButtonParty implements Party.Server {
 		return this.state.playerOrder.filter((playerId) => this.state?.players[playerId]);
 	}
 
+	/** Whose hot seat turn `turnNumber` is: rotates through the seats, skipping anyone away. */
+	pickActive(turnNumber: number): string | null {
+		const s = this.state;
+		const ordered = this.getOrderedPlayerIds();
+		if (!s || ordered.length < 2) return null;
+		const startingIndex = (turnNumber - 1) % ordered.length;
+		for (let offset = 0; offset < ordered.length; offset++) {
+			const candidateId = ordered[(startingIndex + offset) % ordered.length]!;
+			if (s.players[candidateId]?.connected !== false) return candidateId;
+		}
+		return null;
+	}
+
 	getPublicState(): PublicPressureButtonGameState {
 		if (!this.state) {
 			throw new Error("No game state");
 		}
 
-		const shouldReveal =
-			this.state.status === "reveal" || this.state.status === "finished";
+		const s = this.state;
+		const stage = s.status === "reveal" ? (s.reveal?.stage ?? null) : null;
+		const finished = s.status === "finished";
+		// Each part of the turn leaves the server only once its beat starts.
+		const tallied = finished || stage === "tally" || stage === "result" || stage === "handoff";
+		const resulted = finished || stage === "result" || stage === "handoff";
 
 		return {
-			roomCode: this.state.roomCode,
-			hostId: this.state.hostId,
-			players: this.state.players,
-			status: this.state.status,
-			maxPlayers: this.state.maxPlayers,
-			settings: this.state.settings,
-			turnNumber: this.state.turnNumber,
-			activePlayerId: this.state.activePlayerId,
-			responderId: this.state.responderId,
-			pressuredByPlayerId: this.state.pressuredByPlayerId,
-			prompt: this.state.prompt,
-			usedPromptIds: this.state.usedPromptIds,
-			currentAnswerText: shouldReveal ? this.state.currentAnswer?.text ?? null : null,
-			roundResult: shouldReveal ? this.state.roundResult : null,
-			startedAt: this.state.startedAt,
-			turnStartedAt: this.state.turnStartedAt,
-			finishedAt: this.state.finishedAt,
+			roomCode: s.roomCode,
+			hostId: s.hostId,
+			players: s.players,
+			status: s.status,
+			maxPlayers: s.maxPlayers,
+			settings: s.settings,
+			turnNumber: s.turnNumber,
+			activePlayerId: s.activePlayerId,
+			responderId: s.responderId,
+			pressuredByPlayerId: s.pressuredByPlayerId,
+			mode: s.mode,
+			prompt: s.prompt,
+			usedPromptIds: s.usedPromptIds,
+			answer: stage || finished ? s.answer : null,
+			voterIds: s.voterIds,
+			votedIds: Object.keys(s.votes),
+			votes: tallied ? s.votes : {},
+			outcome: resulted ? s.outcome : null,
+			scoreChanges: resulted ? s.scoreChanges : {},
+			reveal: s.reveal,
+			history: s.history,
+			playerOrder: this.getOrderedPlayerIds(),
+			startedAt: s.startedAt,
+			turnStartedAt: s.turnStartedAt,
+			finishedAt: s.finishedAt,
 		};
 	}
 
@@ -212,151 +367,189 @@ class PressureButtonParty implements Party.Server {
 	}
 
 	async startTurn() {
-		if (!this.state) {
+		const s = this.state;
+		if (!s) {
+			return;
+		}
+
+		const activePlayerId = this.pickActive(s.turnNumber);
+		if (!activePlayerId) {
+			// Fewer than two players left: nothing to play.
+			if (this.getOrderedPlayerIds().length < 2) await this.finishGame();
 			return;
 		}
 
 		const orderedPlayers = this.getOrderedPlayerIds();
-		if (orderedPlayers.length < 2) {
-			return;
-		}
-
-		const startingIndex = (this.state.turnNumber - 1) % orderedPlayers.length;
-		let activePlayerId: string | null = null;
-		for (let offset = 0; offset < orderedPlayers.length; offset++) {
-			const candidateId = orderedPlayers[(startingIndex + offset) % orderedPlayers.length];
-			if (this.state.players[candidateId]?.connected !== false) {
-				activePlayerId = candidateId;
-				break;
-			}
-		}
-		if (!activePlayerId) {
-			return;
-		}
-
-		const prompt = pickPressurePrompt(
-			this.state.settings.promptPack,
-			this.state.usedPromptIds,
-			{
-				activePlayerName: this.state.players[activePlayerId]?.name ?? null,
-				playerNames: orderedPlayers
-					.map((playerId) => this.state?.players[playerId]?.name ?? "")
-					.filter(Boolean),
-			},
-		);
-
-		this.state.status = "decision";
-		this.state.activePlayerId = activePlayerId;
-		this.state.responderId = null;
-		this.state.pressuredByPlayerId = null;
-		this.state.prompt = prompt;
-		this.state.usedPromptIds = [...this.state.usedPromptIds, prompt.id];
-		this.state.currentAnswer = null;
-		this.state.roundResult = null;
-		this.state.turnStartedAt = null;
-
-		await this.room.storage.deleteAlarm();
-		await this.saveState();
-		this.broadcast({
-			type: "turn-started",
-			prompt,
-			turnNumber: this.state.turnNumber,
-			activePlayerId,
+		const prompt = pickPressurePrompt(s.settings.promptPack, s.usedPromptIds, {
+			activePlayerName: s.players[activePlayerId]?.name ?? null,
+			playerNames: orderedPlayers
+				.map((playerId) => s.players[playerId]?.name ?? "")
+				.filter(Boolean),
 		});
-		this.broadcast({ type: "state", state: this.getPublicState() });
+
+		s.status = "decision";
+		s.activePlayerId = activePlayerId;
+		s.responderId = null;
+		s.pressuredByPlayerId = null;
+		s.mode = null;
+		s.prompt = prompt;
+		s.usedPromptIds = [...s.usedPromptIds, prompt.id];
+		this.clearTurn();
+		await this.commit();
+	}
+
+	clearTurn() {
+		const s = this.state;
+		if (!s) return;
+		s.answer = null;
+		s.voterIds = [];
+		s.votes = {};
+		s.outcome = null;
+		s.scoreChanges = {};
+		s.reveal = null;
+		s.turnStartedAt = null;
 	}
 
 	async moveToAnswering(responderId: string, pressuredByPlayerId: string | null) {
-		if (!this.state) {
+		const s = this.state;
+		if (!s) {
 			return;
 		}
 
-		this.state.status = "answering";
-		this.state.responderId = responderId;
-		this.state.pressuredByPlayerId = pressuredByPlayerId;
-		this.state.currentAnswer = null;
-		this.state.roundResult = null;
-		this.state.turnStartedAt = Date.now();
-
-		await this.saveState();
-		this.room.storage.setAlarm(
-			Date.now() + this.state.settings.answerTimeLimit * 1000,
-		);
-		this.broadcast({
-			type: "decision-made",
-			responderId,
-			pressuredByPlayerId,
-			mode: pressuredByPlayerId ? "pressure" : "answer",
-		});
-		this.broadcast({ type: "state", state: this.getPublicState() });
+		s.status = "answering";
+		s.mode = pressuredByPlayerId ? "pressure" : "answer";
+		s.responderId = responderId;
+		s.pressuredByPlayerId = pressuredByPlayerId;
+		this.clearTurn();
+		s.turnStartedAt = Date.now() + (pressuredByPlayerId ? PACE_MS.potato : 0);
+		await this.commit();
 	}
 
-	async revealResult(result: PressureRoundResult) {
-		if (!this.state) {
-			return;
-		}
+	beat(stage: RevealStage, ms: number | null, nextPlayerId: string | null = null) {
+		const s = this.state;
+		if (!s) return;
+		s.status = "reveal";
+		s.reveal = {
+			seq: ++s.paceSeq,
+			stage,
+			endsAt: ms === null ? null : Date.now() + ms,
+			nextPlayerId,
+		};
+	}
 
-		for (const [playerId, delta] of Object.entries(result.scoreChanges)) {
-			const player = this.state.players[playerId];
-			if (player) {
-				player.score += delta;
+	/** Works out the points; they only land at the handoff. */
+	settle(outcome: TurnOutcome) {
+		const s = this.state;
+		if (!s) return;
+		const scoreChanges: Record<string, number> = {};
+		if (outcome !== "passed" && s.responderId) {
+			const success = outcome === "accepted";
+			if (s.pressuredByPlayerId) {
+				if (success) scoreChanges[s.responderId] = POINTS.pressuredAccepted;
+				else scoreChanges[s.pressuredByPlayerId] = POINTS.pressureLanded;
+			} else {
+				scoreChanges[s.responderId] = success ? POINTS.selfAccepted : POINTS.selfFailed;
 			}
 		}
-
-		this.state.status = "reveal";
-		this.state.roundResult = result;
-		await this.room.storage.deleteAlarm();
-		await this.saveState();
-		this.broadcast({ type: "turn-revealed", result });
-		this.broadcast({ type: "state", state: this.getPublicState() });
+		s.outcome = outcome;
+		s.scoreChanges = scoreChanges;
+		this.beat("result", PACE_MS.result);
 	}
 
-	async revealPass() {
-		if (!this.state || !this.state.activePlayerId) {
-			return;
-		}
-
-		await this.revealResult({
-			mode: "pass",
-			activePlayerId: this.state.activePlayerId,
-			responderId: null,
-			pressuredPlayerId: null,
-			answerText: null,
-			outcome: "passed",
-			scoreChanges: {},
-		});
+	/** Opens the room's vote on the answer, or accepts it outright with nobody to judge. */
+	openVerdict() {
+		const s = this.state;
+		if (!s) return;
+		s.voterIds = this.getOrderedPlayerIds().filter(
+			(id) => id !== s.responderId && s.players[id]?.connected !== false,
+		);
+		s.votes = {};
+		if (s.voterIds.length) this.beat("verdict", PACE_MS.verdict);
+		else this.settle("accepted");
 	}
 
-	async revealTimedOut() {
-		if (!this.state || !this.state.activePlayerId) {
+	closeVerdict() {
+		const s = this.state;
+		if (!s || s.reveal?.stage !== "verdict") return;
+		this.beat("tally", tallyDuration(s.voterIds.length));
+	}
+
+	/** Points land, the turn joins the log and the hot seat moves on. */
+	landPoints() {
+		const s = this.state;
+		if (!s || !s.prompt || !s.activePlayerId || !s.outcome) return;
+		for (const [playerId, delta] of Object.entries(s.scoreChanges)) {
+			const player = s.players[playerId];
+			if (player) player.score += delta;
+		}
+		s.history = [
+			...s.history.filter((entry) => entry.turnNumber !== s.turnNumber),
+			{
+				turnNumber: s.turnNumber,
+				prompt: s.prompt,
+				activePlayerId: s.activePlayerId,
+				mode: s.mode ?? "pass",
+				responderId: s.responderId,
+				pressuredById: s.pressuredByPlayerId,
+				answer: s.answer,
+				outcome: s.outcome,
+				votes: s.votes,
+				voterIds: s.voterIds,
+				scoreChanges: s.scoreChanges,
+			},
+		];
+		const last = s.turnNumber >= s.settings.turns;
+		this.beat("handoff", PACE_MS.handoff, last ? null : this.pickActive(s.turnNumber + 1));
+	}
+
+	async advanceReveal() {
+		const s = this.state;
+		const stage = s?.status === "reveal" ? s.reveal?.stage : null;
+		if (!s || !stage) return;
+		if (stage === "flip") {
+			this.openVerdict();
+		} else if (stage === "verdict") {
+			this.closeVerdict();
+		} else if (stage === "tally") {
+			this.settle(verdictOf(s.voterIds, s.votes) ? "accepted" : "rejected");
+		} else if (stage === "result") {
+			this.landPoints();
+		} else if (stage === "handoff") {
+			if (s.turnNumber >= s.settings.turns) {
+				await this.finishGame();
+			} else {
+				s.turnNumber += 1;
+				await this.startTurn();
+			}
 			return;
 		}
+		await this.commit();
+	}
 
-		const scoreChanges: Record<string, number> = {};
-		if (this.state.pressuredByPlayerId) {
-			scoreChanges[this.state.pressuredByPlayerId] = 2;
-		}
+	async timeOut() {
+		const s = this.state;
+		if (!s || s.status !== "answering") return;
+		this.settle("timed-out");
+		await this.commit();
+	}
 
-		await this.revealResult({
-			mode: this.state.pressuredByPlayerId ? "pressure" : "answer",
-			activePlayerId: this.state.activePlayerId,
-			responderId: this.state.responderId,
-			pressuredPlayerId: this.state.pressuredByPlayerId
-				? this.state.responderId
-				: null,
-			answerText: null,
-			outcome: "timed-out",
-			scoreChanges,
-		});
+	async pass() {
+		const s = this.state;
+		if (!s || s.status !== "decision") return;
+		s.mode = "pass";
+		this.settle("passed");
+		await this.commit();
 	}
 
 	async finishGame() {
-		if (!this.state) {
+		const s = this.state;
+		if (!s) {
 			return;
 		}
 
-		this.state.status = "finished";
-		this.state.finishedAt = Date.now();
+		s.status = "finished";
+		s.finishedAt = Date.now();
+		s.reveal = null;
 		await this.room.storage.deleteAlarm();
 		await this.saveState();
 		this.broadcast({ type: "game-over" });
@@ -389,10 +582,17 @@ class PressureButtonParty implements Party.Server {
 				activePlayerId: null,
 				responderId: null,
 				pressuredByPlayerId: null,
+				mode: null,
 				prompt: null,
 				usedPromptIds: [],
-				currentAnswer: null,
-				roundResult: null,
+				answer: null,
+				voterIds: [],
+				votes: {},
+				outcome: null,
+				scoreChanges: {},
+				reveal: null,
+				paceSeq: 0,
+				history: [],
 				startedAt: null,
 				turnStartedAt: null,
 				finishedAt: null,
@@ -413,12 +613,13 @@ class PressureButtonParty implements Party.Server {
 
 		try {
 			const data: ClientMessage = JSON.parse(message);
+			const s = this.state;
 
 			switch (data.type) {
 				case "join": {
 					const member = this.gameNightMembers.get(sender);
 					const playerName = member?.name ?? data.name;
-					const returning = markConnected(this.state.players, sender.id);
+					const returning = markConnected(s.players, sender.id);
 					if (returning) {
 						// A reconnect, not a new player - never rejected mid-game.
 						returning.name = playerName || returning.name;
@@ -428,12 +629,12 @@ class PressureButtonParty implements Party.Server {
 						break;
 					}
 
-					if (this.state.status !== "waiting") {
+					if (s.status !== "waiting") {
 						this.send(sender, { type: "error", message: "Game already started" });
 						return;
 					}
 
-					if (Object.keys(this.state.players).length >= this.state.maxPlayers) {
+					if (Object.keys(s.players).length >= s.maxPlayers) {
 						this.send(sender, { type: "error", message: "Game is full" });
 						return;
 					}
@@ -443,11 +644,12 @@ class PressureButtonParty implements Party.Server {
 						name: member?.name ?? data.name.slice(0, 20),
 						score: 0,
 						joinedAt: Date.now(),
+						passesLeft: PASSES_PER_GAME,
 						connected: true,
 					};
 
-					this.state.players[sender.id] = player;
-					this.state.playerOrder.push(sender.id);
+					s.players[sender.id] = player;
+					s.playerOrder.push(sender.id);
 					await this.saveState();
 					this.broadcast({ type: "player-joined", player });
 					this.broadcast({ type: "state", state: this.getPublicState() });
@@ -455,173 +657,125 @@ class PressureButtonParty implements Party.Server {
 				}
 
 				case "start": {
-					if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
+					if (!canControlGame(s.players, s.hostId, sender.id)) {
 						this.send(sender, { type: "error", message: "Only host can start" });
 						return;
 					}
 
-					if (presentCount(this.state.players) < 2) {
+					if (s.status !== "waiting") return;
+
+					if (presentCount(s.players) < 2) {
 						this.send(sender, { type: "error", message: "Need at least 2 players" });
 						return;
 					}
 
-					for (const player of Object.values(this.state.players)) {
-						if (player.connected === false) delete this.state.players[player.id];
+					for (const player of Object.values(s.players)) {
+						if (player.connected === false) delete s.players[player.id];
 					}
 
-					this.state.startedAt = Date.now();
-					this.state.finishedAt = null;
-					this.state.turnNumber = 1;
-					this.state.playerOrder = this.state.playerOrder.filter(
-						(playerId) => this.state?.players[playerId]?.connected !== false,
-					);
-					for (const player of Object.values(this.state.players)) {
+					s.startedAt = Date.now();
+					s.finishedAt = null;
+					s.turnNumber = 1;
+					s.history = [];
+					s.playerOrder = s.playerOrder.filter((playerId) => s.players[playerId]);
+					for (const player of Object.values(s.players)) {
 						player.score = 0;
+						player.passesLeft = PASSES_PER_GAME;
 					}
 					await this.startTurn();
 					break;
 				}
 
 				case "choose-answer": {
-					if (
-						this.state.status !== "decision" ||
-						sender.id !== this.state.activePlayerId ||
-						!this.state.activePlayerId
-					) {
-						return;
-					}
-
-					await this.moveToAnswering(this.state.activePlayerId, null);
+					if (s.status !== "decision" || sender.id !== s.activePlayerId) return;
+					await this.moveToAnswering(s.activePlayerId, null);
 					break;
 				}
 
 				case "choose-pass": {
-					if (
-						this.state.status !== "decision" ||
-						sender.id !== this.state.activePlayerId
-					) {
+					if (s.status !== "decision" || sender.id !== s.activePlayerId) return;
+					const player = s.players[sender.id];
+					if (!player || player.passesLeft <= 0) {
+						this.send(sender, { type: "error", message: "No passes left" });
 						return;
 					}
-
-					this.broadcast({
-						type: "decision-made",
-						responderId: null,
-						pressuredByPlayerId: null,
-						mode: "pass",
-					});
-					await this.revealPass();
+					player.passesLeft -= 1;
+					await this.pass();
 					break;
 				}
 
 				case "choose-pressure": {
-					if (
-						this.state.status !== "decision" ||
-						sender.id !== this.state.activePlayerId ||
-						!this.state.activePlayerId
-					) {
+					if (s.status !== "decision" || sender.id !== s.activePlayerId || !s.activePlayerId) return;
+
+					const target = s.players[data.targetPlayerId];
+					if (!target || target.connected === false || target.id === s.activePlayerId) {
+						this.send(sender, { type: "error", message: "Pick another player to pressure" });
 						return;
 					}
 
-					if (
-						!this.state.players[data.targetPlayerId] ||
-						this.state.players[data.targetPlayerId].connected === false ||
-						data.targetPlayerId === this.state.activePlayerId
-					) {
-						this.send(sender, {
-							type: "error",
-							message: "Pick another player to pressure",
-						});
-						return;
-					}
-
-					await this.moveToAnswering(data.targetPlayerId, this.state.activePlayerId);
+					await this.moveToAnswering(target.id, s.activePlayerId);
 					break;
 				}
 
 				case "submit-answer": {
-					if (
-						this.state.status !== "answering" ||
-						!this.state.responderId ||
-						sender.id !== this.state.responderId
-					) {
+					if (s.status !== "answering" || !s.responderId || sender.id !== s.responderId) return;
+
+					const text = typeof data.answer === "string"
+						? data.answer.trim().replace(/\s+/g, " ").slice(0, 120)
+						: "";
+					if (!data.spoken && text.length < 2) {
+						this.send(sender, { type: "error", message: "Type an answer, or tap “Said it out loud”" });
 						return;
 					}
 
-					const text = data.answer.trim().replace(/\s+/g, " ").slice(0, 120);
-					if (text.length < 2) {
-						this.send(sender, {
-							type: "error",
-							message: "Answer needs at least 2 characters",
-						});
-						return;
-					}
-
-					this.state.currentAnswer = {
-						playerId: sender.id,
-						text,
-						submittedAt: Date.now(),
-					};
-
-					const scoreChanges: Record<string, number> = {};
-					scoreChanges[sender.id] = this.state.pressuredByPlayerId ? 3 : 2;
-
-					await this.revealResult({
-						mode: this.state.pressuredByPlayerId ? "pressure" : "answer",
-						activePlayerId: this.state.activePlayerId ?? sender.id,
-						responderId: sender.id,
-						pressuredPlayerId: this.state.pressuredByPlayerId ? sender.id : null,
-						answerText: text,
-						outcome: "answered",
-						scoreChanges,
-					});
+					s.answer = data.spoken && text.length < 2
+						? { text: null, spoken: true }
+						: { text, spoken: Boolean(data.spoken) };
+					this.beat("flip", PACE_MS.flip);
+					await this.commit();
 					break;
 				}
 
-				case "next-turn": {
-					if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
-						this.send(sender, {
-							type: "error",
-							message: "Only host can advance turns",
-						});
-						return;
-					}
+				case "vote": {
+					if (s.status !== "reveal" || s.reveal?.stage !== "verdict") return;
+					if (!s.voterIds.includes(sender.id) || sender.id in s.votes) return;
+					s.votes = { ...s.votes, [sender.id]: Boolean(data.accept) };
+					// Everyone's in: straight to the tally.
+					if (s.voterIds.every((id) => id in s.votes)) this.closeVerdict();
+					await this.commit();
+					break;
+				}
 
-					if (this.state.status !== "reveal") {
-						return;
-					}
-
-					if (this.state.turnNumber >= this.state.settings.turns) {
-						await this.finishGame();
-						return;
-					}
-
-					this.state.turnNumber += 1;
-					await this.startTurn();
+				case "react": {
+					if (!s.players[sender.id] || !isReaction(data.reaction)) return;
+					if (!takeReactionSlot(this.reactedAt, sender.id)) return;
+					this.broadcast({ type: "reaction", playerId: sender.id, reaction: data.reaction });
 					break;
 				}
 
 				case "restart": {
-					if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
+					if (!canControlGame(s.players, s.hostId, sender.id)) {
 						this.send(sender, { type: "error", message: "Only host can restart" });
 						return;
 					}
 
-					this.state.status = "waiting";
-					this.state.turnNumber = 0;
-					this.state.activePlayerId = null;
-					this.state.responderId = null;
-					this.state.pressuredByPlayerId = null;
-					this.state.prompt = null;
-					this.state.usedPromptIds = [];
-					this.state.currentAnswer = null;
-					this.state.roundResult = null;
-					this.state.startedAt = null;
-					this.state.turnStartedAt = null;
-					this.state.finishedAt = null;
+					s.status = "waiting";
+					s.turnNumber = 0;
+					s.activePlayerId = null;
+					s.responderId = null;
+					s.pressuredByPlayerId = null;
+					s.mode = null;
+					s.prompt = null;
+					s.usedPromptIds = [];
+					s.history = [];
+					s.startedAt = null;
+					s.finishedAt = null;
+					this.clearTurn();
 					await this.room.storage.deleteAlarm();
 
-					for (const player of Object.values(this.state.players)) {
+					for (const player of Object.values(s.players)) {
 						player.score = 0;
+						player.passesLeft = PASSES_PER_GAME;
 					}
 
 					await this.saveState();
@@ -631,35 +785,31 @@ class PressureButtonParty implements Party.Server {
 				}
 
 				case "leave": {
-					if (
-						this.state.status === "answering" &&
-						this.state.responderId === sender.id
-					) {
-						await this.revealTimedOut();
-					} else if (
-						this.state.status === "decision" &&
-						this.state.activePlayerId === sender.id
-					) {
-						await this.revealPass();
+					if (s.status === "answering" && s.responderId === sender.id) {
+						this.settle("timed-out");
+					} else if (s.status === "decision" && s.activePlayerId === sender.id) {
+						s.mode = "pass";
+						this.settle("passed");
+					} else if (s.status === "reveal" && s.reveal?.stage === "verdict" && s.voterIds.includes(sender.id)) {
+						s.voterIds = s.voterIds.filter((id) => id !== sender.id);
+						delete s.votes[sender.id];
+						if (s.voterIds.every((id) => id in s.votes)) this.closeVerdict();
 					}
-					delete this.state.players[sender.id];
-					this.state.playerOrder = this.state.playerOrder.filter(
-						(playerId) => playerId !== sender.id,
-					);
-					if (Object.keys(this.state.players).length === 0) {
+					delete s.players[sender.id];
+					s.playerOrder = s.playerOrder.filter((playerId) => playerId !== sender.id);
+					if (Object.keys(s.players).length === 0) {
 						this.state = null;
 						await this.room.storage.delete("state");
 						await this.room.storage.deleteAlarm();
 						return;
 					}
-					if (sender.id === this.state.hostId) {
-						const next = nextHost(this.state.players, sender.id);
-						if (next) this.state.hostId = next;
+					if (sender.id === s.hostId) {
+						const next = nextHost(s.players, sender.id);
+						if (next) s.hostId = next;
 					}
 
-					await this.saveState();
 					this.broadcast({ type: "player-left", playerId: sender.id });
-					this.broadcast({ type: "state", state: this.getPublicState() });
+					await this.commit();
 					break;
 				}
 			}
@@ -669,7 +819,17 @@ class PressureButtonParty implements Party.Server {
 	}
 
 	async onAlarm() {
-		await this.revealTimedOut();
+		const s = this.state;
+		if (!s) return;
+		const now = Date.now();
+		if (s.status === "answering") {
+			const deadline = (s.turnStartedAt ?? 0) + s.settings.answerTimeLimit * 1000;
+			if (now < deadline - 300) return this.scheduleAlarm();
+			await this.timeOut();
+		} else if (s.status === "reveal" && s.reveal?.endsAt) {
+			if (now < s.reveal.endsAt - 50) return this.scheduleAlarm();
+			await this.advanceReveal();
+		}
 	}
 
 	async onClose(connection: Party.Connection) {
@@ -697,10 +857,11 @@ class PressureButtonParty implements Party.Server {
 			return Response.json({ finished: false, scored: false, winnerIds: [] });
 		}
 		const players = Object.values(this.state.players);
-		const highestScore = Math.max(...players.map((player) => player.score), 0);
+		// Scores can go negative now, so the top score is not floored at zero.
+		const highestScore = Math.max(...players.map((player) => player.score));
 		return Response.json({
 			finished: true,
-			scored: true,
+			scored: players.length > 0,
 			winnerIds: players.filter((player) => player.score === highestScore).map((player) => player.id),
 		});
 	}

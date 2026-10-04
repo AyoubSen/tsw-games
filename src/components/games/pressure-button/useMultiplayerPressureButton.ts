@@ -8,6 +8,8 @@ import {
 	PARTYKIT_HOST,
 	getPersistentPlayerId,
 } from "@/lib/partykit";
+import type { Reaction } from "@/lib/reactions";
+import { useReactionBubbles } from "@/components/multiplayer/Reactions";
 import type {
 	PressureButtonSettings,
 	PublicPressureButtonGameState,
@@ -35,8 +37,14 @@ export function useMultiplayerPressureButton() {
 		error: null,
 	});
 
+	const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles();
 	const socketRef = useRef<PartySocket | null>(null);
 	const roomCodeRef = useRef<string | null>(null);
+	const isHost = Boolean(
+		state.gameState &&
+			state.playerId &&
+			state.gameState.hostId === state.playerId,
+	);
 
 	const handleMessage = useCallback((message: ServerMessage) => {
 		switch (message.type) {
@@ -87,66 +95,8 @@ export function useMultiplayerPressureButton() {
 				});
 				break;
 
-			case "turn-started":
-				setState((previous) => {
-					if (!previous.gameState) {
-						return previous;
-					}
-
-					return {
-						...previous,
-						error: null,
-						gameState: {
-							...previous.gameState,
-							status: "decision",
-							prompt: message.prompt,
-							turnNumber: message.turnNumber,
-							activePlayerId: message.activePlayerId,
-							responderId: null,
-							pressuredByPlayerId: null,
-							currentAnswerText: null,
-							roundResult: null,
-							turnStartedAt: null,
-						},
-					};
-				});
-				break;
-
-			case "decision-made":
-				setState((previous) => {
-					if (!previous.gameState) {
-						return previous;
-					}
-
-					return {
-						...previous,
-						gameState: {
-							...previous.gameState,
-							status: message.mode === "pass" ? "reveal" : "answering",
-							responderId: message.responderId,
-							pressuredByPlayerId: message.pressuredByPlayerId,
-							turnStartedAt: message.mode === "pass" ? null : Date.now(),
-						},
-					};
-				});
-				break;
-
-			case "turn-revealed":
-				setState((previous) => {
-					if (!previous.gameState) {
-						return previous;
-					}
-
-					return {
-						...previous,
-						gameState: {
-							...previous.gameState,
-							status: "reveal",
-							roundResult: message.result,
-							currentAnswerText: message.result.answerText,
-						},
-					};
-				});
+			case "reaction":
+				receiveReaction(message);
 				break;
 
 			case "game-over":
@@ -179,7 +129,7 @@ export function useMultiplayerPressureButton() {
 				}));
 				break;
 		}
-	}, []);
+	}, [receiveReaction]);
 
 	const connect = useCallback(
 		(
@@ -192,9 +142,9 @@ export function useMultiplayerPressureButton() {
 			const normalizedRoomCode = Object.keys(gameNightQuery).length
 				? roomCode
 				: roomCode.toUpperCase();
-			if (socketRef.current) {
-				socketRef.current.close();
-			}
+			const previousSocket = socketRef.current;
+			socketRef.current = null;
+			previousSocket?.close();
 			roomCodeRef.current = normalizedRoomCode;
 
 			setState((previous) => ({
@@ -220,6 +170,7 @@ export function useMultiplayerPressureButton() {
 					}),
 				},
 			});
+			socketRef.current = socket;
 
 			socket.addEventListener("open", () => {
 				if (socketRef.current !== socket) return;
@@ -261,11 +212,16 @@ export function useMultiplayerPressureButton() {
 					error: "Connection lost. Reconnecting...",
 				}));
 			});
-
-			socketRef.current = socket;
 		},
 		[handleMessage],
 	);
+
+	const send = useCallback((payload: object) => {
+		const socket = socketRef.current;
+		if (socket?.readyState === WebSocket.OPEN) {
+			socket.send(JSON.stringify(payload));
+		}
+	}, []);
 
 	const disconnect = useCallback(() => {
 		const socket = socketRef.current;
@@ -274,6 +230,7 @@ export function useMultiplayerPressureButton() {
 		roomCodeRef.current = null;
 		if (socket) leavePartySocket(socket, { type: "leave" });
 		if (roomCode) clearPersistentPlayerId("pressure-button", roomCode);
+		clearReactions();
 
 		setState({
 			connectionStatus: "disconnected",
@@ -281,7 +238,7 @@ export function useMultiplayerPressureButton() {
 			playerId: null,
 			error: null,
 		});
-	}, []);
+	}, [clearReactions]);
 
 	const abandonReconnect = useCallback(() => {
 		const socket = socketRef.current;
@@ -312,18 +269,9 @@ export function useMultiplayerPressureButton() {
 		[connect],
 	);
 
-	const send = useCallback((payload: object) => {
-		const socket = socketRef.current;
-		if (socket?.readyState === WebSocket.OPEN) {
-			socket.send(JSON.stringify(payload));
-		}
-	}, []);
-
 	const startGame = useCallback(() => {
-		if (state.playerId === state.gameState?.hostId) {
-			send({ type: "start" });
-		}
-	}, [send, state.gameState?.hostId, state.playerId]);
+		if (isHost) send({ type: "start" });
+	}, [isHost, send]);
 
 	const chooseAnswer = useCallback(() => {
 		send({ type: "choose-answer" });
@@ -341,23 +289,29 @@ export function useMultiplayerPressureButton() {
 	);
 
 	const submitAnswer = useCallback(
-		(answer: string) => {
-			send({ type: "submit-answer", answer });
+		(answer: string, spoken = false) => {
+			send({ type: "submit-answer", answer, spoken });
 		},
 		[send],
 	);
 
-	const nextTurn = useCallback(() => {
-		if (state.playerId === state.gameState?.hostId) {
-			send({ type: "next-turn" });
-		}
-	}, [send, state.gameState?.hostId, state.playerId]);
+	const vote = useCallback(
+		(accept: boolean) => {
+			send({ type: "vote", accept });
+		},
+		[send],
+	);
+
+	const react = useCallback(
+		(reaction: Reaction) => {
+			send({ type: "react", reaction });
+		},
+		[send],
+	);
 
 	const restartGame = useCallback(() => {
-		if (state.playerId === state.gameState?.hostId) {
-			send({ type: "restart" });
-		}
-	}, [send, state.gameState?.hostId, state.playerId]);
+		if (isHost) send({ type: "restart" });
+	}, [isHost, send]);
 
 	useEffect(() => {
 		return () => {
@@ -369,7 +323,9 @@ export function useMultiplayerPressureButton() {
 
 	return {
 		...state,
-		isHost: !!state.playerId && state.gameState?.hostId === state.playerId,
+		isHost,
+		reactions,
+		react,
 		createGame,
 		joinGame,
 		startGame,
@@ -377,7 +333,7 @@ export function useMultiplayerPressureButton() {
 		choosePass,
 		choosePressure,
 		submitAnswer,
-		nextTurn,
+		vote,
 		restartGame,
 		disconnect,
 		abandonReconnect,

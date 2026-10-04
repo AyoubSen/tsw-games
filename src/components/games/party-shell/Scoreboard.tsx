@@ -6,7 +6,7 @@ export interface ScoreRow {
   id: string
   name: string
   score: number
-  /** Points from the last scoring moment; drives the "+N" chip and the rank arrows. */
+  /** Points from the last scoring moment (may be negative); drives the "+N" chip and the rank arrows. */
   gained?: number
 }
 
@@ -39,7 +39,11 @@ export function Scoreboard({ rows, meId, className }: { rows: ScoreRow[]; meId: 
             <span className="min-w-0 flex-1 truncate text-xs font-semibold">{row.id === meId ? "You" : row.name}</span>
             {moved > 0 && <ChevronUp key={`up${row.score}`} aria-label="Moved up" className="poker-tag size-3.5 shrink-0 text-emerald-300" />}
             {moved < 0 && <ChevronDown key={`down${row.score}`} aria-label="Moved down" className="poker-tag size-3.5 shrink-0 text-rose-300" />}
-            {!!row.gained && <span key={`g${row.score}`} className="poker-tag shrink-0 rounded-full bg-emerald-400/20 px-1.5 text-[10px] font-bold text-emerald-200">+{row.gained}</span>}
+            {!!row.gained && (
+              <span key={`g${row.score}`} className={cn("poker-tag shrink-0 rounded-full px-1.5 text-[10px] font-bold", row.gained > 0 ? "bg-emerald-400/20 text-emerald-200" : "bg-rose-400/20 text-rose-200")}>
+                {row.gained > 0 ? `+${row.gained}` : `−${Math.abs(row.gained)}`}
+              </span>
+            )}
             <span className="w-7 shrink-0 text-right font-mono text-sm font-black tabular-nums">{row.score}</span>
           </li>
         )

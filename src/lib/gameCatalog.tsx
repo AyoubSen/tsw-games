@@ -402,7 +402,7 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		id: "pressure-button",
 		title: "Pressure Button",
 		description:
-			"Take the prompt yourself, pass, or pressure someone else into answering before time runs out.",
+			"Answer the prompt out loud, pass, or pressure someone else into it — then the room votes on whether the answer counts.",
 		icon: <Zap className="w-10 h-10" />,
 		path: "/games/pressure-button",
 		players: "2-10 players",

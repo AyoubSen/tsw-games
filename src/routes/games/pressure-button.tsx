@@ -1,23 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
-import {
-	Loader2,
-	RotateCcw,
-	Send,
-	Timer,
-	TriangleAlert,
-	Trophy,
-	Zap,
-} from "lucide-react";
+import { Loader2, Timer, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge";
+import { PressureButtonGame } from "@/components/games/pressure-button/PressureButtonGame";
 import { useMultiplayerPressureButton } from "@/components/games/pressure-button/useMultiplayerPressureButton";
 import {
 	GameTopBar,
 	MultiplayerLobby,
 	MultiplayerSetupCard,
 } from "@/components/multiplayer/shared";
-import { Button } from "@/components/ui/button";
 import {
 	Card,
 	CardContent,
@@ -25,10 +17,9 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { getGameNightInviteLink, getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
 import type { PressurePromptPack } from "@/lib/pressurePrompts";
-import type { PressureButtonSettings } from "../../../party/pressure-button";
+import { PASSES_PER_GAME, POINTS, type PressureButtonSettings } from "../../../party/pressure-button";
 
 export const Route = createFileRoute("/games/pressure-button")({
 	validateSearch: parseInviteSearch,
@@ -85,10 +76,8 @@ function PressureButtonPage() {
 	const [turns, setTurns] = useState(8);
 	const [answerTimeLimit, setAnswerTimeLimit] = useState(20);
 	const [promptPack, setPromptPack] = useState<PressurePromptPack>("mixed");
-	const [answer, setAnswer] = useState("");
 	const [message, setMessage] = useState<string | null>(null);
 	const [copiedRoomCode, setCopiedRoomCode] = useState(false);
-	const [now, setNow] = useState(Date.now());
 
 	useEffect(() => {
 		if (invitedRoomCode) setJoinRoomCode(invitedRoomCode);
@@ -121,7 +110,6 @@ function PressureButtonPage() {
 	const displayedRoomCode = gameNightBridge.isGameNight
 		? gameNightBridge.publicRoomCode
 		: multiplayer.gameState?.roomCode ?? "";
-	const activeTurnNumber = multiplayer.gameState?.turnNumber;
 
 	useEffect(() => {
 		if (multiplayer.connectionStatus === "connected" && multiplayer.gameState) {
@@ -137,28 +125,6 @@ function PressureButtonPage() {
 		}
 	}, [multiplayer.error]);
 
-	useEffect(() => {
-		if (multiplayer.gameState?.status !== "answering") {
-			return;
-		}
-
-		setNow(Date.now());
-		const timer = window.setInterval(() => {
-			setNow(Date.now());
-		}, 250);
-
-		return () => window.clearInterval(timer);
-	}, [multiplayer.gameState?.status]);
-
-	useEffect(() => {
-		if (activeTurnNumber === undefined) {
-			return;
-		}
-
-		setAnswer("");
-		setMessage(null);
-	}, [activeTurnNumber]);
-
 	const gameState = multiplayer.gameState;
 	const playerList = useMemo(
 		() =>
@@ -167,53 +133,11 @@ function PressureButtonPage() {
 			),
 		[gameState],
 	);
-	const leaderboard = useMemo(
-		() =>
-			Object.values(gameState?.players ?? {}).sort((left, right) => {
-				if (right.score !== left.score) {
-					return right.score - left.score;
-				}
-
-				return left.joinedAt - right.joinedAt;
-			}),
-		[gameState],
-	);
-	const timeRemaining =
-		gameState?.status === "answering" && gameState.turnStartedAt
-			? Math.max(
-					0,
-					gameState.settings.answerTimeLimit -
-						Math.floor((now - gameState.turnStartedAt) / 1000),
-				)
-			: 0;
-	const activePlayer = gameState?.activePlayerId
-		? gameState.players[gameState.activePlayerId]
-		: null;
-	const responder = gameState?.responderId
-		? gameState.players[gameState.responderId]
-		: null;
-	const pressuredBy = gameState?.pressuredByPlayerId
-		? gameState.players[gameState.pressuredByPlayerId]
-		: null;
-	const currentPlayer = multiplayer.playerId
-		? gameState?.players[multiplayer.playerId]
-		: null;
-	const topScore = Math.max(...leaderboard.map((player) => player.score), 0);
-	const winners =
-		gameState?.status === "finished"
-			? leaderboard.filter((player) => player.score === topScore)
-			: [];
-	const isCurrentPlayerActive =
-		multiplayer.playerId === gameState?.activePlayerId;
-	const isCurrentPlayerResponder =
-		multiplayer.playerId === gameState?.responderId;
-
 	const handleBack = () => {
 		session.forget();
 		multiplayer.disconnect();
 
 		setView("setup");
-		setAnswer("");
 		setMessage(null);
 	};
 
@@ -261,17 +185,6 @@ function PressureButtonPage() {
 		}
 	};
 
-	const handleSubmitAnswer = (event: React.FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
-		if (!answer.trim()) {
-			setMessage("Type an answer first.");
-			return;
-		}
-
-		multiplayer.submitAnswer(answer.trim());
-		setMessage(null);
-	};
-
 	if (isGameNightMode && !gameState) {
 		return <div className="flex min-h-[calc(100vh-73px)] items-center justify-center text-muted-foreground">Connecting to Game Night...</div>;
 	}
@@ -295,7 +208,7 @@ function PressureButtonPage() {
 				<div className="mx-auto grid max-w-5xl gap-6 px-4 py-8 md:grid-cols-[1.05fr_0.95fr]">
 					<MultiplayerSetupCard
 						title="Create Room"
-						description="One player is on the clock each turn. They can answer, dodge, or throw an awkward prompt at someone else."
+						description="One player is in the hot seat each turn. They answer, pass, or throw the prompt at someone else — and the room judges every answer."
 						icon={<Zap className="h-5 w-5 text-primary" />}
 						playerName={playerName}
 						roomCode={joinRoomCode}
@@ -377,29 +290,39 @@ function PressureButtonPage() {
 						<CardHeader>
 							<CardTitle>How It Plays</CardTitle>
 							<CardDescription>
-								The pressure comes from awkward prompts that are easy to
-								understand and annoying to answer well.
+								Play it in person: answers are said out loud and the room
+								decides whether they count.
 							</CardDescription>
 						</CardHeader>
 						<CardContent className="space-y-3 text-sm text-muted-foreground">
 							<div className="rounded-2xl border p-4">
 								<p className="font-semibold text-foreground">1. Hot Seat</p>
 								<p className="mt-1">
-									One player gets an awkward, exposing, or panic-heavy prompt.
+									The hot seat rotates. Whoever has it gets an awkward prompt
+									and three buttons: Answer, Pass or Pressure.
 								</p>
 							</div>
 							<div className="rounded-2xl border p-4">
-								<p className="font-semibold text-foreground">2. Choose</p>
+								<p className="font-semibold text-foreground">2. Answer or Pressure</p>
 								<p className="mt-1">
-									Answer for safe points, pass for nothing, or pressure someone
-									else into taking it.
+									Answer it yourself (+{POINTS.selfAccepted}, or {POINTS.selfFailed} if
+									it's rejected or the clock runs out), or pressure another player
+									into it. If they get accepted they take +{POINTS.pressuredAccepted};
+									if they're rejected or time out, you take +{POINTS.pressureLanded}.
 								</p>
 							</div>
 							<div className="rounded-2xl border p-4">
-								<p className="font-semibold text-foreground">3. Risk</p>
+								<p className="font-semibold text-foreground">3. Room Verdict</p>
 								<p className="mt-1">
-									A pressured player scores bigger if they answer. If they panic
-									or blank, the pressure move pays off.
+									The responder says it out loud (typing is optional), then everyone
+									else votes Accept or Reject. No vote counts as Accept, and a tie is
+									accepted.
+								</p>
+							</div>
+							<div className="rounded-2xl border p-4">
+								<p className="font-semibold text-foreground">4. Pass</p>
+								<p className="mt-1">
+									Passing scores nothing, and you only get {PASSES_PER_GAME} passes per game.
 								</p>
 							</div>
 						</CardContent>
@@ -456,314 +379,23 @@ function PressureButtonPage() {
 
 	if (view === "game" && gameState && multiplayer.playerId) {
 		return (
-			<div className="min-h-[calc(100vh-73px)] bg-background">
-				<GameTopBar
-					title="Pressure Button"
-					subtitle={`Turn ${gameState.turnNumber} / ${gameState.settings.turns}`}
-					onBack={handleBack}
-					rightAction={
-						<Button
-							variant="ghost"
-							size="sm"
-							onClick={multiplayer.restartGame}
-							disabled={!multiplayer.isHost}
-						>
-							<RotateCcw className="mr-1 h-4 w-4" />
-							Rematch
-						</Button>
-					}
-				/>
-
-				<div className="mx-auto grid max-w-6xl gap-6 px-4 py-6 lg:grid-cols-[1.45fr_0.9fr]">
-					<Card className="overflow-hidden">
-						<CardHeader className="border-b">
-							<div className="flex items-start justify-between gap-4">
-								<div>
-									<CardTitle>Prompt</CardTitle>
-									<CardDescription>
-										Decide whether to own the turn or make someone else sweat.
-									</CardDescription>
-								</div>
-								<div className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold capitalize text-primary">
-									{gameState.settings.promptPack}
-								</div>
-							</div>
-						</CardHeader>
-						<CardContent className="space-y-6 pt-6">
-							{gameState.status === "finished" && (
-								<div className="rounded-2xl border bg-primary/8 px-4 py-4">
-									<p className="flex items-center gap-2 text-sm font-semibold">
-										<Trophy className="h-4 w-4" />
-										{winners.length > 1
-											? `Tie game: ${winners.map((winner) => winner.name).join(", ")}`
-											: winners[0]
-												? `${winners[0].name} wins under pressure`
-												: "Match complete"}
-									</p>
-								</div>
-							)}
-
-							<div className="rounded-3xl border bg-accent/40 px-5 py-6">
-								<div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-									<span>Hot Seat</span>
-									{activePlayer && (
-										<span className="rounded-full bg-background px-2 py-1 text-foreground">
-											{activePlayer.name}
-										</span>
-									)}
-									{responder && responder.id !== activePlayer?.id && (
-										<>
-											<span>Responder</span>
-											<span className="rounded-full bg-background px-2 py-1 text-foreground">
-												{responder.name}
-											</span>
-										</>
-									)}
-								</div>
-								<p className="mt-4 text-2xl font-semibold leading-snug md:text-3xl">
-									{gameState.prompt?.text}
-								</p>
-							</div>
-
-							{gameState.status === "decision" && (
-								<div className="space-y-4">
-									<div className="rounded-2xl border px-4 py-4 text-sm text-muted-foreground">
-										{isCurrentPlayerActive
-											? "This is your turn. Answer it, skip it, or pressure someone else."
-											: `${activePlayer?.name ?? "Someone"} is deciding what to do with this prompt.`}
-									</div>
-
-									{isCurrentPlayerActive && (
-										<div className="grid gap-3 md:grid-cols-[1fr_1fr]">
-											<div className="grid gap-3">
-												<Button
-													className="h-auto justify-start rounded-2xl px-4 py-4"
-													onClick={multiplayer.chooseAnswer}
-												>
-													<div className="text-left">
-														<p className="font-semibold">Answer</p>
-														<p className="text-xs font-normal opacity-80">
-															Take the prompt yourself for +2 if you answer.
-														</p>
-													</div>
-												</Button>
-												<Button
-													className="h-auto justify-start rounded-2xl px-4 py-4"
-													variant="outline"
-													onClick={multiplayer.choosePass}
-												>
-													<div className="text-left">
-														<p className="font-semibold">Pass</p>
-														<p className="text-xs font-normal opacity-80">
-															Skip the turn and give up any points.
-														</p>
-													</div>
-												</Button>
-											</div>
-											<div className="rounded-2xl border p-4">
-												<p className="text-sm font-semibold">
-													Pressure Someone
-												</p>
-												<p className="mt-1 text-xs text-muted-foreground">
-													If they answer, they get +3. If they time out, you get
-													+2.
-												</p>
-												<div className="mt-4 grid gap-2 sm:grid-cols-2">
-													{playerList
-														.filter(
-													(player) =>
-														player.id !== multiplayer.playerId &&
-														player.connected !== false,
-														)
-														.map((player) => (
-															<Button
-																key={player.id}
-																variant="outline"
-																className="justify-start"
-																onClick={() =>
-																	multiplayer.choosePressure(player.id)
-																}
-															>
-																<TriangleAlert className="mr-2 h-4 w-4" />
-																{player.name}
-															</Button>
-														))}
-												</div>
-											</div>
-										</div>
-									)}
-								</div>
-							)}
-
-							{gameState.status === "answering" && (
-								<div className="space-y-4">
-									<div className="flex items-center justify-between rounded-2xl border px-4 py-4 text-sm">
-										<div>
-											<p className="font-semibold text-foreground">
-												{pressuredBy
-													? `${pressuredBy.name} pressured ${responder?.name ?? "someone"}`
-													: `${responder?.name ?? "Someone"} is answering`}
-											</p>
-											<p className="mt-1 text-muted-foreground">
-												{pressuredBy
-													? "The pressured player gets bigger points if they pull it off."
-													: "Safe route, but the timer is live."}
-											</p>
-										</div>
-										<div className="rounded-full bg-primary/10 px-3 py-1 text-sm font-semibold text-primary">
-											{timeRemaining}s
-										</div>
-									</div>
-
-									{isCurrentPlayerResponder ? (
-										<form className="space-y-3" onSubmit={handleSubmitAnswer}>
-											<Input
-												value={answer}
-												onChange={(event) => setAnswer(event.target.value)}
-												placeholder="Type your answer fast"
-												maxLength={120}
-											/>
-											<Button type="submit">
-												<Send className="mr-2 h-4 w-4" />
-												Lock Answer
-											</Button>
-										</form>
-									) : (
-										<div className="rounded-2xl border px-4 py-4 text-sm text-muted-foreground">
-											{responder?.name ?? "Someone"} is on the clock. The rest
-											of the room just watches the pressure build.
-										</div>
-									)}
-								</div>
-							)}
-
-							{(gameState.status === "reveal" ||
-								gameState.status === "finished") &&
-								gameState.roundResult && (
-									<div className="space-y-4">
-										<div className="rounded-2xl border bg-accent/30 px-4 py-4">
-											<p className="text-sm font-semibold text-foreground">
-												Turn Result
-											</p>
-											<p className="mt-2 text-sm text-muted-foreground">
-												{gameState.roundResult.outcome === "passed"
-													? `${activePlayer?.name ?? "The active player"} passed and nobody scored.`
-													: gameState.roundResult.outcome === "timed-out"
-														? pressuredBy && responder
-															? `${responder.name} ran out of time, so ${pressuredBy.name} takes +2 for the pressure call.`
-															: `${responder?.name ?? "The responder"} ran out of time and the turn died there.`
-														: gameState.roundResult.mode === "pressure" &&
-																responder
-															? `${responder.name} survived the pressure and answered for +3.`
-															: `${responder?.name ?? "The responder"} answered cleanly for +2.`}
-											</p>
-											{gameState.currentAnswerText && (
-												<div className="mt-3 rounded-xl bg-background px-4 py-3 text-sm text-foreground">
-													{gameState.currentAnswerText}
-												</div>
-											)}
-										</div>
-
-										{multiplayer.isHost && gameState.status !== "finished" && (
-											<Button
-												className="w-full sm:w-auto"
-												onClick={multiplayer.nextTurn}
-											>
-												{gameState.turnNumber >= gameState.settings.turns
-													? "Finish Match"
-													: "Next Turn"}
-											</Button>
-										)}
-									</div>
-								)}
-						</CardContent>
-					</Card>
-
-					<div className="space-y-6">
-						<Card>
-							<CardHeader>
-								<CardTitle>Leaderboard</CardTitle>
-								<CardDescription>
-									Best pressure calls and clutch answers rise fast.
-								</CardDescription>
-							</CardHeader>
-							<CardContent className="space-y-3">
-								{leaderboard.map((player, index) => {
-									const delta =
-										gameState.roundResult?.scoreChanges[player.id] ?? 0;
-
-									return (
-										<div
-											key={player.id}
-											className="flex items-center justify-between rounded-2xl border px-4 py-3"
-										>
-											<div>
-												<p className="font-medium">
-													{index + 1}. {player.name}
-												</p>
-												<p className="text-xs text-muted-foreground">
-													{player.id === multiplayer.playerId
-														? "You"
-														: player.id === gameState.hostId
-															? "Host"
-															: "Player"}
-													{delta > 0 ? ` • +${delta} this turn` : ""}
-												</p>
-											</div>
-											<div className="text-right">
-												<p className="text-lg font-bold">{player.score}</p>
-												<p className="text-xs text-muted-foreground">pts</p>
-											</div>
-										</div>
-									);
-								})}
-							</CardContent>
-						</Card>
-
-						<Card>
-							<CardHeader>
-								<CardTitle>Status</CardTitle>
-								<CardDescription>
-									Keep the turn state readable for everyone.
-								</CardDescription>
-							</CardHeader>
-							<CardContent className="space-y-3 text-sm text-muted-foreground">
-								<div className="rounded-2xl border px-4 py-3">
-									<p className="font-medium text-foreground">Turn</p>
-									<p className="mt-1">
-										{gameState.turnNumber} / {gameState.settings.turns}
-									</p>
-								</div>
-								<div className="rounded-2xl border px-4 py-3">
-									<p className="font-medium text-foreground">Current State</p>
-									<p className="mt-1 capitalize">{gameState.status}</p>
-								</div>
-								<div className="rounded-2xl border px-4 py-3">
-									<p className="font-medium text-foreground">You</p>
-									<p className="mt-1">
-										{isCurrentPlayerResponder
-											? "On the clock"
-											: isCurrentPlayerActive && gameState.status === "decision"
-												? "Making the call"
-												: (currentPlayer?.name ?? "Watching")}
-									</p>
-								</div>
-								{message && (
-									<div className="rounded-xl border bg-accent/40 px-4 py-3 text-sm text-foreground">
-										{message}
-									</div>
-								)}
-								{multiplayer.connectionStatus === "connecting" && (
-									<div className="inline-flex items-center gap-2 text-sm">
-										<Loader2 className="h-4 w-4 animate-spin" />
-										Connecting...
-									</div>
-								)}
-							</CardContent>
-						</Card>
-					</div>
-				</div>
-			</div>
+			<PressureButtonGame
+				state={gameState}
+				playerId={multiplayer.playerId}
+				isHost={multiplayer.isHost}
+				roomLabel={displayedRoomCode}
+				connected={multiplayer.connectionStatus === "connected"}
+				error={multiplayer.error}
+				reactions={multiplayer.reactions}
+				onReact={multiplayer.react}
+				onAnswer={multiplayer.chooseAnswer}
+				onPass={multiplayer.choosePass}
+				onPressure={multiplayer.choosePressure}
+				onSubmit={multiplayer.submitAnswer}
+				onVote={multiplayer.vote}
+				onRestart={multiplayer.restartGame}
+				onLeave={handleBack}
+			/>
 		);
 	}
 

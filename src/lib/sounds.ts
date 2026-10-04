@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react"
 
 /** Table sound effects, synthesized with Web Audio so there are no files to load. */
-export type SoundName = "deal" | "flip" | "chip" | "pot" | "dice" | "capture" | "turn" | "win" | "howl" | "dawn" | "toll" | "knock" | "shot" | "clue" | "correct" | "wrong" | "assassin" | "tick" | "lockin" | "whoosh" | "group" | "lonewolf" | "roundEnd" | "merge" | "sync"
+export type SoundName = "deal" | "flip" | "chip" | "pot" | "dice" | "capture" | "turn" | "win" | "howl" | "dawn" | "toll" | "knock" | "shot" | "clue" | "correct" | "wrong" | "assassin" | "tick" | "lockin" | "whoosh" | "group" | "lonewolf" | "roundEnd" | "merge" | "sync" | "thunk" | "accepted" | "rejected" | "buzzer"
 
 const MUTE_KEY = "tsw-games-muted"
 const VOLUME = 0.22
@@ -226,6 +226,23 @@ const SOUNDS: Record<SoundName, (c: AudioContext, at: number) => void> = {
     ;[523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((freq, i) => tone(c, at + i * 0.09, { freq, type: "triangle", peak: 0.22, decay: 0.9 }))
     tone(c, at + 0.45, { freq: 2093, peak: 0.05, decay: 1.4 })
     clink(c, at + 0.5, 0.25)
+  },
+  thunk: (c, at) => {
+    tone(c, at, { freq: 150, type: "triangle", peak: 0.5, decay: 0.12, slideTo: 80 })
+    burst(c, at, { type: "lowpass", freq: 600, peak: 0.45, decay: 0.07 })
+  },
+  accepted: (c, at) => {
+    burst(c, at, { type: "lowpass", freq: 500, peak: 0.4, decay: 0.08 })
+    ;[587.33, 739.99, 880, 1174.66].forEach((freq, i) => tone(c, at + 0.08 + i * 0.08, { freq, type: "triangle", peak: 0.24, decay: i === 3 ? 0.8 : 0.3 }))
+  },
+  rejected: (c, at) => {
+    burst(c, at, { type: "lowpass", freq: 500, peak: 0.45, decay: 0.08 })
+    tone(c, at + 0.06, { freq: 311.13, type: "sawtooth", peak: 0.12, decay: 0.3, slideTo: 277.18 })
+    tone(c, at + 0.34, { freq: 233.08, type: "sawtooth", peak: 0.14, decay: 0.6, slideTo: 174.61 })
+  },
+  buzzer: (c, at) => {
+    tone(c, at, { freq: 110, type: "square", peak: 0.16, decay: 0.75 })
+    tone(c, at, { freq: 116.5, type: "sawtooth", peak: 0.12, decay: 0.75 })
   },
 }
 

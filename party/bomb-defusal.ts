@@ -1,10 +1,12 @@
 import type * as Party from "partykit/server"
 import {
-  BOMB_STRIKE_LIMIT, BOMB_SYMBOLS, BOMB_TIME_OPTIONS, WIRE_COLORS,
-  type BombClientMessage, type BombDevice, type BombManual, type BombPlayer,
-  type BombRoundResult, type BombServerMessage, type BombSubmission,
-  type BombSymbol, type ModuleKind, type PublicBombState,
+  BOMB_DIFFICULTIES, BOMB_PACE_MS, BOMB_STRIKE_LIMIT, BOMB_SYMBOLS, BOMB_TIME_OPTIONS, BUTTON_COLORS, BUTTON_LABELS,
+  MODULE_KINDS, SIMON_COLORS, WIRE_COLORS, formatBombTime, isBombDifficulty,
+  type BombClientMessage, type BombDevice, type BombDifficulty, type BombLogEntry, type BombManual, type BombOutcome,
+  type BombPace, type BombPlayer, type BombRoundResult, type BombServerMessage, type BombSubmission,
+  type BombSymbol, type ButtonAction, type ButtonRule, type ModuleKind, type PublicBombState,
 } from "../src/lib/bombDefusal"
+import { isReaction, takeReactionSlot, type ReactionMessage } from "../src/lib/reactions"
 import { withRoomCleanup } from "./shared/cleanup"
 import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight"
 import { canControlGame, isPresent, markConnected, markDisconnected, nextHost, presentCount } from "./shared/presence"
@@ -14,9 +16,9 @@ interface BombModule {
   expertId: string
   solved: boolean
   revision: number
+  cut: number[]
   device: BombDevice
   manual: BombManual
-  answer: BombSubmission
 }
 
 interface GameState {
@@ -26,15 +28,21 @@ interface GameState {
   playerTokens: Record<string, string>
   status: PublicBombState["status"]
   timeLimit: number
+  difficulty: BombDifficulty
   order: string[]
   round: number
   missionId: string | null
   operatorId: string | null
   deadline: number | null
+  serial: string
   strikes: number
   modules: BombModule[]
-  outcome: PublicBombState["outcome"]
+  outcome: BombOutcome | null
   lastAction: PublicBombState["lastAction"]
+  paceSeq: number
+  pace: BombPace | null
+  frozenSecondsLeft: number | null
+  log: BombLogEntry[]
   history: BombRoundResult[]
 }
 
@@ -47,58 +55,128 @@ function shuffle<T>(items: readonly T[]): T[] {
   return result
 }
 
-function generateModules(expertIds: string[]): BombModule[] {
-  const repeatedColor = WIRE_COLORS[Math.floor(Math.random() * WIRE_COLORS.length)]
-  const colors = Array.from({ length: 5 }, () => WIRE_COLORS[Math.floor(Math.random() * WIRE_COLORS.length)])
-  const serial = String(100 + Math.floor(Math.random() * 900))
-  const [evenPosition, oddPosition] = shuffle([1, 2, 3, 4, 5])
-  const wirePosition = colors.filter((color) => color === repeatedColor).length >= 2
-    ? colors.lastIndexOf(repeatedColor) + 1
-    : Number(serial) % 2 === 0 ? evenPosition : oddPosition
-  const order = shuffle(Object.keys(BOMB_SYMBOLS) as BombSymbol[])
-  const symbols = shuffle(order).slice(0, 4)
-  const patterns = shuffle(Array.from({ length: 14 }, (_, index) => index + 1))
-  const rows = Array.from({ length: 8 }, (_, index) => ({
-    channel: Math.floor(index / 2) + 1,
-    signal: index % 2 === 0 ? "steady" as const : "pulsing" as const,
-    positions: Array.from({ length: 4 }, (_, bit) => Boolean(patterns[index] & (1 << bit))),
+function pick<T>(items: readonly T[]): T {
+  return items[Math.floor(Math.random() * items.length)]
+}
+
+function generateSerial() {
+  const letters = "ABCDEFGHJKLMNPQRSTVWXZ"
+  return `${pick([...letters])}${pick([...letters])}${Math.floor(Math.random() * 10)}-${String(Math.floor(Math.random() * 1000)).padStart(3, "0")}`
+}
+
+function generateModule(kind: ModuleKind): Pick<BombModule, "device" | "manual"> {
+  switch (kind) {
+    case "wires": {
+      const [evenPosition, oddPosition] = shuffle([1, 2, 3, 4, 5])
+      return {
+        device: { kind, colors: Array.from({ length: 5 }, () => pick(WIRE_COLORS)) },
+        manual: { kind, repeatedColor: pick(WIRE_COLORS), evenPosition, oddPosition },
+      }
+    }
+    case "symbols": {
+      const order = shuffle(Object.keys(BOMB_SYMBOLS) as BombSymbol[])
+      return { device: { kind, symbols: shuffle(order).slice(0, 4) }, manual: { kind, order } }
+    }
+    case "switches": {
+      const patterns = shuffle(Array.from({ length: 14 }, (_, index) => index + 1))
+      const rows = Array.from({ length: 8 }, (_, index) => ({
+        channel: Math.floor(index / 2) + 1,
+        signal: index % 2 === 0 ? "steady" as const : "pulsing" as const,
+        positions: Array.from({ length: 4 }, (_, bit) => Boolean(patterns[index] & (1 << bit))),
+      }))
+      const row = pick(rows)
+      return { device: { kind, channel: row.channel, signal: row.signal }, manual: { kind, rows } }
+    }
+    case "button": {
+      const actions: ButtonAction[] = ["tap", "hold"]
+      const rules: ButtonRule[] = [
+        { color: pick(BUTTON_COLORS), label: pick(BUTTON_LABELS), action: pick(actions) },
+        ...shuffle<ButtonRule>([
+          { color: pick(BUTTON_COLORS), action: pick(actions) },
+          { label: pick(BUTTON_LABELS), action: pick(actions) },
+        ]),
+      ]
+      const digits = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9])
+      return {
+        device: { kind, color: pick(BUTTON_COLORS), label: pick(BUTTON_LABELS), strip: pick(BUTTON_COLORS) },
+        manual: {
+          kind, rules, fallback: pick(actions),
+          release: { red: digits[0], blue: digits[1], yellow: digits[2], white: digits[3] },
+        },
+      }
+    }
+    case "simon":
+      return {
+        device: { kind, flashes: Array.from({ length: Math.random() < 0.5 ? 3 : 4 }, () => pick(SIMON_COLORS)) },
+        manual: { kind, table: Array.from({ length: BOMB_STRIKE_LIMIT }, () => shuffle(SIMON_COLORS)) },
+      }
+  }
+}
+
+function generateModules(difficulty: BombDifficulty, expertIds: string[]): BombModule[] {
+  const kinds = shuffle(MODULE_KINDS).slice(0, BOMB_DIFFICULTIES[difficulty].modules)
+  return kinds.map((kind, index) => ({
+    kind, expertId: expertIds[index % expertIds.length], solved: false, revision: 0, cut: [], ...generateModule(kind),
   }))
-  const selectedRow = rows[Math.floor(Math.random() * rows.length)]
-  return [
-    {
-      kind: "wires", expertId: expertIds[0], solved: false, revision: 0,
-      device: { kind: "wires", serial, colors },
-      manual: { kind: "wires", repeatedColor, evenPosition, oddPosition },
-      answer: { kind: "wires", position: wirePosition },
-    },
-    {
-      kind: "symbols", expertId: expertIds[1 % expertIds.length], solved: false, revision: 0,
-      device: { kind: "symbols", symbols },
-      manual: { kind: "symbols", order },
-      answer: { kind: "symbols", sequence: order.filter((symbol) => symbols.includes(symbol)) },
-    },
-    {
-      kind: "switches", expertId: expertIds[2 % expertIds.length], solved: false, revision: 0,
-      device: { kind: "switches", channel: selectedRow.channel, signal: selectedRow.signal },
-      manual: { kind: "switches", rows },
-      answer: { kind: "switches", positions: [...selectedRow.positions] },
-    },
-  ]
+}
+
+function buttonAction(device: Extract<BombDevice, { kind: "button" }>, manual: Extract<BombManual, { kind: "button" }>): ButtonAction {
+  const rule = manual.rules.find((candidate) =>
+    (!candidate.color || candidate.color === device.color) && (!candidate.label || candidate.label === device.label))
+  return rule?.action ?? manual.fallback
 }
 
 function validSubmission(submission: BombSubmission, module: BombModule): boolean {
   if (!submission || submission.kind !== module.kind) return false
-  if (submission.kind === "wires") return Number.isInteger(submission.position) && submission.position >= 1 && submission.position <= 5
-  if (submission.kind === "switches") return Array.isArray(submission.positions) && submission.positions.length === 4 && submission.positions.every((value) => typeof value === "boolean")
-  return Array.isArray(submission.sequence) && submission.sequence.length === 4 && new Set(submission.sequence).size === 4 &&
-    module.device.kind === "symbols" && submission.sequence.every((symbol) => module.device.kind === "symbols" && module.device.symbols.includes(symbol))
+  const device = module.device
+  switch (submission.kind) {
+    case "wires": return Number.isInteger(submission.position) && submission.position >= 1 && submission.position <= 5 && !module.cut.includes(submission.position)
+    case "switches": return Array.isArray(submission.positions) && submission.positions.length === 4 && submission.positions.every((value) => typeof value === "boolean")
+    case "symbols": return device.kind === "symbols" && Array.isArray(submission.sequence) && submission.sequence.length === 4 &&
+      new Set(submission.sequence).size === 4 && submission.sequence.every((symbol) => device.symbols.includes(symbol))
+    case "button": return submission.action === "tap" || (submission.action === "hold" && Number.isInteger(submission.secondsLeft))
+    case "simon": return device.kind === "simon" && Array.isArray(submission.sequence) && submission.sequence.length === device.flashes.length &&
+      submission.sequence.every((color) => (SIMON_COLORS as readonly string[]).includes(color))
+  }
 }
 
-function correctSubmission(submission: BombSubmission, answer: BombSubmission): boolean {
-  if (submission.kind === "wires" && answer.kind === "wires") return submission.position === answer.position
-  if (submission.kind === "symbols" && answer.kind === "symbols") return submission.sequence.every((symbol, index) => symbol === answer.sequence[index])
-  if (submission.kind === "switches" && answer.kind === "switches") return submission.positions.every((position, index) => position === answer.positions[index])
+function correctSubmission(submission: BombSubmission, module: BombModule, strikes: number, serial: string): boolean {
+  const { device, manual } = module
+  if (submission.kind === "wires" && device.kind === "wires" && manual.kind === "wires") {
+    const answer = device.colors.filter((color) => color === manual.repeatedColor).length >= 2
+      ? device.colors.lastIndexOf(manual.repeatedColor) + 1
+      : Number(serial.at(-1)) % 2 === 0 ? manual.evenPosition : manual.oddPosition
+    return submission.position === answer
+  }
+  if (submission.kind === "symbols" && device.kind === "symbols" && manual.kind === "symbols") {
+    const answer = manual.order.filter((symbol) => device.symbols.includes(symbol))
+    return submission.sequence.every((symbol, index) => symbol === answer[index])
+  }
+  if (submission.kind === "switches" && device.kind === "switches" && manual.kind === "switches") {
+    const row = manual.rows.find((candidate) => candidate.channel === device.channel && candidate.signal === device.signal)
+    return Boolean(row && submission.positions.every((position, index) => position === row.positions[index]))
+  }
+  if (submission.kind === "button" && device.kind === "button" && manual.kind === "button") {
+    const action = buttonAction(device, manual)
+    if (submission.action !== action) return false
+    return submission.action === "tap" || formatBombTime(submission.secondsLeft).includes(String(manual.release[device.strip]))
+  }
+  if (submission.kind === "simon" && device.kind === "simon" && manual.kind === "simon") {
+    const row = manual.table[Math.min(strikes, manual.table.length - 1)]
+    return device.flashes.every((color, index) => submission.sequence[index] === row[SIMON_COLORS.indexOf(color)])
+  }
   return false
+}
+
+const SWITCH_NAMES = ["A", "B", "C", "D"]
+function describe(submission: BombSubmission): string {
+  switch (submission.kind) {
+    case "wires": return `Cut wire ${submission.position}`
+    case "symbols": return `Pressed ${submission.sequence.map((symbol) => BOMB_SYMBOLS[symbol].label).join(" → ")}`
+    case "switches": return `Set switches ${submission.positions.map((up, index) => `${SWITCH_NAMES[index]}${up ? "↑" : "↓"}`).join(" ")}`
+    case "button": return submission.action === "tap" ? "Tapped the button" : `Held the button, released at ${formatBombTime(submission.secondsLeft)}`
+    case "simon": return `Pressed ${submission.sequence.join(" → ")}`
+  }
 }
 
 class BombDefusalParty implements Party.Server {
@@ -106,12 +184,21 @@ class BombDefusalParty implements Party.Server {
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
   gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
+  reactedAt = new Map<string, number>()
 
   async onStart() {
-    this.state = await this.room.storage.get<GameState>("state") ?? null
-    if (!this.state) return
-    for (const player of Object.values(this.state.players)) player.connected = false
-    this.expireIfDue()
+    const stored = await this.room.storage.get<GameState>("state") ?? null
+    if (!stored) return
+    stored.difficulty ??= "normal"
+    stored.serial ??= generateSerial()
+    stored.paceSeq ??= 0
+    stored.pace ??= null
+    stored.frozenSecondsLeft ??= null
+    stored.log ??= []
+    for (const module of stored.modules) module.cut ??= []
+    this.state = stored
+    for (const player of Object.values(stored.players)) player.connected = false
+    this.advanceIfDue()
     await this.persist()
   }
 
@@ -124,24 +211,34 @@ class BombDefusalParty implements Party.Server {
     connection.send(JSON.stringify(message))
   }
 
+  secondsLeft() {
+    const deadline = this.state?.deadline
+    return deadline ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) : 0
+  }
+
   getPublicState(playerId: string): PublicBombState {
     if (!this.state) throw new Error("No game state")
     const state = this.state
     const isOperator = state.operatorId === playerId
+    const live = state.status === "playing" || state.status === "resolving"
     const reveal = state.status === "round-end" || state.status === "finished"
+    const seesDevice = (live && isOperator) || reveal
     return {
       roomCode: state.roomCode, hostId: state.hostId,
       canControl: canControlGame(state.players, state.hostId, playerId),
-      players: state.players, status: state.status, timeLimit: state.timeLimit,
+      players: state.players, status: state.status, timeLimit: state.timeLimit, difficulty: state.difficulty,
       round: state.round, totalRounds: state.order.length, missionId: state.missionId,
       operatorId: state.operatorId, nextOperatorId: state.order[state.round] ?? null,
-      deadline: state.deadline, serverTime: Date.now(), strikes: state.strikes,
+      deadline: state.deadline, serverTime: Date.now(),
+      serial: seesDevice && state.modules.length ? state.serial : null,
+      strikes: state.strikes,
       modules: state.modules.map((module) => ({
-        kind: module.kind, expertId: module.expertId, solved: module.solved, revision: module.revision,
-        device: isOperator || reveal ? module.device : null,
-        manual: (!isOperator && module.expertId === playerId) || reveal ? module.manual : null,
+        kind: module.kind, expertId: module.expertId, solved: module.solved, revision: module.revision, cut: module.cut,
+        device: seesDevice ? module.device : null,
+        manual: (live && !isOperator && module.expertId === playerId) || reveal ? module.manual : null,
       })),
-      outcome: state.outcome, lastAction: state.lastAction, history: state.history,
+      outcome: state.outcome, lastAction: state.lastAction, pace: state.pace,
+      frozenSecondsLeft: state.frozenSecondsLeft, log: state.log, history: state.history,
     }
   }
 
@@ -151,48 +248,89 @@ class BombDefusalParty implements Party.Server {
     }
   }
 
+  broadcastReaction(message: ReactionMessage) {
+    for (const connection of this.room.getConnections()) {
+      if (this.isAuthenticated(connection)) this.send(connection, message)
+    }
+  }
+
   async persist() {
     if (!this.state) return
     await this.room.storage.put("state", this.state)
-    if (this.state.status === "playing" && this.state.deadline) await this.room.storage.setAlarm(this.state.deadline)
+    const at = this.state.status === "playing" ? this.state.deadline : this.state.pace?.endsAt ?? null
+    if (at) await this.room.storage.setAlarm(Math.max(Date.now() + 10, at))
     else await this.room.storage.deleteAlarm()
   }
 
-  expireIfDue() {
-    if (this.state?.status === "playing" && this.state.deadline && Date.now() >= this.state.deadline) {
+  beat(stage: BombPace["stage"], duration: number) {
+    if (!this.state) return
+    this.state.pace = { seq: ++this.state.paceSeq, stage, endsAt: Date.now() + duration }
+  }
+
+  /** Runs the clock and any finished beat; true when something changed. */
+  advanceIfDue() {
+    const state = this.state
+    if (!state) return false
+    const now = Date.now()
+    if (state.status === "playing" && state.deadline && now >= state.deadline) {
       this.finishRound("time")
       return true
     }
-    return false
+    if (!state.pace || now < state.pace.endsAt - 50) return false
+    if (state.status === "handoff") {
+      state.status = "playing"
+      state.pace = null
+      state.deadline = now + state.timeLimit * 1000
+    } else if (state.status === "resolving") {
+      state.status = state.outcome === "defused" && state.round < state.order.length ? "round-end" : "finished"
+      state.pace = null
+    } else {
+      state.pace = null
+    }
+    return true
   }
 
-  startRound() {
+  /** The next operator takes the device; their clock starts when the handoff beat ends. */
+  startHandoff() {
     if (!this.state) return
     const state = this.state
     state.operatorId = state.order[state.round]
     state.round++
     state.missionId = crypto.randomUUID()
+    state.serial = generateSerial()
     state.strikes = 0
     state.lastAction = null
     state.outcome = null
-    state.modules = generateModules(state.order.filter((id) => id !== state.operatorId))
-    state.status = "playing"
-    state.deadline = Date.now() + state.timeLimit * 1000
+    state.frozenSecondsLeft = null
+    state.log = []
+    state.modules = generateModules(state.difficulty, state.order.filter((id) => id !== state.operatorId))
+    state.deadline = null
+    state.status = "handoff"
+    this.beat("handoff", BOMB_PACE_MS.handoff)
   }
 
-  finishRound(outcome: NonNullable<PublicBombState["outcome"]>) {
+  finishRound(outcome: BombOutcome) {
     if (!this.state) return
     const state = this.state
     if (state.status === "playing") {
+      const secondsLeft = outcome === "time" ? 0 : this.secondsLeft()
+      state.frozenSecondsLeft = secondsLeft
       state.history.push({
         round: state.round, operatorName: state.players[state.operatorId ?? ""]?.name ?? "Departed operator",
-        defused: outcome === "defused", solvedModules: state.modules.filter((module) => module.solved).length,
-        strikes: state.strikes, secondsLeft: Math.max(0, Math.ceil(((state.deadline ?? Date.now()) - Date.now()) / 1000)),
+        defused: outcome === "defused", outcome, difficulty: state.difficulty, moduleCount: state.modules.length,
+        solvedModules: state.modules.filter((module) => module.solved).length, strikes: state.strikes, secondsLeft,
       })
     }
     state.outcome = outcome
     state.deadline = null
-    state.status = outcome === "defused" && state.round < state.order.length ? "round-end" : "finished"
+    if (outcome === "crew-left") {
+      state.status = "finished"
+      state.pace = null
+      return
+    }
+    state.status = "resolving"
+    if (outcome === "defused") this.beat("defused", BOMB_PACE_MS.defused)
+    else this.beat("exploded", BOMB_PACE_MS.exploded + (outcome === "strikes" ? BOMB_PACE_MS.boomDelay : 0))
   }
 
   async onConnect(connection: Party.Connection, context: Party.ConnectionContext) {
@@ -205,11 +343,14 @@ class BombDefusalParty implements Party.Server {
     const canCreate = night.mode === "game-night" ? night.member.isHost : url.searchParams.get("host") === "true"
     if (canCreate && !this.state) {
       const requestedTime = Number(url.searchParams.get("timeLimit"))
+      const requestedDifficulty = url.searchParams.get("difficulty")
       this.state = {
         roomCode: this.room.id, hostId: connection.id, players: {}, playerTokens: {},
         status: "waiting", timeLimit: BOMB_TIME_OPTIONS.find((value) => value === requestedTime) ?? 240,
-        order: [], round: 0, missionId: null, operatorId: null, deadline: null,
-        strikes: 0, modules: [], outcome: null, lastAction: null, history: [],
+        difficulty: isBombDifficulty(requestedDifficulty) ? requestedDifficulty : "normal",
+        order: [], round: 0, missionId: null, operatorId: null, deadline: null, serial: generateSerial(),
+        strikes: 0, modules: [], outcome: null, lastAction: null, paceSeq: 0, pace: null,
+        frozenSecondsLeft: null, log: [], history: [],
       }
       await this.persist()
     }
@@ -224,7 +365,7 @@ class BombDefusalParty implements Party.Server {
       const error = (text: string) => this.send(sender, { type: "error", message: text })
       if (data.type !== "join" && !this.isAuthenticated(sender)) return error("Invalid player session")
       const state = this.state
-      if (this.expireIfDue()) {
+      if (this.advanceIfDue()) {
         await this.persist()
         this.broadcastState()
         if (data.type === "attempt") return
@@ -249,6 +390,13 @@ class BombDefusalParty implements Party.Server {
           }
           break
         }
+        case "settings": {
+          if (state.status !== "waiting" || !canControlGame(state.players, state.hostId, sender.id)) return
+          const time = BOMB_TIME_OPTIONS.find((value) => value === data.timeLimit)
+          if (time) state.timeLimit = time
+          if (isBombDifficulty(data.difficulty)) state.difficulty = data.difficulty
+          break
+        }
         case "start": {
           if (state.status !== "waiting" || !canControlGame(state.players, state.hostId, sender.id)) return error("Only the host can start from the lobby")
           if (presentCount(state.players) < 2) return error("Need at least 2 connected players")
@@ -259,30 +407,46 @@ class BombDefusalParty implements Party.Server {
             }
           }
           state.order = Object.values(state.players).sort((a, b) => a.joinedAt - b.joinedAt).map((player) => player.id)
-          this.startRound()
+          this.startHandoff()
           break
         }
         case "next": {
           if (state.status !== "round-end" || data.missionId !== state.missionId || !canControlGame(state.players, state.hostId, sender.id)) return
           if (!state.order.every((id) => isPresent(state.players[id]))) return error("Wait for the whole crew to reconnect before rotating roles")
-          this.startRound()
+          this.startHandoff()
           break
         }
         case "attempt": {
-          if (state.status !== "playing") break
+          if (state.status !== "playing") return
           if (sender.id !== state.operatorId) return error("Only the operator can touch the device")
           if (data.missionId !== state.missionId || !data.submission) return
-          const module = state.modules.find((candidate) => candidate.kind === data.submission.kind)
+          const submission = data.submission
+          const module = state.modules.find((candidate) => candidate.kind === submission.kind)
           if (!module || module.solved || data.revision !== module.revision) return
-          if (!validSubmission(data.submission, module)) return error("Complete the module controls before submitting")
-          const correct = correctSubmission(data.submission, module.answer)
+          if (!validSubmission(submission, module)) return error("Complete the module controls before submitting")
+          const secondsLeft = this.secondsLeft()
+          // A release is checked against the clock the operator saw, allowing for the trip here.
+          if (submission.kind === "button" && submission.action === "hold" &&
+            (submission.secondsLeft < secondsLeft - 1 || submission.secondsLeft > secondsLeft + 3)) {
+            module.revision++
+            error("That release didn't register. Try again.")
+            break
+          }
+          const correct = correctSubmission(submission, module, state.strikes, state.serial)
           module.revision++
           module.solved = correct
-          state.lastAction = { kind: module.kind, correct }
+          if (submission.kind === "wires") module.cut.push(submission.position)
           if (!correct) state.strikes++
+          state.lastAction = { seq: (state.lastAction?.seq ?? 0) + 1, kind: module.kind, correct }
+          state.log.push({ seq: state.log.length + 1, secondsLeft, kind: module.kind, text: describe(submission), correct, strikes: state.strikes })
           if (state.strikes >= BOMB_STRIKE_LIMIT) this.finishRound("strikes")
           else if (state.modules.every((candidate) => candidate.solved)) this.finishRound("defused")
           break
+        }
+        case "react": {
+          if (!isReaction(data.reaction) || !takeReactionSlot(this.reactedAt, sender.id)) return
+          this.broadcastReaction({ type: "reaction", playerId: sender.id, reaction: data.reaction })
+          return
         }
         case "restart": {
           if (state.status !== "finished" || !canControlGame(state.players, state.hostId, sender.id)) return
@@ -296,11 +460,14 @@ class BombDefusalParty implements Party.Server {
           state.deadline = null
           state.outcome = null
           state.lastAction = null
+          state.pace = null
+          state.frozenSecondsLeft = null
+          state.log = []
           state.history = []
           break
         }
         case "leave": {
-          if (state.status === "playing" || state.status === "round-end") this.finishRound("crew-left")
+          if (state.status !== "waiting" && state.status !== "finished") this.finishRound("crew-left")
           delete state.players[sender.id]
           delete state.playerTokens[sender.id]
           if (Object.keys(state.players).length === 0) {
@@ -328,21 +495,21 @@ class BombDefusalParty implements Party.Server {
     markDisconnected(this.state.players, connection.id)
     this.connectionTokens.delete(connection)
     this.gameNightMembers.delete(connection)
-    this.expireIfDue()
+    this.advanceIfDue()
     await this.persist()
     this.broadcastState()
   }
 
   async onAlarm() {
     if (!this.state) return
-    this.expireIfDue()
+    this.advanceIfDue()
     await this.persist()
     this.broadcastState()
   }
 
   async onRequest(request: Party.Request) {
     if (!await getGameNightResultMatch(this.room, request, "bomb-defusal")) return new Response("Not found", { status: 404 })
-    if (this.expireIfDue()) { await this.persist(); this.broadcastState() }
+    if (this.advanceIfDue()) { await this.persist(); this.broadcastState() }
     const finished = this.state?.status === "finished"
     return Response.json({
       finished, scored: true,

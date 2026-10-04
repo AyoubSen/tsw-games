@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react"
 
 /** Table sound effects, synthesized with Web Audio so there are no files to load. */
-export type SoundName = "deal" | "flip" | "chip" | "pot" | "dice" | "capture" | "turn" | "win" | "howl" | "dawn" | "toll" | "knock" | "shot" | "clue" | "correct" | "wrong" | "assassin" | "tick" | "lockin" | "whoosh" | "group" | "lonewolf" | "roundEnd" | "merge" | "sync" | "thunk" | "accepted" | "rejected" | "buzzer"
+export type SoundName = "deal" | "flip" | "chip" | "pot" | "dice" | "capture" | "turn" | "win" | "howl" | "dawn" | "toll" | "knock" | "shot" | "clue" | "correct" | "wrong" | "assassin" | "tick" | "lockin" | "whoosh" | "group" | "lonewolf" | "roundEnd" | "merge" | "sync" | "thunk" | "accepted" | "rejected" | "buzzer" | "snip" | "keycap" | "toggle" | "beep" | "chime" | "defuse" | "explode"
 
 const MUTE_KEY = "tsw-games-muted"
 const VOLUME = 0.22
@@ -243,6 +243,39 @@ const SOUNDS: Record<SoundName, (c: AudioContext, at: number) => void> = {
   buzzer: (c, at) => {
     tone(c, at, { freq: 110, type: "square", peak: 0.16, decay: 0.75 })
     tone(c, at, { freq: 116.5, type: "sawtooth", peak: 0.12, decay: 0.75 })
+  },
+  snip: (c, at) => {
+    burst(c, at, { type: "highpass", freq: 3800, peak: 0.55, decay: 0.035 })
+    tone(c, at, { freq: 2400, type: "triangle", peak: 0.18, decay: 0.05, slideTo: 1400 })
+    burst(c, at + 0.03, { type: "bandpass", freq: 1200, q: 2, peak: 0.25, decay: 0.06 })
+  },
+  keycap: (c, at) => {
+    burst(c, at, { type: "bandpass", freq: 2200, q: 2.5, peak: 0.35, decay: 0.025 })
+    tone(c, at + 0.01, { freq: 340, type: "triangle", peak: 0.2, decay: 0.06, slideTo: 260 })
+  },
+  toggle: (c, at) => {
+    burst(c, at, { type: "highpass", freq: 3000, peak: 0.4, decay: 0.02 })
+    tone(c, at + 0.012, { freq: 900, type: "square", peak: 0.06, decay: 0.03 })
+    burst(c, at + 0.03, { type: "bandpass", freq: 1600, q: 3, peak: 0.25, decay: 0.03 })
+  },
+  beep: (c, at) => {
+    tone(c, at, { freq: 1975.5, type: "square", peak: 0.035, decay: 0.07 })
+  },
+  chime: (c, at) => {
+    tone(c, at, { freq: 1046.5, type: "triangle", peak: 0.22, decay: 0.5 })
+    tone(c, at + 0.1, { freq: 1568, type: "triangle", peak: 0.22, decay: 0.8 })
+    tone(c, at + 0.1, { freq: 3136, peak: 0.04, decay: 0.6 })
+  },
+  defuse: (c, at) => {
+    tone(c, at, { freq: 880, type: "square", peak: 0.05, decay: 0.12 })
+    tone(c, at + 0.18, { freq: 440, type: "triangle", peak: 0.18, decay: 0.5, slideTo: 330 })
+    ;[523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => tone(c, at + 0.6 + i * 0.12, { freq, type: "triangle", peak: 0.22, decay: i === 3 ? 1.2 : 0.4 }))
+  },
+  explode: (c, at) => {
+    burst(c, at, { type: "lowpass", freq: 3000, sweepTo: 120, peak: 0.95, decay: 1.6 })
+    burst(c, at + 0.02, { type: "bandpass", freq: 300, q: 0.6, peak: 0.6, decay: 2.2 })
+    tone(c, at, { freq: 90, type: "triangle", peak: 0.7, decay: 1.4, slideTo: 28 })
+    tone(c, at, { freq: 60, type: "sine", peak: 0.6, decay: 2, slideTo: 24 })
   },
 }
 

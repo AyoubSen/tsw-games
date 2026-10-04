@@ -59,7 +59,7 @@ const PODIUM = [
 ]
 
 /** Top three on stepped blocks (2nd, 1st, 3rd from the left); ties share a step. */
-export function Podium({ rows, meId }: { rows: ScoreRow[]; meId: string }) {
+export function Podium({ rows, meId, unit = "pts" }: { rows: ScoreRow[]; meId: string; unit?: string }) {
   const order = [...rows].sort((left, right) => right.score - left.score)
   const ranks = ranksOf(rows, (row) => row.score)
   const top = order.slice(0, 3)
@@ -72,7 +72,7 @@ export function Podium({ rows, meId }: { rows: ScoreRow[]; meId: string }) {
           <div key={row.id} className="uno-pop flex w-24 flex-col items-center sm:w-28" style={{ animationDelay: `${(3 - step.place) * 260 + 200}ms` }}>
             <PartyAvatar id={row.id} name={row.name} size={step.place === 1 ? 58 : 46} style={{ boxShadow: `0 0 0 3px ${step.hex}, 0 0 30px ${step.hex}88` }} />
             <p className="mt-2 max-w-full truncate text-sm font-bold">{row.id === meId ? "You" : row.name}</p>
-            <p className="font-mono text-xs text-white/70 tabular-nums">{row.score} pts</p>
+            <p className="font-mono text-xs text-white/70 tabular-nums">{row.score} {unit}</p>
             <div
               className="mt-2 grid w-full place-items-start justify-center rounded-t-xl pt-2 text-2xl font-black text-black/70"
               style={{ height: step.height, background: `linear-gradient(to bottom, ${step.hex}, ${step.hex}99)` }}

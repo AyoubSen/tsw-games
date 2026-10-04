@@ -15,6 +15,8 @@ import type {
 	PublicGameNightState,
 } from "@/lib/gameNight";
 import { getGameNightGame } from "@/lib/gameNight";
+import type { Reaction } from "@/lib/reactions";
+import { type ReactionBubbles, useReactionBubbles } from "@/components/multiplayer/Reactions";
 import {
 	clearPersistentPlayerId,
 	clearPersistentPlayerToken,
@@ -44,6 +46,17 @@ interface GameNightContextValue {
 	selectGame: (gameId: GameNightGameId) => void;
 	markReady: (matchId: string) => boolean;
 	completeMatch: (matchId: string) => boolean;
+	openVote: (options: GameNightGameId[]) => void;
+	vote: (gameId: GameNightGameId) => void;
+	lockVote: () => void;
+	cancelVote: () => void;
+	skipRecap: () => void;
+	endNight: () => void;
+	resumeNight: () => void;
+	/** Tells the room whether this player is on the Game Night page (re-sent after reconnects). */
+	setInLounge: (here: boolean) => void;
+	react: (reaction: Reaction) => void;
+	reactions: ReactionBubbles;
 	leaveRoom: () => void;
 }
 
@@ -71,6 +84,8 @@ export function GameNightProvider({ children }: { children: ReactNode }) {
 	const socketRef = useRef<PartySocket | null>(null);
 	const roomCodeRef = useRef("");
 	const navigatedMatchRef = useRef<string | null>(null);
+	const inLoungeRef = useRef(false);
+	const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles();
 	const navigate = useNavigate();
 	const pathname = useRouterState({ select: (routerState) => routerState.location.pathname });
 
@@ -98,12 +113,14 @@ export function GameNightProvider({ children }: { children: ReactNode }) {
 			if (socketRef.current !== socket) return;
 			setConnectionStatus("connected");
 			socket.send(JSON.stringify({ type: "join", name }));
+			if (inLoungeRef.current) socket.send(JSON.stringify({ type: "lounge", here: true }));
 		});
 		socket.addEventListener("message", (event) => {
 			if (socketRef.current !== socket) return;
 			try {
 				const message = JSON.parse(event.data) as GameNightServerMessage;
 				if (message.type === "error") setError(message.message);
+				else if (message.type === "reaction") receiveReaction(message);
 				else {
 					setState(message.state);
 					setConnection(message.connection);
@@ -174,6 +191,7 @@ export function GameNightProvider({ children }: { children: ReactNode }) {
 		setPlayerId(null);
 		setConnectionStatus("disconnected");
 		setError(null);
+		clearReactions();
 		navigatedMatchRef.current = null;
 	};
 
@@ -193,6 +211,19 @@ export function GameNightProvider({ children }: { children: ReactNode }) {
 		selectGame: (gameId) => send({ type: "select-game", gameId }),
 		markReady: (matchId) => send({ type: "match-ready", matchId }),
 		completeMatch: (matchId) => send({ type: "complete-match", matchId }),
+		openVote: (options) => send({ type: "open-vote", options }),
+		vote: (gameId) => send({ type: "vote", gameId }),
+		lockVote: () => send({ type: "lock-vote" }),
+		cancelVote: () => send({ type: "cancel-vote" }),
+		skipRecap: () => send({ type: "skip-recap" }),
+		endNight: () => send({ type: "end-night" }),
+		resumeNight: () => send({ type: "resume-night" }),
+		setInLounge: (here) => {
+			inLoungeRef.current = here;
+			send({ type: "lounge", here });
+		},
+		react: (reaction) => send({ type: "react", reaction }),
+		reactions,
 		leaveRoom,
 	};
 

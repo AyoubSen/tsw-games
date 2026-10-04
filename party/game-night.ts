@@ -1,7 +1,14 @@
 import type * as Party from "partykit/server";
 import { withRoomCleanup } from "./shared/cleanup";
 import {
+	computeAwards,
+	GAME_NIGHT_GAMES,
+	gameNightMisfit,
 	getGameNightGame,
+	RECAP_MS,
+	RECAP_WAIT_MS,
+	SPIN_MS,
+	VOTE_MS,
 	type GameNightClientMessage,
 	type GameNightConnection,
 	type GameNightGameId,
@@ -12,6 +19,7 @@ import {
 	type GameNightServerMessage,
 	type PublicGameNightState,
 } from "../src/lib/gameNight";
+import { isReaction, takeReactionSlot } from "../src/lib/reactions";
 import { markConnected, markDisconnected, nextHost } from "./shared/presence";
 
 interface GameNightState extends PublicGameNightState {
@@ -33,16 +41,61 @@ class GameNightParty implements Party.Server {
 	constructor(readonly room: Party.Room) {}
 	state: GameNightState | null = null;
 	connectionTokens = new WeakMap<Party.Connection, string>();
+	reactedAt = new Map<string, number>();
 
 	async onStart() {
-		this.state = (await this.room.storage.get<GameNightState>("state")) ?? null;
-		if (!this.state) return;
-		for (const player of Object.values(this.state.players)) player.connected = false;
+		const stored = (await this.room.storage.get<GameNightState>("state")) ?? null;
+		if (!stored) return;
+		stored.vote ??= null;
+		stored.recap ??= null;
+		stored.finale ??= null;
+		this.state = stored;
+		for (const player of Object.values(this.state.players)) {
+			player.connected = false;
+			player.inLounge = false;
+		}
 		await this.save();
+		await this.scheduleAlarm();
 	}
 
 	async save() {
 		if (this.state) await this.room.storage.put("state", this.state);
+	}
+
+	/** The alarm drives the vote timer, the vote reveal and the recap. */
+	async scheduleAlarm() {
+		const s = this.state;
+		const at = s?.vote ? s.vote.endsAt : s?.recap ? (s.recap.stage === "waiting" ? s.recap.waitUntil : s.recap.endsAt) : null;
+		if (at) await this.room.storage.setAlarm(Math.max(Date.now() + 10, at));
+		else await this.room.storage.deleteAlarm();
+	}
+
+	async commit() {
+		if (!this.state) return;
+		this.state.revision += 1;
+		await this.save();
+		await this.scheduleAlarm();
+		this.broadcast();
+	}
+
+	async onAlarm() {
+		const s = this.state;
+		if (!s) return;
+		const now = Date.now();
+		if (s.vote && now >= s.vote.endsAt - 20) {
+			if (s.vote.stage === "open") this.lockVote();
+			else {
+				const winner = s.vote.winner!;
+				s.vote = null;
+				const problem = this.launch(winner);
+				if (problem) this.sendTo(s.hostId, { type: "error", message: problem });
+			}
+		} else if (s.recap?.stage === "waiting" && s.recap.waitUntil && now >= s.recap.waitUntil - 20) {
+			this.startRecap();
+		} else if (s.recap?.stage === "playing" && s.recap.endsAt && now >= s.recap.endsAt - 20) {
+			s.recap = null;
+		}
+		await this.commit();
 	}
 
 	publicState(): PublicGameNightState {
@@ -54,6 +107,9 @@ class GameNightParty implements Party.Server {
 			activeMatch: this.state.activeMatch,
 			history: this.state.history,
 			revision: this.state.revision,
+			vote: this.state.vote,
+			recap: this.state.recap,
+			finale: this.state.finale,
 		};
 	}
 
@@ -86,6 +142,12 @@ class GameNightParty implements Party.Server {
 		connection.send(JSON.stringify(message));
 	}
 
+	sendTo(playerId: string, message: GameNightServerMessage) {
+		for (const connection of this.room.getConnections()) {
+			if (connection.id === playerId && this.authenticated(connection)) this.send(connection, message);
+		}
+	}
+
 	broadcast() {
 		if (!this.state) return;
 		const state = this.publicState();
@@ -110,42 +172,136 @@ class GameNightParty implements Party.Server {
 				activeMatch: null,
 				history: [],
 				revision: 1,
+				vote: null,
+				recap: null,
+				finale: null,
 			};
 			await this.save();
 		}
 		if (!this.state) this.send(connection, { type: "error", message: "Game Night room not found" });
 	}
 
-	async selectGame(gameId: GameNightGameId, sender: Party.Connection) {
-		if (!this.state || sender.id !== this.state.hostId) return;
-		if (this.state.activeMatch && this.state.activeMatch.status !== "finished") {
-			return this.send(sender, { type: "error", message: "Finish the current game before choosing another" });
-		}
-		const game = getGameNightGame(gameId);
-		if (!game) return this.send(sender, { type: "error", message: "That game is not available" });
-		const players = Object.values(this.state.players);
-		const connectedCount = players.filter((player) => player.connected !== false).length;
-		if (gameId === "codenames" && players.length > 2 && connectedCount < 4) {
-			return this.send(sender, { type: "error", message: "Codenames needs a two-player roster for Duet, or at least 4 connected players for teams" });
-		}
-		if (connectedCount < game.minPlayers) {
-			return this.send(sender, { type: "error", message: `Need at least ${game.minPlayers} connected players` });
-		}
-		if (players.length > game.maxPlayers) {
-			return this.send(sender, { type: "error", message: `${game.title} supports at most ${game.maxPlayers} players` });
-		}
+	roster() {
+		const players = Object.values(this.state?.players ?? {});
+		return { players, size: players.length, connected: players.filter((player) => player.connected !== false).length };
+	}
+
+	misfit(gameId: GameNightGameId) {
+		const { size, connected } = this.roster();
+		return gameNightMisfit(gameId, size, connected);
+	}
+
+	/** Something is already happening that the picker has to wait for. */
+	busy() {
+		const s = this.state;
+		if (!s) return "No Game Night";
+		if (s.finale) return "The night has ended";
+		if (s.activeMatch && s.activeMatch.status !== "finished") return "Finish the current game before choosing another";
+		if (s.recap) return "The recap is still playing";
+		return null;
+	}
+
+	/** Starts a match of `gameId`; returns why it couldn't. */
+	launch(gameId: GameNightGameId) {
+		if (!this.state) return "No Game Night";
+		const problem = this.misfit(gameId);
+		if (problem) return `${getGameNightGame(gameId)?.title ?? "That game"}: ${problem}`;
+		const { players } = this.roster();
 		const match: GameNightMatch = {
 			id: crypto.randomUUID(),
 			gameId,
 			roomId: crypto.randomUUID(),
 			status: "launching",
 			startedAt: Date.now(),
+			playerIds: players.map((player) => player.id),
 		};
 		this.state.activeMatch = match;
+		this.state.vote = null;
 		this.state.matchTickets = Object.fromEntries(players.map((player) => [player.id, crypto.randomUUID()]));
-		this.state.revision += 1;
-		await this.save();
-		this.broadcast();
+		return null;
+	}
+
+	/** Host picks directly: launches now, or overrides an open vote. */
+	async selectGame(gameId: GameNightGameId, sender: Party.Connection) {
+		if (!this.state || sender.id !== this.state.hostId) return;
+		const vote = this.state.vote;
+		if (vote) {
+			if (vote.stage !== "open") return;
+			const problem = this.misfit(gameId);
+			if (problem) return this.send(sender, { type: "error", message: problem });
+			const voted = [...new Set(Object.values(vote.votes))];
+			vote.stage = "spin";
+			vote.candidates = voted.includes(gameId) ? voted : [...voted, gameId];
+			vote.winner = gameId;
+			vote.hostPick = true;
+			vote.endsAt = Date.now() + SPIN_MS;
+			return this.commit();
+		}
+		const busy = this.busy();
+		if (busy) return this.send(sender, { type: "error", message: busy });
+		const problem = this.launch(gameId);
+		if (problem) return this.send(sender, { type: "error", message: problem });
+		await this.commit();
+	}
+
+	async openVote(options: GameNightGameId[], sender: Party.Connection) {
+		if (!this.state || sender.id !== this.state.hostId || this.state.vote) return;
+		const busy = this.busy();
+		if (busy) return this.send(sender, { type: "error", message: busy });
+		const picked = [...new Set(Array.isArray(options) ? options : [])].filter((id) => getGameNightGame(id));
+		const any = picked.length === 0;
+		if (!any && (picked.length < 2 || picked.length > 4)) return this.send(sender, { type: "error", message: "Pick 2–4 games for the vote" });
+		const ballot = any ? GAME_NIGHT_GAMES.map((game) => game.id).filter((id) => !this.misfit(id)) : picked;
+		const misfit = ballot.find((id) => this.misfit(id));
+		if (misfit) return this.send(sender, { type: "error", message: `${getGameNightGame(misfit)!.title} doesn't fit this room` });
+		if (ballot.length < 2) return this.send(sender, { type: "error", message: "Not enough games fit this room for a vote" });
+		const now = Date.now();
+		this.state.vote = { id: crypto.randomUUID(), options: ballot, any, votes: {}, stage: "open", openedAt: now, endsAt: now + VOTE_MS };
+		await this.commit();
+	}
+
+	/** Tallies the ballot and starts the reveal spin. */
+	lockVote() {
+		const vote = this.state?.vote;
+		if (!vote || vote.stage !== "open") return;
+		const counts = new Map<GameNightGameId, number>();
+		for (const gameId of Object.values(vote.votes)) {
+			if (vote.options.includes(gameId) && !this.misfit(gameId)) counts.set(gameId, (counts.get(gameId) ?? 0) + 1);
+		}
+		const fitting = vote.options.filter((id) => !this.misfit(id));
+		const top = Math.max(0, ...counts.values());
+		const leaders = top > 0 ? [...counts].filter(([, count]) => count === top).map(([id]) => id) : fitting.length ? fitting : vote.options;
+		vote.stage = "spin";
+		vote.candidates = counts.size > 0 ? [...counts.keys()] : leaders.slice(0, 8);
+		vote.winner = leaders[Math.floor(Math.random() * leaders.length)]!;
+		if (!vote.candidates.includes(vote.winner)) vote.candidates.push(vote.winner);
+		vote.endsAt = Date.now() + SPIN_MS;
+	}
+
+	maybeLockVote() {
+		const vote = this.state?.vote;
+		if (!vote || vote.stage !== "open") return;
+		const connected = this.roster().players.filter((player) => player.connected !== false);
+		if (connected.length > 0 && connected.every((player) => vote.votes[player.id])) this.lockVote();
+	}
+
+	startRecap() {
+		const recap = this.state?.recap;
+		if (!recap || recap.stage !== "waiting") return;
+		const now = Date.now();
+		recap.stage = "playing";
+		recap.startedAt = now;
+		recap.endsAt = now + RECAP_MS;
+	}
+
+	/** The recap waits until everyone connected is back in the lounge (or the wait runs out). */
+	maybeStartRecap() {
+		const recap = this.state?.recap;
+		if (!recap || recap.stage !== "waiting") return;
+		const connected = this.roster().players.filter((player) => player.connected !== false);
+		const back = connected.filter((player) => player.inLounge);
+		if (back.length > 0 && recap.waitUntil === null) recap.waitUntil = Date.now() + RECAP_WAIT_MS;
+		if (back.length > 0 && back.length === connected.length) this.startRecap();
 	}
 
 	async completeMatch(matchId: string, sender: Party.Connection) {
@@ -184,12 +340,13 @@ class GameNightParty implements Party.Server {
 				winnerNames: winnerIds.map((id) => this.state!.players[id].name),
 				scored: result.scored,
 				finishedAt: Date.now(),
+				playerIds: (match.playerIds ?? Object.keys(this.state.matchTickets)).filter((id) => Boolean(this.state?.players[id])),
 			};
 			this.state.history.push(history);
 			match.status = "finished";
-			this.state.revision += 1;
-			await this.save();
-			this.broadcast();
+			this.state.recap = { matchId, stage: "waiting", waitUntil: null, startedAt: null, endsAt: null };
+			this.maybeStartRecap();
+			await this.commit();
 		} catch (error) {
 			console.error("Could not collect Game Night result", error);
 			if (this.state?.activeMatch?.id === matchId && this.state.activeMatch.status === "collecting") {
@@ -229,27 +386,86 @@ class GameNightParty implements Party.Server {
 				return;
 			}
 			if (!this.authenticated(sender)) return this.send(sender, { type: "error", message: "Invalid player session" });
-			if (data.type === "select-game") await this.selectGame(data.gameId, sender);
-			if (data.type === "match-ready" && sender.id === this.state.hostId && this.state.activeMatch?.id === data.matchId && this.state.activeMatch.status === "launching") {
-				this.state.activeMatch.status = "ready";
-				this.state.revision += 1;
-				await this.save();
-				this.broadcast();
-			}
-			if (data.type === "complete-match") await this.completeMatch(data.matchId, sender);
-			if (data.type === "leave") {
-				delete this.state.players[sender.id];
-				delete this.state.playerTokens[sender.id];
-				delete this.state.matchTickets[sender.id];
-				if (Object.keys(this.state.players).length === 0) {
-					this.state = null;
-					await this.room.storage.delete("state");
+			const isHost = sender.id === this.state.hostId;
+			switch (data.type) {
+				case "select-game":
+					return await this.selectGame(data.gameId, sender);
+				case "match-ready":
+					if (isHost && this.state.activeMatch?.id === data.matchId && this.state.activeMatch.status === "launching") {
+						this.state.activeMatch.status = "ready";
+						await this.commit();
+					}
+					return;
+				case "complete-match":
+					return await this.completeMatch(data.matchId, sender);
+				case "open-vote":
+					return await this.openVote(data.options, sender);
+				case "vote": {
+					const vote = this.state.vote;
+					if (!vote || vote.stage !== "open" || !vote.options.includes(data.gameId) || this.misfit(data.gameId)) return;
+					vote.votes[sender.id] = data.gameId;
+					this.maybeLockVote();
+					return await this.commit();
+				}
+				case "lock-vote":
+					if (!isHost || this.state.vote?.stage !== "open") return;
+					this.lockVote();
+					return await this.commit();
+				case "cancel-vote":
+					if (!isHost || this.state.vote?.stage !== "open") return;
+					this.state.vote = null;
+					return await this.commit();
+				case "lounge": {
+					const player = this.state.players[sender.id];
+					if (!player || Boolean(player.inLounge) === Boolean(data.here)) return;
+					player.inLounge = Boolean(data.here);
+					this.maybeStartRecap();
+					return await this.commit();
+				}
+				case "skip-recap": {
+					const recap = this.state.recap;
+					if (!isHost || !recap) return;
+					if (recap.stage === "waiting") this.startRecap();
+					else this.state.recap = null;
+					return await this.commit();
+				}
+				case "end-night": {
+					if (!isHost || this.state.finale) return;
+					if (this.state.activeMatch && this.state.activeMatch.status !== "finished") return this.send(sender, { type: "error", message: "Finish the current game first" });
+					this.state.vote = null;
+					this.state.recap = null;
+					this.state.finale = { endedAt: Date.now(), awards: computeAwards(this.state.players, this.state.history) };
+					return await this.commit();
+				}
+				case "resume-night":
+					if (!isHost || !this.state.finale) return;
+					this.state.finale = null;
+					return await this.commit();
+				case "react": {
+					if (!this.state.players[sender.id] || !isReaction(data.reaction)) return;
+					if (!takeReactionSlot(this.reactedAt, sender.id)) return;
+					const reaction: GameNightServerMessage = { type: "reaction", playerId: sender.id, reaction: data.reaction };
+					for (const connection of this.room.getConnections()) {
+						if (this.authenticated(connection)) this.send(connection, reaction);
+					}
 					return;
 				}
-				if (sender.id === this.state.hostId) this.state.hostId = nextHost(this.state.players, sender.id) ?? "";
-				this.state.revision += 1;
-				await this.save();
-				this.broadcast();
+				case "leave": {
+					delete this.state.players[sender.id];
+					delete this.state.playerTokens[sender.id];
+					delete this.state.matchTickets[sender.id];
+					if (this.state.vote) delete this.state.vote.votes[sender.id];
+					if (Object.keys(this.state.players).length === 0) {
+						this.state = null;
+						await this.room.storage.deleteAlarm();
+						await this.room.storage.delete("state");
+						return;
+					}
+					if (sender.id === this.state.hostId) this.state.hostId = nextHost(this.state.players, sender.id) ?? "";
+					this.maybeLockVote();
+					this.maybeStartRecap();
+					return await this.commit();
+				}
 			}
 		} catch (error) {
 			console.error("Game Night message error", error);
@@ -283,9 +499,10 @@ class GameNightParty implements Party.Server {
 		if (!this.state?.players[connection.id]) return;
 		if (Array.from(this.room.getConnections()).some((candidate) => candidate.id === connection.id && candidate !== connection)) return;
 		markDisconnected(this.state.players, connection.id);
-		this.state.revision += 1;
-		await this.save();
-		this.broadcast();
+		this.state.players[connection.id].inLounge = false;
+		this.maybeLockVote();
+		this.maybeStartRecap();
+		await this.commit();
 	}
 }
 

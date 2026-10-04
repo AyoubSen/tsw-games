@@ -8,6 +8,8 @@ import {
 	PARTYKIT_HOST,
 	getPersistentPlayerId,
 } from "@/lib/partykit";
+import type { Reaction } from "@/lib/reactions";
+import { useReactionBubbles } from "@/components/multiplayer/Reactions";
 import type {
 	HotTakePosition,
 	HotTakeSettings,
@@ -38,6 +40,7 @@ export function useMultiplayerHotTakeArena() {
 		isHost: false,
 	});
 
+	const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles();
 	const socketRef = useRef<PartySocket | null>(null);
 	const roomCodeRef = useRef("");
 	const isHost = Boolean(
@@ -115,27 +118,15 @@ export function useMultiplayerHotTakeArena() {
 							submittedPlayerIds: [],
 							revealedVotes: [],
 							voteGroups: [],
+							reveal: null,
 							roundStartedAt: Date.now(),
 						},
 					};
 				});
 				break;
 
-			case "round-revealed":
-				setState((previous) => {
-					if (!previous.gameState) {
-						return previous;
-					}
-
-					return {
-						...previous,
-						gameState: {
-							...previous.gameState,
-							status: "reveal",
-							voteGroups: message.voteGroups,
-						},
-					};
-				});
+			case "reaction":
+				receiveReaction(message);
 				break;
 
 			case "game-over":
@@ -168,7 +159,7 @@ export function useMultiplayerHotTakeArena() {
 				}));
 				break;
 		}
-	}, []);
+	}, [receiveReaction]);
 
 	const connect = useCallback(
 		(
@@ -269,6 +260,7 @@ export function useMultiplayerHotTakeArena() {
 			clearPersistentPlayerId("hot-take-arena", roomCodeRef.current);
 			roomCodeRef.current = "";
 		}
+		clearReactions();
 
 		setState({
 			connectionStatus: "disconnected",
@@ -277,7 +269,7 @@ export function useMultiplayerHotTakeArena() {
 			error: null,
 			isHost: false,
 		});
-	}, []);
+	}, [clearReactions]);
 
 	const abandonReconnect = useCallback(() => {
 		const socket = socketRef.current;
@@ -321,6 +313,14 @@ export function useMultiplayerHotTakeArena() {
 		if (isHost) sendNow({ type: "next-round" });
 	}, [isHost, sendNow]);
 
+	const skipSpotlight = useCallback(() => {
+		if (isHost) sendNow({ type: "skip-spotlight" });
+	}, [isHost, sendNow]);
+
+	const react = useCallback((reaction: Reaction) => {
+		sendNow({ type: "react", reaction });
+	}, [sendNow]);
+
 	const restartGame = useCallback(() => {
 		if (isHost) sendNow({ type: "restart" });
 	}, [isHost, sendNow]);
@@ -336,6 +336,9 @@ export function useMultiplayerHotTakeArena() {
 	return {
 		...state,
 		isHost,
+		reactions,
+		react,
+		skipSpotlight,
 		createGame,
 		joinGame,
 		startGame,

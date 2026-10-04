@@ -17,6 +17,12 @@ import {
 	validateGameNightConnection,
 	type GameNightMember,
 } from "./shared/gameNight";
+import {
+	isReaction,
+	takeReactionSlot,
+	type Reaction,
+	type ReactionMessage,
+} from "../src/lib/reactions";
 
 export type HotTakePosition = 1 | 2 | 3 | 4 | 5;
 
@@ -52,6 +58,53 @@ export interface VoteGroup {
 	points: number;
 }
 
+/**
+ * Server-paced reveal beats, advanced by the storage alarm so every client sees
+ * the same timeline. Client animations inside a beat must fit these durations.
+ */
+export const REVEAL_MS = {
+	tension: 1800,
+	/** Gap between one spectrum position's avatars taking off and the next. */
+	flyStep: 750,
+	/** Landing time after the last position takes off. */
+	flyLand: 900,
+	score: 2600,
+	spotlight: 15000,
+} as const;
+
+export type RevealStage = "tension" | "fly" | "score" | "spotlight" | "done";
+
+export interface RevealPace {
+	seq: number;
+	stage: RevealStage;
+	endsAt: number | null;
+	/** Who defends their take in the spotlight beat, if anyone. */
+	spotlightId: string | null;
+	spotlightReason: "lone-wolf" | "extreme" | null;
+}
+
+export interface RoundSummary {
+	roundNumber: number;
+	prompt: HotTakePrompt;
+	votes: RevealedVote[];
+	voteGroups: VoteGroup[];
+	/** Players in the round who did not vote. */
+	abstainedIds: string[];
+}
+
+/** Occupied positions in landing order: one at a time from the edges inward. */
+export function flyOrder(groups: VoteGroup[]): HotTakePosition[] {
+	const order: HotTakePosition[] = [1, 5, 2, 4, 3];
+	return order.filter((position) =>
+		groups.some((group) => group.position === position),
+	);
+}
+
+export function flyDuration(groups: VoteGroup[]): number {
+	const steps = flyOrder(groups).length;
+	return steps ? (steps - 1) * REVEAL_MS.flyStep + REVEAL_MS.flyLand : 0;
+}
+
 export interface HotTakeGameState {
 	roomCode: string;
 	hostId: string;
@@ -64,6 +117,9 @@ export interface HotTakeGameState {
 	usedPromptIds: string[];
 	votes: Record<string, StoredVote>;
 	voteGroups: VoteGroup[];
+	reveal: RevealPace | null;
+	paceSeq: number;
+	history: RoundSummary[];
 	startedAt: number | null;
 	roundStartedAt: number | null;
 	finishedAt: number | null;
@@ -82,6 +138,9 @@ export interface PublicHotTakeGameState {
 	submittedPlayerIds: string[];
 	revealedVotes: RevealedVote[];
 	voteGroups: VoteGroup[];
+	reveal: RevealPace | null;
+	/** Finished rounds; the current one joins once its split has been shown. */
+	history: RoundSummary[];
 	startedAt: number | null;
 	roundStartedAt: number | null;
 	finishedAt: number | null;
@@ -91,6 +150,8 @@ export type ClientMessage =
 	| { type: "join"; name: string }
 	| { type: "start" }
 	| { type: "submit-vote"; position: HotTakePosition }
+	| { type: "skip-spotlight" }
+	| { type: "react"; reaction: Reaction }
 	| { type: "next-round" }
 	| { type: "restart" }
 	| { type: "leave" };
@@ -100,9 +161,9 @@ export type ServerMessage =
 	| { type: "player-joined"; player: HotTakePlayer }
 	| { type: "player-left"; playerId: string }
 	| { type: "round-started"; prompt: HotTakePrompt; roundNumber: number }
-	| { type: "round-revealed"; voteGroups: VoteGroup[] }
 	| { type: "game-over" }
 	| { type: "game-restarted" }
+	| ReactionMessage
 	| { type: "error"; message: string };
 
 function clampRoundTime(value: string | null): number {
@@ -149,21 +210,70 @@ function buildVoteGroups(votes: Record<string, StoredVote>): VoteGroup[] {
 		.sort((left, right) => left.position - right.position);
 }
 
+/**
+ * The lone wolf furthest from the room (or, with nobody alone, the vote
+ * furthest from the average) gets the spotlight. Ties go to the earlier vote.
+ */
+function pickSpotlight(
+	votes: Record<string, StoredVote>,
+	groups: VoteGroup[],
+): Pick<RevealPace, "spotlightId" | "spotlightReason"> {
+	const all = Object.values(votes);
+	if (all.length < 2) return { spotlightId: null, spotlightReason: null };
+	const mean = all.reduce((sum, vote) => sum + vote.position, 0) / all.length;
+	const lone = new Set(
+		groups
+			.filter((group) => group.playerIds.length === 1)
+			.flatMap((group) => group.playerIds),
+	);
+	const pool = lone.size ? all.filter((vote) => lone.has(vote.playerId)) : all;
+	const best = [...pool].sort(
+		(left, right) =>
+			Math.abs(right.position - mean) - Math.abs(left.position - mean) ||
+			left.submittedAt - right.submittedAt,
+	)[0];
+	if (!best || (!lone.size && Math.abs(best.position - mean) < 0.01)) {
+		return { spotlightId: null, spotlightReason: null };
+	}
+	return {
+		spotlightId: best.playerId,
+		spotlightReason: lone.size ? "lone-wolf" : "extreme",
+	};
+}
+
 class HotTakeArenaParty implements Party.Server {
 	constructor(readonly room: Party.Room) {}
 
 	state: HotTakeGameState | null = null;
+	reactedAt = new Map<string, number>();
 	gameNightMembers = new WeakMap<Party.Connection, GameNightMember>();
 
 	async onStart() {
 		const stored = await this.room.storage.get<HotTakeGameState>("state");
 		if (stored) {
+			stored.reveal ??= null;
+			stored.paceSeq ??= 0;
+			stored.history ??= [];
 			this.state = stored;
 			for (const player of Object.values(this.state.players)) {
 				player.connected = false;
 			}
 			await this.saveState();
+			await this.scheduleAlarm();
 		}
+	}
+
+	/** The alarm drives the vote timer and the reveal beats. */
+	async scheduleAlarm() {
+		const s = this.state;
+		const at =
+			s?.status === "voting" && s.roundStartedAt
+				? s.roundStartedAt + s.settings.roundTimeLimit * 1000
+				: s?.status === "reveal"
+					? (s.reveal?.endsAt ?? null)
+					: null;
+		if (at) await this.room.storage.setAlarm(Math.max(Date.now() + 10, at));
+		else await this.room.storage.deleteAlarm();
 	}
 
 	async saveState() {
@@ -177,8 +287,17 @@ class HotTakeArenaParty implements Party.Server {
 			throw new Error("No game state");
 		}
 
+		const stage = this.state.reveal?.stage;
+		// Nothing about the split leaves the server during the tension hold.
 		const shouldReveal =
-			this.state.status === "reveal" || this.state.status === "finished";
+			(this.state.status === "reveal" && stage !== "tension") ||
+			this.state.status === "finished";
+		const currentShown =
+			this.state.status !== "reveal" || stage === "spotlight" || stage === "done";
+		const roundNumber = this.state.roundNumber;
+		const history = currentShown
+			? this.state.history
+			: this.state.history.filter((entry) => entry.roundNumber !== roundNumber);
 
 		return {
 			roomCode: this.state.roomCode,
@@ -198,6 +317,12 @@ class HotTakeArenaParty implements Party.Server {
 					}))
 				: [],
 			voteGroups: shouldReveal ? this.state.voteGroups : [],
+			// Who gets the spotlight would give the split away early.
+			reveal:
+				this.state.reveal && !currentShown
+					? { ...this.state.reveal, spotlightId: null, spotlightReason: null }
+					: this.state.reveal,
+			history,
 			startedAt: this.state.startedAt,
 			roundStartedAt: this.state.roundStartedAt,
 			finishedAt: this.state.finishedAt,
@@ -245,12 +370,11 @@ class HotTakeArenaParty implements Party.Server {
 		this.state.usedPromptIds = [...this.state.usedPromptIds, prompt.id];
 		this.state.votes = {};
 		this.state.voteGroups = [];
+		this.state.reveal = null;
 		this.state.roundStartedAt = Date.now();
 
 		await this.saveState();
-		this.room.storage.setAlarm(
-			Date.now() + this.state.settings.roundTimeLimit * 1000,
-		);
+		await this.scheduleAlarm();
 		this.broadcast({
 			type: "round-started",
 			prompt,
@@ -260,31 +384,76 @@ class HotTakeArenaParty implements Party.Server {
 	}
 
 	async revealRound() {
-		if (!this.state || this.state.status !== "voting") {
+		const s = this.state;
+		if (!s || s.status !== "voting" || !s.prompt) {
 			return;
 		}
 
-		const voteGroups = buildVoteGroups(this.state.votes);
+		const voteGroups = buildVoteGroups(s.votes);
+		s.status = "reveal";
+		s.voteGroups = voteGroups;
+		s.reveal = {
+			seq: ++s.paceSeq,
+			stage: "tension",
+			endsAt: Date.now() + REVEAL_MS.tension,
+			...pickSpotlight(s.votes, voteGroups),
+		};
+		s.history = [
+			...s.history.filter((entry) => entry.roundNumber !== s.roundNumber),
+			{
+				roundNumber: s.roundNumber,
+				prompt: s.prompt,
+				votes: Object.values(s.votes).map((vote) => ({
+					playerId: vote.playerId,
+					position: vote.position,
+				})),
+				voteGroups,
+				abstainedIds: Object.keys(s.players).filter((playerId) => !s.votes[playerId]),
+			},
+		];
+		await this.commit();
+	}
 
-		for (const group of voteGroups) {
-			if (group.points === 0) {
-				continue;
-			}
+	/** Moves the reveal on one beat. Points land only once the reveal is over. */
+	advanceReveal() {
+		const s = this.state;
+		const reveal = s?.reveal;
+		if (!s || s.status !== "reveal" || !reveal) return;
+		const next = (stage: RevealStage, ms: number) => {
+			s.reveal = { ...reveal, seq: ++s.paceSeq, stage, endsAt: Date.now() + ms };
+		};
 
+		if (reveal.stage === "tension") {
+			if (s.voteGroups.length) next("fly", flyDuration(s.voteGroups));
+			else this.finishReveal();
+		} else if (reveal.stage === "fly") {
+			next("score", REVEAL_MS.score);
+		} else if (
+			reveal.stage === "score" &&
+			reveal.spotlightId &&
+			s.players[reveal.spotlightId]
+		) {
+			next("spotlight", REVEAL_MS.spotlight);
+		} else if (reveal.stage === "score" || reveal.stage === "spotlight") {
+			this.finishReveal();
+		}
+	}
+
+	finishReveal() {
+		const s = this.state;
+		if (!s?.reveal || s.reveal.stage === "done") return;
+		for (const group of s.voteGroups) {
 			for (const playerId of group.playerIds) {
-				const player = this.state.players[playerId];
-				if (player) {
-					player.score += group.points;
-				}
+				const player = s.players[playerId];
+				if (player) player.score += group.points;
 			}
 		}
+		s.reveal = { ...s.reveal, seq: ++s.paceSeq, stage: "done", endsAt: null };
+	}
 
-		this.state.status = "reveal";
-		this.state.voteGroups = voteGroups;
-		await this.room.storage.deleteAlarm();
+	async commit() {
 		await this.saveState();
-
-		this.broadcast({ type: "round-revealed", voteGroups });
+		await this.scheduleAlarm();
 		this.broadcast({ type: "state", state: this.getPublicState() });
 	}
 
@@ -295,6 +464,7 @@ class HotTakeArenaParty implements Party.Server {
 
 		this.state.status = "finished";
 		this.state.finishedAt = Date.now();
+		this.state.reveal = null;
 		await this.room.storage.deleteAlarm();
 		await this.saveState();
 		this.broadcast({ type: "game-over" });
@@ -328,6 +498,9 @@ class HotTakeArenaParty implements Party.Server {
 				usedPromptIds: [],
 				votes: {},
 				voteGroups: [],
+				reveal: null,
+				paceSeq: 0,
+				history: [],
 				startedAt: null,
 				roundStartedAt: null,
 				finishedAt: null,
@@ -405,6 +578,7 @@ class HotTakeArenaParty implements Party.Server {
 					this.state.startedAt = Date.now();
 					this.state.roundNumber = 1;
 					this.state.finishedAt = null;
+					this.state.history = [];
 					for (const player of Object.values(this.state.players)) {
 						player.score = 0;
 					}
@@ -442,6 +616,21 @@ class HotTakeArenaParty implements Party.Server {
 					break;
 				}
 
+				case "skip-spotlight": {
+					if (!canControlGame(this.state.players, this.state.hostId, sender.id)) return;
+					if (this.state.status !== "reveal" || this.state.reveal?.stage !== "spotlight") return;
+					this.finishReveal();
+					await this.commit();
+					break;
+				}
+
+				case "react": {
+					if (!this.state.players[sender.id] || !isReaction(data.reaction)) return;
+					if (!takeReactionSlot(this.reactedAt, sender.id)) return;
+					this.broadcast({ type: "reaction", playerId: sender.id, reaction: data.reaction });
+					break;
+				}
+
 				case "next-round": {
 					if (!canControlGame(this.state.players, this.state.hostId, sender.id)) {
 						this.send(sender, {
@@ -451,7 +640,7 @@ class HotTakeArenaParty implements Party.Server {
 						return;
 					}
 
-					if (this.state.status !== "reveal") {
+					if (this.state.status !== "reveal" || this.state.reveal?.stage !== "done") {
 						return;
 					}
 
@@ -477,6 +666,8 @@ class HotTakeArenaParty implements Party.Server {
 					this.state.usedPromptIds = [];
 					this.state.votes = {};
 					this.state.voteGroups = [];
+					this.state.reveal = null;
+					this.state.history = [];
 					this.state.startedAt = null;
 					this.state.roundStartedAt = null;
 					this.state.finishedAt = null;
@@ -520,7 +711,18 @@ class HotTakeArenaParty implements Party.Server {
 	}
 
 	async onAlarm() {
-		await this.revealRound();
+		const s = this.state;
+		if (!s) return;
+		const now = Date.now();
+		if (s.status === "voting") {
+			const deadline = (s.roundStartedAt ?? 0) + s.settings.roundTimeLimit * 1000;
+			if (now < deadline - 500) return this.scheduleAlarm();
+			await this.revealRound();
+		} else if (s.status === "reveal" && s.reveal?.endsAt) {
+			if (now < s.reveal.endsAt - 50) return this.scheduleAlarm();
+			this.advanceReveal();
+			await this.commit();
+		}
 	}
 
 	async onClose(connection: Party.Connection) {

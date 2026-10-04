@@ -1,7 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
-import { Check, Loader2, RotateCcw, Timer, Trophy, Vote } from "lucide-react";
+import { Timer, Vote } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { HotTakeGame } from "@/components/games/hot-take-arena/HotTakeGame";
 import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge";
 import { useMultiplayerHotTakeArena } from "@/components/games/hot-take-arena/useMultiplayerHotTakeArena";
 import {
@@ -9,7 +10,6 @@ import {
 	MultiplayerLobby,
 	MultiplayerSetupCard,
 } from "@/components/multiplayer/shared";
-import { Button } from "@/components/ui/button";
 import {
 	Card,
 	CardContent,
@@ -19,10 +19,7 @@ import {
 } from "@/components/ui/card";
 import type { HotTakePack } from "@/lib/hotTakePrompts";
 import { getGameNightInviteLink, getInviteLink, parseInviteSearch } from "@/lib/inviteLinks";
-import type {
-	HotTakePosition,
-	HotTakeSettings,
-} from "../../../party/hot-take-arena";
+import type { HotTakeSettings } from "../../../party/hot-take-arena";
 
 export const Route = createFileRoute("/games/hot-take-arena")({
 	validateSearch: parseInviteSearch,
@@ -70,55 +67,6 @@ const PROMPT_PACK_OPTIONS: Array<{
 		description: "Petty and unserious opinions",
 	},
 ];
-const POSITION_OPTIONS: Array<{
-	value: HotTakePosition;
-	label: string;
-	shortLabel: string;
-	description: string;
-	accentClass: string;
-	cardClass: string;
-}> = [
-	{
-		value: 1,
-		label: "Strongly Disagree",
-		shortLabel: "Strong No",
-		description: "Absolutely not",
-		accentClass: "text-rose-600",
-		cardClass: "border-rose-200 bg-rose-500/5",
-	},
-	{
-		value: 2,
-		label: "Disagree",
-		shortLabel: "No",
-		description: "Mostly against it",
-		accentClass: "text-orange-600",
-		cardClass: "border-orange-200 bg-orange-500/5",
-	},
-	{
-		value: 3,
-		label: "Neutral",
-		shortLabel: "Maybe",
-		description: "Split or unsure",
-		accentClass: "text-zinc-600",
-		cardClass: "border-zinc-200 bg-zinc-500/5",
-	},
-	{
-		value: 4,
-		label: "Agree",
-		shortLabel: "Yes",
-		description: "Mostly for it",
-		accentClass: "text-emerald-600",
-		cardClass: "border-emerald-200 bg-emerald-500/5",
-	},
-	{
-		value: 5,
-		label: "Strongly Agree",
-		shortLabel: "Strong Yes",
-		description: "No hesitation",
-		accentClass: "text-teal-600",
-		cardClass: "border-teal-200 bg-teal-500/5",
-	},
-];
 
 function HotTakeArenaPage() {
 	const { room: invitedRoomCode, night } = Route.useSearch();
@@ -131,9 +79,6 @@ function HotTakeArenaPage() {
 	const [promptPack, setPromptPack] = useState<HotTakePack>("mixed");
 	const [message, setMessage] = useState<string | null>(null);
 	const [copiedRoomCode, setCopiedRoomCode] = useState(false);
-	const [now, setNow] = useState(Date.now());
-	const [selectedPosition, setSelectedPosition] =
-		useState<HotTakePosition | null>(null);
 
 	useEffect(() => {
 		if (invitedRoomCode) setJoinRoomCode(invitedRoomCode);
@@ -166,7 +111,6 @@ function HotTakeArenaPage() {
 	const displayedRoomCode = gameNightBridge.isGameNight
 		? gameNightBridge.publicRoomCode
 		: multiplayer.gameState?.roomCode ?? "";
-	const activeRoundNumber = multiplayer.gameState?.roundNumber;
 
 	useEffect(() => {
 		if (multiplayer.connectionStatus === "connected" && multiplayer.gameState) {
@@ -182,28 +126,6 @@ function HotTakeArenaPage() {
 		}
 	}, [multiplayer.error]);
 
-	useEffect(() => {
-		if (multiplayer.gameState?.status !== "voting") {
-			return;
-		}
-
-		setNow(Date.now());
-		const timer = window.setInterval(() => {
-			setNow(Date.now());
-		}, 250);
-
-		return () => window.clearInterval(timer);
-	}, [multiplayer.gameState?.status]);
-
-	useEffect(() => {
-		if (activeRoundNumber === undefined) {
-			return;
-		}
-
-		setSelectedPosition(null);
-		setMessage(null);
-	}, [activeRoundNumber]);
-
 	const playerList = useMemo(
 		() =>
 			Object.values(multiplayer.gameState?.players ?? {}).sort(
@@ -215,47 +137,11 @@ function HotTakeArenaPage() {
 		(player) => player.connected !== false,
 	).length;
 
-	const leaderboard = useMemo(
-		() =>
-			Object.values(multiplayer.gameState?.players ?? {}).sort(
-				(left, right) => {
-					if (right.score !== left.score) {
-						return right.score - left.score;
-					}
-
-					return left.joinedAt - right.joinedAt;
-				},
-			),
-		[multiplayer.gameState],
-	);
-
-	const submittedCount = multiplayer.gameState?.submittedPlayerIds.length ?? 0;
-	const currentPlayerSubmitted = multiplayer.playerId
-		? (multiplayer.gameState?.submittedPlayerIds.includes(
-				multiplayer.playerId,
-			) ?? false)
-		: false;
-	const timeRemaining =
-		multiplayer.gameState?.status === "voting" &&
-		multiplayer.gameState.roundStartedAt
-			? Math.max(
-					0,
-					multiplayer.gameState.settings.roundTimeLimit -
-						Math.floor((now - multiplayer.gameState.roundStartedAt) / 1000),
-				)
-			: 0;
-	const topScore = Math.max(...leaderboard.map((player) => player.score), 0);
-	const winners =
-		multiplayer.gameState?.status === "finished"
-			? leaderboard.filter((player) => player.score === topScore)
-			: [];
-
 	const handleBack = () => {
 		session.forget();
 		multiplayer.disconnect();
 
 		setView("setup");
-		setSelectedPosition(null);
 		setMessage(null);
 	};
 
@@ -301,12 +187,6 @@ function HotTakeArenaPage() {
 		} catch {
 			setMessage("Could not copy the invite link.");
 		}
-	};
-
-	const handleSubmitVote = (position: HotTakePosition) => {
-		setSelectedPosition(position);
-		multiplayer.submitVote(position);
-		setMessage(null);
 	};
 
 	if (isGameNightMode && !multiplayer.gameState) {
@@ -489,392 +369,22 @@ function HotTakeArenaPage() {
 	}
 
 	if (view === "game" && multiplayer.gameState && multiplayer.playerId) {
-		const gameState = multiplayer.gameState;
-		const isVoting = gameState.status === "voting";
-		const isReveal = gameState.status === "reveal";
-		const isFinished = gameState.status === "finished";
-		const revealedVotesByPlayer = new Map(
-			gameState.revealedVotes.map((vote) => [vote.playerId, vote.position]),
-		);
-		const currentPlayerRevealPosition =
-			revealedVotesByPlayer.get(multiplayer.playerId) ?? selectedPosition;
-		const currentPlayerOption = POSITION_OPTIONS.find(
-			(option) => option.value === currentPlayerRevealPosition,
-		);
-		const currentPlayerGroup = currentPlayerOption
-			? gameState.voteGroups.find(
-					(group) => group.position === currentPlayerOption.value,
-				)
-			: null;
-		const largestGroupSize = Math.max(
-			...gameState.voteGroups.map((group) => group.playerIds.length),
-			0,
-		);
-		const biggestGroups = gameState.voteGroups.filter(
-			(group) =>
-				group.playerIds.length === largestGroupSize && largestGroupSize > 0,
-		);
-		const winningLaneLabel =
-			biggestGroups.length === 1
-				? (POSITION_OPTIONS.find(
-						(option) => option.value === biggestGroups[0]?.position,
-					)?.label ?? null)
-				: null;
-
 		return (
-			<div className="min-h-[calc(100vh-73px)] bg-background">
-				<GameTopBar
-					title="Hot Take Arena"
-					subtitle={`Round ${gameState.roundNumber} / ${gameState.settings.rounds}`}
-					onBack={handleBack}
-					rightAction={
-						<Button
-							variant="ghost"
-							size="sm"
-							onClick={multiplayer.restartGame}
-							disabled={!multiplayer.isHost}
-						>
-							<RotateCcw className="mr-1 h-4 w-4" />
-							Rematch
-						</Button>
-					}
-				/>
-
-				<div className="mx-auto grid max-w-6xl gap-6 px-4 py-6 lg:grid-cols-[1.45fr_0.9fr]">
-					<Card className="overflow-hidden">
-						<CardHeader className="border-b">
-							<div className="flex items-start justify-between gap-4">
-								<div>
-									<CardTitle>Hot Take</CardTitle>
-									<CardDescription>
-										Choose the lane you think fits you and the room.
-									</CardDescription>
-								</div>
-								<div className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold capitalize text-primary">
-									{gameState.settings.promptPack}
-								</div>
-							</div>
-						</CardHeader>
-						<CardContent className="space-y-6 pt-6">
-							{isFinished && (
-								<div className="rounded-2xl border bg-primary/8 px-4 py-4">
-									<p className="flex items-center gap-2 text-sm font-semibold">
-										<Trophy className="h-4 w-4" />
-										{winners.length > 1
-											? `Tie game: ${winners.map((winner) => winner.name).join(", ")}`
-											: winners[0]
-												? `${winners[0].name} wins the arena`
-												: "Match complete"}
-									</p>
-								</div>
-							)}
-
-							<div className="rounded-3xl border bg-accent/40 px-5 py-6 text-center">
-								<p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">
-									Current Prompt
-								</p>
-								<p className="mt-3 text-2xl font-semibold leading-snug md:text-3xl">
-									{gameState.prompt?.text}
-								</p>
-								<div className="mt-6 grid gap-2 sm:grid-cols-5">
-									{POSITION_OPTIONS.map((option) => {
-										const isActive =
-											currentPlayerRevealPosition === option.value;
-										const clusterSize =
-											gameState.voteGroups.find(
-												(group) => group.position === option.value,
-											)?.playerIds.length ?? 0;
-
-										return (
-											<div
-												key={option.value}
-												className={`rounded-2xl border px-3 py-3 text-left transition-colors ${
-													isActive
-														? `${option.cardClass} shadow-sm`
-														: "border-border bg-background/80"
-												}`}
-											>
-												<p
-													className={`text-xs font-semibold ${option.accentClass}`}
-												>
-													{option.shortLabel}
-												</p>
-												<p className="mt-1 text-[11px] text-muted-foreground">
-													{option.description}
-												</p>
-												{(isReveal || isFinished) && (
-													<p className="mt-2 text-xs font-medium text-foreground">
-														{clusterSize} picked
-													</p>
-												)}
-											</div>
-										);
-									})}
-								</div>
-							</div>
-
-							{isVoting && (
-								<div className="rounded-2xl border px-4 py-4">
-									<div className="flex items-center justify-between gap-3 text-sm">
-										<p className="font-medium text-foreground">
-											{submittedCount} / {playerList.length} locked in
-										</p>
-										<p className="flex items-center gap-2 text-muted-foreground">
-											<Timer className="h-4 w-4" />
-											{timeRemaining}s left
-										</p>
-									</div>
-									<div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-										{POSITION_OPTIONS.map((option) => {
-											const isPicked = selectedPosition === option.value;
-											return (
-												<button
-													key={option.value}
-													type="button"
-													onClick={() => handleSubmitVote(option.value)}
-													disabled={currentPlayerSubmitted}
-													className={`rounded-2xl border px-4 py-4 text-left transition-colors ${
-														isPicked
-															? `${option.cardClass} border-current ${option.accentClass}`
-															: "border-border hover:border-primary/50"
-													} ${currentPlayerSubmitted ? "cursor-default opacity-80" : ""}`}
-												>
-													<p
-														className={`text-sm font-semibold ${option.accentClass}`}
-													>
-														{option.label}
-													</p>
-													<p className="mt-1 text-xs text-muted-foreground">
-														{option.description}
-													</p>
-													<div className="mt-4 h-1.5 rounded-full bg-accent">
-														<div
-															className={`h-1.5 rounded-full ${
-																option.value <= 2
-																	? "bg-orange-500"
-																	: option.value === 3
-																		? "bg-zinc-400"
-																		: "bg-emerald-500"
-															}`}
-															style={{ width: `${option.value * 20}%` }}
-														/>
-													</div>
-												</button>
-											);
-										})}
-									</div>
-									<div className="mt-4 rounded-xl bg-accent/60 px-4 py-3 text-sm text-muted-foreground">
-										{currentPlayerSubmitted ? (
-											<span className="inline-flex items-center gap-2 font-medium text-foreground">
-												<Check className="h-4 w-4 text-primary" />
-												Vote locked. Waiting for the rest of the room.
-											</span>
-										) : (
-											"Pick one of the five positions. Your vote stays hidden until reveal."
-										)}
-									</div>
-								</div>
-							)}
-
-							{(isReveal || isFinished) && (
-								<div className="space-y-3">
-									<div className="rounded-2xl border bg-accent/30 px-4 py-4">
-										<p className="text-sm font-semibold text-foreground">
-											Round Outcome
-										</p>
-										<p className="mt-2 text-sm text-muted-foreground">
-											{currentPlayerGroup && currentPlayerGroup.points > 0
-												? `You landed on ${currentPlayerOption?.label} with ${currentPlayerGroup.playerIds.length - 1} other ${currentPlayerGroup.playerIds.length === 2 ? "player" : "players"} and earned ${currentPlayerGroup.points} points.`
-												: currentPlayerOption
-													? `You picked ${currentPlayerOption.label}. Nobody else landed there, so this round scored 0.`
-													: "Reveal is in. Check where the room clustered."}
-										</p>
-										{largestGroupSize > 0 && (
-											<p className="mt-2 text-xs font-medium text-foreground">
-												{winningLaneLabel
-													? `Biggest lane: ${winningLaneLabel} with ${largestGroupSize} players`
-													: `The room split across ${biggestGroups.length} equally large lanes`}
-											</p>
-										)}
-									</div>
-
-									<p className="text-sm font-semibold text-foreground">
-										Reveal
-									</p>
-									<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-										{POSITION_OPTIONS.map((option) => {
-											const group = gameState.voteGroups.find(
-												(entry) => entry.position === option.value,
-											);
-											const playersInLane = (group?.playerIds ?? [])
-												.map((playerId) => ({
-													id: playerId,
-													name: gameState.players[playerId]?.name,
-												}))
-												.filter(
-													(player): player is { id: string; name: string } =>
-														Boolean(player.name),
-												);
-
-											const isCurrentPlayersLane =
-												currentPlayerOption?.value === option.value;
-
-											return (
-												<div
-													key={option.value}
-													className={`rounded-2xl border px-4 py-4 ${
-														isCurrentPlayersLane
-															? `${option.cardClass} shadow-sm`
-															: ""
-													}`}
-												>
-													<p
-														className={`text-sm font-semibold ${option.accentClass}`}
-													>
-														{option.shortLabel}
-													</p>
-													<p className="mt-1 text-xs text-muted-foreground">
-														{option.label}
-													</p>
-													<p className="mt-3 text-2xl font-bold">
-														{group?.playerIds.length ?? 0}
-													</p>
-													<p className="mt-1 text-xs text-muted-foreground">
-														{group?.points
-															? `+${group.points} each in this cluster`
-															: "No shared score here"}
-													</p>
-													{playersInLane.length > 0 && (
-														<div className="mt-3 flex flex-wrap gap-2">
-															{playersInLane.map((player) => (
-																<span
-																	key={`${option.value}-${player.id}`}
-																	className={`rounded-full px-2.5 py-1 text-xs ${
-																		player.id === multiplayer.playerId
-																			? "bg-primary text-primary-foreground"
-																			: "bg-accent"
-																	}`}
-																>
-																	{player.name}
-																</span>
-															))}
-														</div>
-													)}
-												</div>
-											);
-										})}
-									</div>
-
-									{multiplayer.isHost && !isFinished && (
-										<Button
-											className="w-full sm:w-auto"
-											onClick={multiplayer.nextRound}
-										>
-											{gameState.roundNumber >= gameState.settings.rounds
-												? "Finish Match"
-												: "Next Round"}
-										</Button>
-									)}
-								</div>
-							)}
-						</CardContent>
-					</Card>
-
-					<div className="space-y-6">
-						<Card>
-							<CardHeader>
-								<CardTitle>Leaderboard</CardTitle>
-								<CardDescription>
-									Shared opinions score. Solo picks do not.
-								</CardDescription>
-							</CardHeader>
-							<CardContent className="space-y-3">
-								{leaderboard.map((player, index) => {
-									const revealedPosition = revealedVotesByPlayer.get(player.id);
-									const positionLabel = POSITION_OPTIONS.find(
-										(option) => option.value === revealedPosition,
-									)?.shortLabel;
-
-									return (
-										<div
-											key={player.id}
-											className="flex items-center justify-between rounded-2xl border px-4 py-3"
-										>
-											<div>
-												<p className="font-medium">
-													{index + 1}. {player.name}
-												</p>
-												<p className="text-xs text-muted-foreground">
-													{player.id === multiplayer.playerId
-														? "You"
-														: player.id === gameState.hostId
-															? "Host"
-															: "Player"}
-													{positionLabel && (isReveal || isFinished)
-														? ` • ${positionLabel}`
-														: ""}
-												</p>
-											</div>
-											<div className="text-right">
-												<p className="text-lg font-bold">{player.score}</p>
-												<p className="text-xs text-muted-foreground">pts</p>
-											</div>
-										</div>
-									);
-								})}
-							</CardContent>
-						</Card>
-
-						<Card>
-							<CardHeader>
-								<CardTitle>Round Status</CardTitle>
-								<CardDescription>
-									Keep pressure visible while the room decides.
-								</CardDescription>
-							</CardHeader>
-							<CardContent className="space-y-3 text-sm text-muted-foreground">
-								<div className="rounded-2xl border px-4 py-3">
-									<p className="font-medium text-foreground">Round</p>
-									<p className="mt-1">
-										{gameState.roundNumber} / {gameState.settings.rounds}
-									</p>
-								</div>
-								<div className="rounded-2xl border px-4 py-3">
-									<p className="font-medium text-foreground">Timer</p>
-									<p className="mt-1">
-										{isVoting
-											? `${timeRemaining}s left`
-											: `${gameState.settings.roundTimeLimit}s per round`}
-									</p>
-								</div>
-								<div className="rounded-2xl border px-4 py-3">
-									<p className="font-medium text-foreground">Prompt Pack</p>
-									<p className="mt-1 capitalize">
-										{gameState.settings.promptPack}
-									</p>
-								</div>
-								<div className="rounded-2xl border px-4 py-3">
-									<p className="font-medium text-foreground">Submissions</p>
-									<p className="mt-1">
-										{submittedCount} / {playerList.length}
-									</p>
-								</div>
-								{message && (
-									<div className="rounded-xl border bg-accent/40 px-4 py-3 text-sm text-foreground">
-										{message}
-									</div>
-								)}
-								{multiplayer.connectionStatus === "connecting" && (
-									<div className="inline-flex items-center gap-2 text-sm">
-										<Loader2 className="h-4 w-4 animate-spin" />
-										Connecting...
-									</div>
-								)}
-							</CardContent>
-						</Card>
-					</div>
-				</div>
-			</div>
+			<HotTakeGame
+				state={multiplayer.gameState}
+				playerId={multiplayer.playerId}
+				isHost={multiplayer.isHost}
+				roomLabel={displayedRoomCode}
+				connected={multiplayer.connectionStatus === "connected"}
+				error={multiplayer.error}
+				reactions={multiplayer.reactions}
+				onReact={multiplayer.react}
+				onVote={multiplayer.submitVote}
+				onSkipSpotlight={multiplayer.skipSpotlight}
+				onNextRound={multiplayer.nextRound}
+				onRestart={multiplayer.restartGame}
+				onLeave={handleBack}
+			/>
 		);
 	}
 

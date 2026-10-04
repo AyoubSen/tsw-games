@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react"
 
 /** Table sound effects, synthesized with Web Audio so there are no files to load. */
-export type SoundName = "deal" | "flip" | "chip" | "pot" | "dice" | "capture" | "turn" | "win" | "howl" | "dawn" | "toll" | "knock" | "shot" | "clue" | "correct" | "wrong" | "assassin" | "tick"
+export type SoundName = "deal" | "flip" | "chip" | "pot" | "dice" | "capture" | "turn" | "win" | "howl" | "dawn" | "toll" | "knock" | "shot" | "clue" | "correct" | "wrong" | "assassin" | "tick" | "lockin" | "whoosh" | "group" | "lonewolf" | "roundEnd"
 
 const MUTE_KEY = "tsw-games-muted"
 const VOLUME = 0.22
@@ -193,6 +193,29 @@ const SOUNDS: Record<SoundName, (c: AudioContext, at: number) => void> = {
   tick: (c, at) => {
     tone(c, at, { freq: 1500, type: "square", peak: 0.08, decay: 0.05 })
     burst(c, at, { type: "highpass", freq: 4000, peak: 0.15, decay: 0.02 })
+  },
+  lockin: (c, at) => {
+    burst(c, at, { type: "bandpass", freq: 1800, q: 2, peak: 0.3, decay: 0.03 })
+    tone(c, at + 0.015, { freq: 660, type: "triangle", peak: 0.22, decay: 0.16 })
+    tone(c, at + 0.07, { freq: 990, type: "triangle", peak: 0.18, decay: 0.22 })
+  },
+  whoosh: (c, at) => {
+    burst(c, at, { type: "bandpass", freq: 400, sweepTo: 3200, q: 0.9, peak: 0.45, decay: 0.55 })
+    tone(c, at + 0.1, { freq: 220, type: "triangle", peak: 0.08, decay: 0.5, slideTo: 440 })
+  },
+  group: (c, at) => {
+    ;[659.25, 830.61, 987.77].forEach((freq, i) => tone(c, at + i * 0.07, { freq, type: "triangle", peak: 0.22, decay: 0.4 }))
+    clink(c, at + 0.22, 0.18)
+  },
+  lonewolf: (c, at) => {
+    tone(c, at, { freq: 392, type: "triangle", peak: 0.2, decay: 0.5, slideTo: 523.25 })
+    tone(c, at + 0.42, { freq: 523.25, type: "triangle", peak: 0.22, decay: 1.1, slideTo: 349.23 })
+    tone(c, at + 0.42, { freq: 1046.5, peak: 0.04, decay: 0.9, slideTo: 698.46 })
+  },
+  roundEnd: (c, at) => {
+    tone(c, at, { freq: 523.25, type: "triangle", peak: 0.24, decay: 0.3 })
+    tone(c, at + 0.12, { freq: 783.99, type: "triangle", peak: 0.26, decay: 0.6 })
+    burst(c, at + 0.12, { type: "highpass", freq: 5000, peak: 0.12, decay: 0.08 })
   },
 }
 

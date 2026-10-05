@@ -1621,6 +1621,7 @@ class MafiaParty implements Party.Server {
         finished,
         scored: true,
         winnerIds: finished ? this.state!.winningPlayerIds.filter((id) => !this.state!.players[id]?.isBot) : [],
+        vsBot: Object.values(this.state?.players ?? {}).some((player) => player.isBot),
       })
     } catch {
       return new Response("Not found", { status: 404 })

@@ -30,10 +30,18 @@ export const record = internalMutation({
         .query("gameStats")
         .withIndex("by_user_game", (q) => q.eq("clerkUserId", userId).eq("game", game))
         .unique()
+      const win = won ? 1 : 0
+      const bot = vsBot ? 1 : 0
       if (stats) {
-        await ctx.db.patch(stats._id, { played: stats.played + 1, wins: stats.wins + (won ? 1 : 0), lastPlayedAt: now })
+        await ctx.db.patch(stats._id, {
+          played: stats.played + 1,
+          wins: stats.wins + win,
+          botPlayed: (stats.botPlayed ?? 0) + bot,
+          botWins: (stats.botWins ?? 0) + bot * win,
+          lastPlayedAt: now,
+        })
       } else {
-        await ctx.db.insert("gameStats", { clerkUserId: userId, game, played: 1, wins: won ? 1 : 0, lastPlayedAt: now })
+        await ctx.db.insert("gameStats", { clerkUserId: userId, game, played: 1, wins: win, botPlayed: bot, botWins: bot * win, lastPlayedAt: now })
       }
     }
     await ctx.db.insert("gameResults", { resultId, game, vsBot, players: recorded, reportedAt: now })

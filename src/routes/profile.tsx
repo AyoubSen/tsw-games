@@ -162,8 +162,8 @@ function SignedInProfile() {
 						<p className="text-sm text-muted-foreground">Loading…</p>
 					) : sortedStats.length === 0 ? (
 						<p className="text-sm text-muted-foreground">
-							No games yet - finish a game of Pool or a Game Night to see it
-							here.
+							No games yet - finish a game of Pool or any game in a Game Night
+							to see it here.
 						</p>
 					) : (
 						<table className="w-full text-sm">
@@ -178,7 +178,14 @@ function SignedInProfile() {
 							<tbody>
 								{sortedStats.map((stat) => (
 									<tr key={stat._id} className="border-t">
-										<td className="py-2 font-medium">{gameTitle(stat.game)}</td>
+										<td className="py-2 font-medium">
+											{gameTitle(stat.game)}
+											{(stat.botPlayed ?? 0) > 0 && (
+												<span className="block text-xs font-normal text-muted-foreground">
+													{stat.botWins ?? 0}/{stat.botPlayed} vs bots
+												</span>
+											)}
+										</td>
 										<td className="py-2 text-right tabular-nums">{stat.played}</td>
 										<td className="py-2 text-right tabular-nums">{stat.wins}</td>
 										<td className="py-2 text-right tabular-nums">

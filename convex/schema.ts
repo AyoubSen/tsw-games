@@ -22,6 +22,9 @@ export default defineSchema({
     game: v.string(),
     played: v.number(),
     wins: v.number(),
+    /** The part of played/wins that had a bot at the table. Missing on rows from before bots were counted apart. */
+    botPlayed: v.optional(v.number()),
+    botWins: v.optional(v.number()),
     lastPlayedAt: v.number(),
   })
     .index("by_user", ["clerkUserId"])

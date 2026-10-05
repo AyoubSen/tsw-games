@@ -2169,7 +2169,8 @@ class PokerParty implements Party.Server {
       const winnerIds = best === null
         ? []
         : remaining.filter((player) => net(player) === best).map((player) => player.id)
-      return Response.json({ finished, scored: true, winnerIds })
+      const vsBot = Object.values(this.state?.players ?? {}).some((player) => player.isBot)
+      return Response.json({ finished, scored: true, winnerIds, vsBot })
     } catch {
       return new Response("Not found", { status: 404 })
     }

@@ -942,7 +942,8 @@ class UnoParty implements Party.Server {
     if (!match) return new Response("Not found", { status: 404 })
     const finished = this.state?.status === "finished"
     const winnerId = finished && this.state?.winnerId && !this.state.players[this.state.winnerId]?.isBot ? this.state.winnerId : null
-    return Response.json({ finished, scored: true, winnerIds: winnerId ? [winnerId] : [] })
+    const vsBot = Object.values(this.state?.players ?? {}).some((player) => player.isBot)
+    return Response.json({ finished, scored: true, winnerIds: winnerId ? [winnerId] : [], vsBot })
   }
 
   async onClose(connection: Party.Connection) {

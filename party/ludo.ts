@@ -1164,7 +1164,8 @@ class LudoParty implements Party.Server {
             (id) => this.state?.players[id]?.isBot !== true,
           )
         : []
-    return Response.json({ finished, scored: true, winnerIds })
+    const vsBot = Object.values(this.state?.players ?? {}).some((player) => player.isBot)
+    return Response.json({ finished, scored: true, winnerIds, vsBot })
   }
 
   async onClose(connection: Party.Connection) {

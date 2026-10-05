@@ -350,6 +350,7 @@ class GameNightParty implements Party.Server {
 				playerIds: (match.playerIds ?? Object.keys(this.state.matchTickets)).filter((id) => Boolean(this.state?.players[id])),
 			};
 			this.state.history.push(history);
+			this.reportMatch(history, result.vsBot === true);
 			match.status = "finished";
 			this.state.recap = { matchId, stage: "waiting", waitUntil: null, startedAt: null, endsAt: null };
 			this.maybeStartRecap();
@@ -363,6 +364,21 @@ class GameNightParty implements Party.Server {
 				this.broadcast();
 			}
 		}
+	}
+
+	/** Sends one finished match to Convex under its own game, so every Game Night game shows up in profile stats. */
+	reportMatch(entry: GameNightHistoryEntry, vsBot: boolean) {
+		const s = this.state;
+		if (!s) return;
+		const accounts = s.accounts ?? {};
+		void reportResult(this.room, {
+			resultId: `gamenight-match:${s.roomCode}:${entry.matchId}`,
+			game: entry.gameId,
+			vsBot,
+			players: (entry.playerIds ?? []).flatMap((id) =>
+				accounts[id] ? [{ userId: accounts[id], won: entry.scored && entry.winnerIds.includes(id) }] : [],
+			),
+		});
 	}
 
 	/** Sends the finished night to Convex: everyone played, the top scorers won. */

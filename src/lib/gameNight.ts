@@ -152,6 +152,8 @@ export interface GameNightResult {
 	finished: boolean;
 	scored: boolean;
 	winnerIds: string[];
+	/** A bot took a seat, so the match counts as a bot game in profile stats. */
+	vsBot?: boolean;
 }
 
 export function getGameNightGame(gameId: string) {

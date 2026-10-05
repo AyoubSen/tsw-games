@@ -11,6 +11,7 @@ import {
   validateGameNightConnection,
   type GameNightMember,
 } from "./shared/gameNight"
+import { JoinVerifier, reportDirectResult } from "./shared/account"
 import {
   isReaction,
   takeReactionSlot,
@@ -186,6 +187,10 @@ export interface GameState {
   players: Record<string, Player>
   status: "waiting" | "playing" | "round-end" | "finished"
   maxPlayers: number
+  /** Server-only: when the current game started, which keys its result. */
+  startedAt?: number
+  /** Server-only: player id -> verified account. Kept off Player, which is sent to clients as is. */
+  accounts?: Record<string, string>
   currentDrawerId: string | null
   currentWord: string | null
   roundNumber: number
@@ -265,7 +270,7 @@ export interface PublicGameState {
 
 // Message types from client
 export type ClientMessage =
-  | { type: "join"; name: string }
+  | { type: "join"; name: string; authToken?: unknown }
   | { type: "start" }
   | { type: "choose-word"; index: number }
   | { type: "draw"; stroke: Stroke }
@@ -482,7 +487,10 @@ function sanitizeStrokes(value: unknown): Stroke[] {
 }
 
 class DrawingParty implements Party.Server {
-  constructor(readonly room: Party.Room) {}
+  constructor(readonly room: Party.Room) {
+    this.joins = new JoinVerifier(room)
+  }
+  joins: JoinVerifier
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
@@ -1262,6 +1270,20 @@ class DrawingParty implements Party.Server {
     await this.commit()
   }
 
+  /** Same winners as the Game Night result: top score wins; Telephone has no winner. */
+  reportFinish() {
+    if (!this.state) return
+    const players = Object.values(this.state.players)
+    const highestScore = this.state.mode === "telephone" ? 0 : Math.max(...players.map((player) => player.score), 0)
+    const accounts = this.state.accounts ?? {}
+    void reportDirectResult(this.room, {
+      resultId: `drawing:${this.state.roomCode}:${this.state.startedAt}`,
+      game: "drawing",
+      vsBot: false,
+      players: players.map((player) => ({ userId: accounts[player.id], won: highestScore > 0 && player.score === highestScore })),
+    })
+  }
+
   async endGame() {
     if (!this.state) return
 
@@ -1275,6 +1297,7 @@ class DrawingParty implements Party.Server {
       this.setBeat(this.telephoneBeatLength())
     }
     await this.saveState()
+    this.reportFinish()
 
     const results: PlayerResult[] = Object.values(this.state.players)
       .map((p) => ({
@@ -1366,6 +1389,8 @@ class DrawingParty implements Party.Server {
 
     try {
       const data: ClientMessage = JSON.parse(message)
+      if (data.type !== "join") await this.joins.settled(sender)
+      if (!this.state) return
 
       if (data.type !== "join" && !this.isAuthenticated(sender)) {
         this.send(sender, { type: "error", message: "Invalid player session" })
@@ -1383,7 +1408,9 @@ class DrawingParty implements Party.Server {
           }
 
           const member = this.gameNightMembers.get(sender)
-          const playerName = member?.name ?? data.name
+          const account = await this.joins.verify(sender, data.authToken)
+          if (!this.state) return
+          const playerName = member?.name ?? account?.displayName ?? data.name
           const returningPlayer = this.state.players[sender.id]
           const expectedToken = this.state.playerTokens[sender.id]
           if (returningPlayer && expectedToken !== playerToken) {
@@ -1391,10 +1418,12 @@ class DrawingParty implements Party.Server {
             return
           }
 
+          if (account) this.state.accounts = { ...this.state.accounts, [sender.id]: account.userId }
           const returning = markConnected(this.state.players, sender.id)
           if (returning) {
             this.state.playerTokens[sender.id] = playerToken
-            returning.name = playerName || returning.name
+            // A verified player keeps their profile name even if a later join comes without a token.
+            if (member || account || !this.state.accounts?.[sender.id]) returning.name = playerName || returning.name
             await this.saveState()
             this.broadcast({ type: "player-joined", player: returning })
             this.broadcastState()
@@ -1467,6 +1496,7 @@ class DrawingParty implements Party.Server {
             }
           }
 
+          this.state.startedAt = Date.now()
           if (this.state.mode === "telephone") {
             await this.startTelephoneGame()
           } else if (this.state.mode === "draw-vote") {

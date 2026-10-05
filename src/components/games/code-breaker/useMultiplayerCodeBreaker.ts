@@ -11,6 +11,7 @@ import {
   leavePartySocket,
   PARTYKIT_HOST,
 } from "@/lib/partykit"
+import { useAuthTokenRef } from "@/lib/account"
 import type {
   PublicGameState,
   ServerMessage,
@@ -39,6 +40,7 @@ const INITIAL_STATE: MultiplayerState = {
 export function useMultiplayerCodeBreaker() {
   const [state, setState] = useState<MultiplayerState>(INITIAL_STATE)
   const socketRef = useRef<PartySocket | null>(null)
+  const authTokenRef = useAuthTokenRef()
   const roomCodeRef = useRef("")
   const isHost = Boolean(
     state.gameState &&
@@ -93,14 +95,16 @@ export function useMultiplayerCodeBreaker() {
       })
       socketRef.current = socket
 
-      socket.addEventListener("open", () => {
+      socket.addEventListener("open", async () => {
         if (socketRef.current !== socket) return
         setState((previous) => ({
           ...previous,
           connectionStatus: "connected",
           playerId: socket.id,
         }))
-        socket.send(JSON.stringify({ type: "join", name: playerName }))
+        const authToken = await authTokenRef.current()
+        if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return
+        socket.send(JSON.stringify({ type: "join", name: playerName, authToken }))
       })
 
       socket.addEventListener("message", (event) => {
@@ -123,7 +127,7 @@ export function useMultiplayerCodeBreaker() {
       socket.addEventListener("close", markReconnecting)
       socket.addEventListener("error", markReconnecting)
     },
-    [handleMessage],
+    [handleMessage, authTokenRef],
   )
 
   const sendNow = useCallback((message: object) => {

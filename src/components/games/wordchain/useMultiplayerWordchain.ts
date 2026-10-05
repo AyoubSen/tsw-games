@@ -8,6 +8,7 @@ import {
   getPersistentPlayerId,
   leavePartySocket,
 } from "@/lib/partykit"
+import { useAuthTokenRef } from "@/lib/account"
 import type { ServerMessage, PublicGameState } from "../../../../party/wordchain"
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
@@ -34,6 +35,7 @@ export function useMultiplayerWordchain() {
   })
 
   const socketRef = useRef<PartySocket | null>(null)
+  const authTokenRef = useAuthTokenRef()
   const roomCodeRef = useRef<string | null>(null)
 
   const connect = useCallback((roomCode: string, isHost: boolean, playerName: string, settings?: GameSettings) => {
@@ -66,7 +68,7 @@ export function useMultiplayerWordchain() {
       },
     })
 
-    socket.addEventListener("open", () => {
+    socket.addEventListener("open", async () => {
       if (socketRef.current !== socket) return
       setState((prev) => ({
         ...prev,
@@ -75,9 +77,9 @@ export function useMultiplayerWordchain() {
         error: null,
       }))
 
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "join", name: playerName }))
-      }
+      const authToken = await authTokenRef.current()
+      if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return
+      socket.send(JSON.stringify({ type: "join", name: playerName, authToken }))
     })
 
     socket.addEventListener("message", (event) => {
@@ -109,7 +111,7 @@ export function useMultiplayerWordchain() {
     })
 
     socketRef.current = socket
-  }, [])
+  }, [authTokenRef])
 
   const handleMessage = useCallback((message: ServerMessage) => {
     switch (message.type) {

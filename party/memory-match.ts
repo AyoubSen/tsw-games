@@ -21,6 +21,7 @@ import {
   validateGameNightConnection,
   type GameNightMember,
 } from "./shared/gameNight"
+import { JoinVerifier, reportDirectResult } from "./shared/account"
 
 export interface Player {
   id: string
@@ -34,6 +35,8 @@ export interface Player {
   lockedUntil: number | null
   moves: number
   completedAt: number | null
+  /** Server-only: the verified account behind this player. */
+  userId?: string
 }
 
 export interface PublicPlayer {
@@ -85,7 +88,7 @@ export interface PublicGameState {
 }
 
 export type ClientMessage =
-  | { type: "join"; name: string }
+  | { type: "join"; name: string; authToken?: unknown }
   | { type: "start" }
   | { type: "flip"; index: unknown; roundId: unknown }
   | { type: "restart" }
@@ -98,7 +101,10 @@ export type ServerMessage =
 const DISCONNECTED_PLAYER_TTL_MS = 30 * 60 * 1000
 
 class MemoryMatchParty implements Party.Server {
-  constructor(readonly room: Party.Room) {}
+  constructor(readonly room: Party.Room) {
+    this.joins = new JoinVerifier(room)
+  }
+  joins: JoinVerifier
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
@@ -285,6 +291,8 @@ class MemoryMatchParty implements Party.Server {
 
     try {
       const data = JSON.parse(message) as ClientMessage
+      if (data.type !== "join") await this.joins.settled(sender)
+      if (!this.state) return
 
       if (data.type !== "join" && !this.isAuthenticated(sender)) {
         this.send(sender, { type: "error", message: "Invalid player session" })
@@ -299,6 +307,8 @@ class MemoryMatchParty implements Party.Server {
             this.send(sender, { type: "error", message: "Invalid player session" })
             return
           }
+          const account = await this.joins.verify(sender, data.authToken)
+          if (!this.state) return
 
           const returning = this.state.players[sender.id]
           if (returning) {
@@ -307,7 +317,9 @@ class MemoryMatchParty implements Party.Server {
               return
             }
             markConnected(this.state.players, sender.id)
-            returning.name = gameNightMember?.name ?? (data.name.trim().slice(0, 20) || returning.name)
+            // A verified player keeps their profile name even if a later join comes without a token.
+            returning.name = gameNightMember?.name ?? account?.displayName ?? (returning.userId ? returning.name : data.name.trim().slice(0, 20) || returning.name)
+            if (account) returning.userId = account.userId
             returning.disconnectedAt = null
             if (
               !this.state.hostId ||
@@ -334,7 +346,7 @@ class MemoryMatchParty implements Party.Server {
             return
           }
 
-          const name = gameNightMember?.name ?? data.name.trim().slice(0, 20)
+          const name = gameNightMember?.name ?? account?.displayName ?? data.name.trim().slice(0, 20)
           if (!name) {
             this.send(sender, { type: "error", message: "Enter a player name" })
             return
@@ -352,6 +364,7 @@ class MemoryMatchParty implements Party.Server {
             lockedUntil: null,
             moves: 0,
             completedAt: null,
+            userId: account?.userId,
           }
           this.state.playerTokens[sender.id] = playerToken
           if (
@@ -450,6 +463,12 @@ class MemoryMatchParty implements Party.Server {
                   moves: player.moves,
                   completedAt: player.completedAt,
                 }
+                void reportDirectResult(this.room, {
+                  resultId: `memory-match:${this.state.roomCode}:${this.state.roundId}`,
+                  game: "memory-match",
+                  vsBot: false,
+                  players: Object.values(this.state.players).map((other) => ({ userId: other.userId, won: other.id === player.id })),
+                })
               }
             } else {
               player.mismatchIndices = [firstIndex, data.index]

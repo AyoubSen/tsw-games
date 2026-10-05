@@ -19,6 +19,7 @@ import {
   validateGameNightConnection,
   type GameNightMember,
 } from "./shared/gameNight"
+import { JoinVerifier, reportDirectResult } from "./shared/account"
 
 export type GameMode =
   | "first-to-score"
@@ -41,9 +42,11 @@ export interface Player {
   joinedAt: number
   connected?: boolean
   disconnectedAt?: number | null
+  /** Server-only: the verified account behind this player. */
+  userId?: string
 }
 
-export type PublicPlayer = Omit<Player, "disconnectedAt">
+export type PublicPlayer = Omit<Player, "disconnectedAt" | "userId">
 
 export interface GameState {
   roomCode: string
@@ -80,7 +83,7 @@ export interface PublicGameState
 }
 
 export type ClientMessage =
-  | { type: "join"; name: string }
+  | { type: "join"; name: string; authToken?: unknown }
   | { type: "start" }
   | { type: "submit-guess"; guess: string }
   | { type: "submit-choice"; choice: string }
@@ -137,7 +140,10 @@ function winnerIds(players: Record<string, Player>): string[] {
 }
 
 class GuessTheCountryParty implements Party.Server {
-  constructor(readonly room: Party.Room) {}
+  constructor(readonly room: Party.Room) {
+    this.joins = new JoinVerifier(room)
+  }
+  joins: JoinVerifier
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
@@ -363,6 +369,13 @@ class GuessTheCountryParty implements Party.Server {
     this.state.winnerIds = winnerIds(this.state.players)
     this.state.revealedCountryName = revealedCountryName
     this.state.roundEndsAt = null
+    const winners = this.state.winnerIds
+    void reportDirectResult(this.room, {
+      resultId: `guess-the-country:${this.state.roomCode}:${this.state.startedAt}`,
+      game: "guess-the-country",
+      vsBot: false,
+      players: Object.values(this.state.players).map((player) => ({ userId: player.userId, won: winners.includes(player.id) })),
+    })
   }
 
   async onConnect(connection: Party.Connection, context: Party.ConnectionContext) {
@@ -413,6 +426,8 @@ class GuessTheCountryParty implements Party.Server {
 
     try {
       const data = JSON.parse(message) as ClientMessage
+      if (data.type !== "join") await this.joins.settled(sender)
+      if (!this.state) return
 
       if (data.type !== "join" && !this.isAuthenticated(sender)) {
         this.send(sender, { type: "error", message: "Invalid player session" })
@@ -427,6 +442,8 @@ class GuessTheCountryParty implements Party.Server {
             this.send(sender, { type: "error", message: "Invalid player session" })
             return
           }
+          const account = await this.joins.verify(sender, data.authToken)
+          if (!this.state) return
 
           const returning = this.state.players[sender.id]
           if (returning) {
@@ -435,7 +452,9 @@ class GuessTheCountryParty implements Party.Server {
               return
             }
             markConnected(this.state.players, sender.id)
-            returning.name = gameNightMember?.name ?? (data.name.trim().slice(0, 20) || returning.name)
+            // A verified player keeps their profile name even if a later join comes without a token.
+            returning.name = gameNightMember?.name ?? account?.displayName ?? (returning.userId ? returning.name : data.name.trim().slice(0, 20) || returning.name)
+            if (account) returning.userId = account.userId
             returning.disconnectedAt = null
             if (
               !this.state.hostId ||
@@ -460,7 +479,7 @@ class GuessTheCountryParty implements Party.Server {
             return
           }
 
-          const name = gameNightMember?.name ?? data.name.trim().slice(0, 20)
+          const name = gameNightMember?.name ?? account?.displayName ?? data.name.trim().slice(0, 20)
           if (!name) {
             this.send(sender, { type: "error", message: "Enter a player name" })
             return
@@ -473,6 +492,7 @@ class GuessTheCountryParty implements Party.Server {
             joinedAt: Date.now(),
             connected: true,
             disconnectedAt: null,
+            userId: account?.userId,
           }
           this.state.playerTokens[sender.id] = playerToken
           if (

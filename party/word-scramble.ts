@@ -1,6 +1,7 @@
 import type * as Party from "partykit/server";
 import { withRoomCleanup } from "./shared/cleanup";
 import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight";
+import { JoinVerifier, reportDirectResult } from "./shared/account";
 import {
 	markConnected,
 	markDisconnected,
@@ -23,9 +24,11 @@ export interface Player {
 	joinedAt: number;
 	/** False while their socket is away; they are not removed from the game. */
 	connected?: boolean;
+	/** Server-only: the verified account behind this player. */
+	userId?: string;
 }
 
-export type PublicPlayer = Omit<Player, "foundWords"> & {
+export type PublicPlayer = Omit<Player, "foundWords" | "userId"> & {
 	foundCount: number;
 };
 
@@ -78,7 +81,7 @@ export interface PublicGameState {
 }
 
 export type ClientMessage =
-	| { type: "join"; name: string }
+	| { type: "join"; name: string; authToken?: unknown }
 	| { type: "start" }
 	| { type: "submit-word"; word: string }
 	| { type: "leave" }
@@ -177,7 +180,10 @@ function pickPuzzleForDifficulty(
 }
 
 class WordScrambleParty implements Party.Server {
-	constructor(readonly room: Party.Room) {}
+	constructor(readonly room: Party.Room) {
+		this.joins = new JoinVerifier(room);
+	}
+	joins: JoinVerifier;
 
 	state: GameState | null = null;
 	gameNightMembers = new Map<string, GameNightMember>();
@@ -215,8 +221,19 @@ class WordScrambleParty implements Party.Server {
 		}
 	}
 
+	reportFinish() {
+		if (!this.state) return;
+		const winnerIds = this.state.winnerIds;
+		void reportDirectResult(this.room, {
+			resultId: `word-scramble:${this.state.roomCode}:${this.state.startedAt}`,
+			game: "word-scramble",
+			vsBot: false,
+			players: Object.values(this.state.players).map((player) => ({ userId: player.userId, won: winnerIds.includes(player.id) })),
+		});
+	}
+
 	getPublicPlayer(player: Player): PublicPlayer {
-		const { foundWords, ...publicPlayer } = player;
+		const { foundWords, userId: _userId, ...publicPlayer } = player;
 		return { ...publicPlayer, foundCount: foundWords.length };
 	}
 
@@ -350,6 +367,8 @@ class WordScrambleParty implements Party.Server {
 
 		try {
 			const data: ClientMessage = JSON.parse(message);
+			if (data.type !== "join") await this.joins.settled(sender);
+			if (!this.state) return;
 			if (data.type !== "join" && !this.authenticated(sender)) {
 				this.send(sender, { type: "error", message: "Invalid player session" });
 				return;
@@ -362,7 +381,10 @@ class WordScrambleParty implements Party.Server {
 						this.send(sender, { type: "error", message: "Invalid player session" });
 						return;
 					}
-					const name = this.gameNightMembers.get(sender.id)?.name ?? data.name;
+					const rosterName = this.gameNightMembers.get(sender.id)?.name;
+					const account = await this.joins.verify(sender, data.authToken);
+					if (!this.state) return;
+					const name = rosterName ?? account?.displayName ?? data.name;
 					const returning = markConnected(this.state.players, sender.id);
 					if (returning) {
 						const storedToken = this.state.playerTokens[sender.id];
@@ -373,7 +395,9 @@ class WordScrambleParty implements Party.Server {
 						}
 						this.state.playerTokens[sender.id] = token;
 						// A reconnect, not a new player - never rejected mid-game.
-						returning.name = name || returning.name;
+						// A verified player keeps their profile name even if a later join comes without a token.
+						if (rosterName || account || !returning.userId) returning.name = name || returning.name;
+						if (account) returning.userId = account.userId;
 						await this.saveState();
 						this.broadcast({ type: "player-joined", player: this.getPublicPlayer(returning) });
 						this.broadcastState();
@@ -397,6 +421,7 @@ class WordScrambleParty implements Party.Server {
 						foundWords: [],
 						joinedAt: Date.now(),
 						connected: true,
+						userId: account?.userId,
 					};
 
 					this.state.players[sender.id] = player;
@@ -533,6 +558,7 @@ class WordScrambleParty implements Party.Server {
 						this.state.finishedAt = Date.now();
 						this.state.winnerIds = getWinnerIds(this.state.players);
 						this.state.winnerId = getSingleWinnerId(this.state.winnerIds);
+						this.reportFinish();
 						this.room.storage.deleteAlarm();
 						await this.saveState();
 
@@ -613,6 +639,7 @@ class WordScrambleParty implements Party.Server {
 		this.state.finishedAt = Date.now();
 		this.state.winnerIds = getWinnerIds(this.state.players);
 		this.state.winnerId = getSingleWinnerId(this.state.winnerIds);
+		this.reportFinish();
 		await this.saveState();
 
 		this.broadcast({

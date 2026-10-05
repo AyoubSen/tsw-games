@@ -10,6 +10,7 @@ import {
 	leavePartySocket,
 	PARTYKIT_HOST,
 } from "@/lib/partykit";
+import { useAuthTokenRef } from "@/lib/account";
 import type { Reaction } from "@/lib/reactions";
 import { useReactionBubbles } from "@/components/multiplayer/Reactions";
 import type {
@@ -74,6 +75,7 @@ export function useMultiplayerDrawing() {
 	const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles();
 
 	const socketRef = useRef<PartySocket | null>(null);
+	const authTokenRef = useAuthTokenRef();
 	const roomCodeRef = useRef("");
 	const playerNameRef = useRef<string>("");
 	const undoRequestIdRef = useRef<string | null>(null);
@@ -233,7 +235,7 @@ export function useMultiplayerDrawing() {
 			});
 			socketRef.current = socket;
 
-			socket.addEventListener("open", () => {
+			socket.addEventListener("open", async () => {
 				if (socketRef.current !== socket) return;
 				setState((prev) => ({
 					...prev,
@@ -241,7 +243,9 @@ export function useMultiplayerDrawing() {
 					playerId: socket.id,
 				}));
 
-				socket.send(JSON.stringify({ type: "join", name: playerName }));
+				const authToken = await authTokenRef.current();
+				if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return;
+				socket.send(JSON.stringify({ type: "join", name: playerName, authToken }));
 			});
 
 			socket.addEventListener("message", (event) => {
@@ -278,7 +282,7 @@ export function useMultiplayerDrawing() {
 				}));
 			});
 		},
-		[handleMessage],
+		[handleMessage, authTokenRef],
 	);
 
 	const disconnect = useCallback(() => {

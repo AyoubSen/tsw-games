@@ -10,6 +10,7 @@ import {
   getPersistentPlayerToken,
   leavePartySocket,
 } from "@/lib/partykit"
+import { useAuthTokenRef } from "@/lib/account"
 import {
   SUDOKU_PROTOCOL_VERSION,
   type ClientMessage,
@@ -84,6 +85,7 @@ function clearSession() {
 export function useMultiplayerSudoku() {
   const [state, setState] = useState<MultiplayerState>(() => initialState())
   const socketRef = useRef<PartySocket | null>(null)
+  const authTokenRef = useAuthTokenRef()
   const roomCodeRef = useRef("")
   const roundIdRef = useRef("")
   const revisionRef = useRef(0)
@@ -193,7 +195,7 @@ export function useMultiplayerSudoku() {
     })
     socketRef.current = socket
 
-    socket.addEventListener("open", () => {
+    socket.addEventListener("open", async () => {
       if (socketRef.current !== socket) return
       revisionRef.current = 0
       setState(prev => ({
@@ -205,7 +207,9 @@ export function useMultiplayerSudoku() {
         type: "join",
         protocolVersion: SUDOKU_PROTOCOL_VERSION,
         name: playerName,
+        authToken: await authTokenRef.current(),
       }
+      if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return
       socket.send(JSON.stringify(join))
     })
 
@@ -251,7 +255,7 @@ export function useMultiplayerSudoku() {
         error: "Connection lost. Reconnecting...",
       }))
     })
-  }, [handleMessage])
+  }, [handleMessage, authTokenRef])
 
   const sendNow = useCallback((message: ClientMessage) => {
     const socket = socketRef.current

@@ -12,6 +12,7 @@ import {
   validateGameNightConnection,
   type GameNightMember,
 } from "./shared/gameNight"
+import { JoinVerifier, reportDirectResult } from "./shared/account"
 
 export const SUDOKU_PROTOCOL_VERSION = 2
 const STATE_SCHEMA_VERSION = 2
@@ -30,12 +31,14 @@ export interface Player {
   disconnectedAt: number | null
   /** Private 1-9 entries. Given positions are always stored as null. */
   cells?: (number | null)[] | null
+  /** Server-only: the verified account behind this player. */
+  userId?: string
 }
 
-export type PublicPlayer = Omit<Player, "cells" | "disconnectedAt">
+export type PublicPlayer = Omit<Player, "cells" | "disconnectedAt" | "userId">
 
 function toPublicPlayer(player: Player): PublicPlayer {
-  const { cells: _cells, disconnectedAt: _disconnectedAt, ...rest } = player
+  const { cells: _cells, disconnectedAt: _disconnectedAt, userId: _userId, ...rest } = player
   return rest
 }
 
@@ -74,7 +77,7 @@ export interface PublicGameState {
 }
 
 export type ClientMessage =
-  | { type: "join"; protocolVersion: number; name: string }
+  | { type: "join"; protocolVersion: number; name: string; authToken?: unknown }
   | { type: "start"; protocolVersion: number; roundId: string }
   | { type: "update-progress"; protocolVersion: number; roundId: string; cells: (number | null)[] }
   | { type: "leave"; protocolVersion: number }
@@ -243,6 +246,7 @@ function normalizeStoredState(value: unknown, roomCode: string): GameState | nul
         ? player.disconnectedAt
         : Date.now(),
       cells,
+      userId: typeof player.userId === "string" ? player.userId : undefined,
     }
   }
 
@@ -271,7 +275,10 @@ function normalizeStoredState(value: unknown, roomCode: string): GameState | nul
 }
 
 class SudokuParty implements Party.Server {
-  constructor(readonly room: Party.Room) {}
+  constructor(readonly room: Party.Room) {
+    this.joins = new JoinVerifier(room)
+  }
+  joins: JoinVerifier
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
@@ -461,6 +468,8 @@ class SudokuParty implements Party.Server {
         this.send(sender, { type: "error", message: "Sudoku was updated. Refresh this page to continue." })
         return
       }
+      if (data.type !== "join") await this.joins.settled(sender)
+      if (!this.state) return
 
 	  if (data.type !== "join" && !this.isAuthenticated(sender)) {
 		this.send(sender, { type: "error", message: "Invalid player session" })
@@ -475,7 +484,9 @@ class SudokuParty implements Party.Server {
 			return
 		  }
           const coordinatorName = this.gameNightMembers.get(sender)?.name
-          const name = coordinatorName ?? (typeof data.name === "string" ? data.name.trim().slice(0, 32) : "")
+          const account = await this.joins.verify(sender, data.authToken)
+          if (!this.state) return
+          const name = coordinatorName ?? account?.displayName ?? (typeof data.name === "string" ? data.name.trim().slice(0, 32) : "")
           if (!name) {
             this.send(sender, { type: "error", message: "Enter a player name" })
             return
@@ -490,7 +501,9 @@ class SudokuParty implements Party.Server {
 			}
 			this.state.playerTokens[sender.id] = playerToken
             existing.connected = true
-            existing.name = name
+            // A verified player keeps their profile name even if a later join comes without a token.
+            if (coordinatorName || account || !existing.userId) existing.name = name
+            if (account) existing.userId = account.userId
 			existing.disconnectedAt = null
           } else {
             if (this.state.status !== "waiting") {
@@ -513,6 +526,7 @@ class SudokuParty implements Party.Server {
               connected: true,
               disconnectedAt: null,
               cells: null,
+              userId: account?.userId,
             }
 			this.state.playerTokens[sender.id] = playerToken
           }
@@ -587,6 +601,12 @@ class SudokuParty implements Party.Server {
             if (!this.state.winnerId) {
               this.state.winnerId = sender.id
               this.state.status = "finished"
+              void reportDirectResult(this.room, {
+                resultId: `sudoku:${this.state.roomCode}:${this.state.roundId}`,
+                game: "sudoku",
+                vsBot: false,
+                players: Object.values(this.state.players).map((other) => ({ userId: other.userId, won: other.id === sender.id })),
+              })
             }
           }
 

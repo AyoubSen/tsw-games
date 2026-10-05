@@ -9,6 +9,7 @@ import {
 import { isReaction, takeReactionSlot, type ReactionMessage } from "../src/lib/reactions"
 import { withRoomCleanup } from "./shared/cleanup"
 import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight"
+import { JoinVerifier, reportDirectResult } from "./shared/account"
 import { canControlGame, isPresent, markConnected, markDisconnected, nextHost, presentCount } from "./shared/presence"
 
 interface BombModule {
@@ -44,6 +45,8 @@ interface GameState {
   frozenSecondsLeft: number | null
   log: BombLogEntry[]
   history: BombRoundResult[]
+  /** Server-only: player id -> verified account. Kept off BombPlayer, which is sent to clients as is. */
+  accounts?: Record<string, string>
 }
 
 function shuffle<T>(items: readonly T[]): T[] {
@@ -180,7 +183,10 @@ function describe(submission: BombSubmission): string {
 }
 
 class BombDefusalParty implements Party.Server {
-  constructor(readonly room: Party.Room) {}
+  constructor(readonly room: Party.Room) {
+    this.joins = new JoinVerifier(room)
+  }
+  joins: JoinVerifier
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
   gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
@@ -284,6 +290,7 @@ class BombDefusalParty implements Party.Server {
     } else if (state.status === "resolving") {
       state.status = state.outcome === "defused" && state.round < state.order.length ? "round-end" : "finished"
       state.pace = null
+      if (state.status === "finished") this.reportFinish()
     } else {
       state.pace = null
     }
@@ -326,11 +333,25 @@ class BombDefusalParty implements Party.Server {
     if (outcome === "crew-left") {
       state.status = "finished"
       state.pace = null
+      this.reportFinish()
       return
     }
     state.status = "resolving"
     if (outcome === "defused") this.beat("defused", BOMB_PACE_MS.defused)
     else this.beat("exploded", BOMB_PACE_MS.exploded + (outcome === "strikes" ? BOMB_PACE_MS.boomDelay : 0))
+  }
+
+  /** Same winners as the Game Night result: the whole crew wins if the last bomb was defused. */
+  reportFinish() {
+    if (!this.state) return
+    const state = this.state
+    const accounts = state.accounts ?? {}
+    void reportDirectResult(this.room, {
+      resultId: `bomb-defusal:${state.roomCode}:${state.missionId}`,
+      game: "bomb-defusal",
+      vsBot: false,
+      players: state.order.filter((id) => state.players[id]).map((id) => ({ userId: accounts[id], won: state.outcome === "defused" })),
+    })
   }
 
   async onConnect(connection: Party.Connection, context: Party.ConnectionContext) {
@@ -362,6 +383,8 @@ class BombDefusalParty implements Party.Server {
     try {
       const data = JSON.parse(message) as BombClientMessage
       if (!data || typeof data !== "object") return
+      if (data.type !== "join") await this.joins.settled(sender)
+      if (!this.state) return
       const error = (text: string) => this.send(sender, { type: "error", message: text })
       if (data.type !== "join" && !this.isAuthenticated(sender)) return error("Invalid player session")
       const state = this.state
@@ -375,17 +398,25 @@ class BombDefusalParty implements Party.Server {
         case "join": {
           const token = this.connectionTokens.get(sender)
           if (!token) return error("Invalid player session")
-          const name = this.gameNightMembers.get(sender)?.name ?? (typeof data.name === "string" ? data.name.trim().slice(0, 20) : "")
+          const account = await this.joins.verify(sender, data.authToken)
+          if (this.state !== state) return
+          const typedName = typeof data.name === "string" ? data.name.trim().slice(0, 20) : ""
+          const member = this.gameNightMembers.get(sender)
+          // A verified player keeps their profile name even if a later join comes without a token.
+          const keptName = !member && !account && state.accounts?.[sender.id] ? state.players[sender.id]?.name : undefined
+          const name = member?.name ?? account?.displayName ?? keptName ?? typedName
           if (!name) return error("Enter your name first")
           if (state.players[sender.id]) {
             if (state.playerTokens[sender.id] !== token) return error("Invalid player session")
             markConnected(state.players, sender.id)
             state.players[sender.id].name = name
+            if (account) state.accounts = { ...state.accounts, [sender.id]: account.userId }
           } else {
             if (state.status !== "waiting") return error("Game already started")
             if (Object.keys(state.players).length >= 4) return error("Game is full")
             state.players[sender.id] = { id: sender.id, name, joinedAt: Date.now(), connected: true }
             state.playerTokens[sender.id] = token
+            if (account) state.accounts = { ...state.accounts, [sender.id]: account.userId }
             if (!state.players[state.hostId]) state.hostId = sender.id
           }
           break
@@ -470,6 +501,7 @@ class BombDefusalParty implements Party.Server {
           if (state.status !== "waiting" && state.status !== "finished") this.finishRound("crew-left")
           delete state.players[sender.id]
           delete state.playerTokens[sender.id]
+          delete state.accounts?.[sender.id]
           if (Object.keys(state.players).length === 0) {
             this.state = null
             await this.room.storage.delete("state")

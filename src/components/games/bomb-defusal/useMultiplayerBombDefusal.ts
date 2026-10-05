@@ -8,6 +8,7 @@ import {
   getGameNightSocketQuery, getPersistentPlayerId, getPersistentPlayerToken,
   leavePartySocket, PARTYKIT_HOST,
 } from "@/lib/partykit"
+import { useAuthTokenRef } from "@/lib/account"
 
 interface MultiplayerState {
   connectionStatus: "disconnected" | "connecting" | "connected" | "error"
@@ -25,6 +26,7 @@ const INITIAL_STATE: MultiplayerState = {
 export function useMultiplayerBombDefusal() {
   const [state, setState] = useState<MultiplayerState>(INITIAL_STATE)
   const socketRef = useRef<PartySocket | null>(null)
+  const authTokenRef = useAuthTokenRef()
   const roomCodeRef = useRef("")
   const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles()
 
@@ -47,9 +49,11 @@ export function useMultiplayerBombDefusal() {
       maxEnqueuedMessages: 0,
     })
     socketRef.current = socket
-    socket.addEventListener("open", () => {
+    socket.addEventListener("open", async () => {
       if (socketRef.current !== socket) return
-      socket.send(JSON.stringify({ type: "join", name }))
+      const authToken = await authTokenRef.current()
+      if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return
+      socket.send(JSON.stringify({ type: "join", name, authToken }))
     })
     socket.addEventListener("message", (event) => {
       if (socketRef.current !== socket) return
@@ -79,7 +83,7 @@ export function useMultiplayerBombDefusal() {
     }
     socket.addEventListener("close", reconnect)
     socket.addEventListener("error", reconnect)
-  }, [clearReactions, receiveReaction])
+  }, [clearReactions, receiveReaction, authTokenRef])
 
   const send = useCallback((message: BombClientMessage) => {
     if (socketRef.current?.readyState !== WebSocket.OPEN) return false

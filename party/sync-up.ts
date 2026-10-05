@@ -18,6 +18,7 @@ import {
 	validateGameNightConnection,
 	type GameNightMember,
 } from "./shared/gameNight";
+import { JoinVerifier, reportDirectResult } from "./shared/account";
 import {
 	isReaction,
 	takeReactionSlot,
@@ -109,6 +110,8 @@ export function isPerfectSync(groups: AnswerGroup[], playerCount: number): boole
 
 export interface SyncUpGameState {
 	roomCode: string;
+	/** Server-only: player id -> verified account. Kept off SyncUpPlayer, which is sent to clients as is. */
+	accounts?: Record<string, string>;
 	hostId: string;
 	players: Record<string, SyncUpPlayer>;
 	status: "waiting" | "submitting" | "reveal" | "finished";
@@ -151,7 +154,7 @@ export interface PublicSyncUpGameState {
 }
 
 export type ClientMessage =
-	| { type: "join"; name: string }
+	| { type: "join"; name: string; authToken?: unknown }
 	| { type: "start" }
 	| { type: "submit-answer"; answer: string }
 	| { type: "merge-groups"; from: string; into: string }
@@ -235,7 +238,10 @@ function buildAnswerGroups(answers: Record<string, StoredAnswer>): AnswerGroup[]
 }
 
 class SyncUpParty implements Party.Server {
-	constructor(readonly room: Party.Room) {}
+	constructor(readonly room: Party.Room) {
+		this.joins = new JoinVerifier(room);
+	}
+	joins: JoinVerifier;
 
 	state: SyncUpGameState | null = null;
 	reactedAt = new Map<string, number>();
@@ -489,8 +495,23 @@ class SyncUpParty implements Party.Server {
 		this.state.reveal = null;
 		await this.room.storage.deleteAlarm();
 		await this.saveState();
+		this.reportFinish();
 		this.broadcast({ type: "game-over" });
 		this.broadcast({ type: "state", state: this.getPublicState() });
+	}
+
+	/** Same winners as the Game Night result: everyone on the top score. */
+	reportFinish() {
+		if (!this.state) return;
+		const players = Object.values(this.state.players);
+		const highestScore = Math.max(...players.map((player) => player.score), 0);
+		const accounts = this.state.accounts ?? {};
+		void reportDirectResult(this.room, {
+			resultId: `sync-up:${this.state.roomCode}:${this.state.startedAt}`,
+			game: "sync-up",
+			vsBot: false,
+			players: players.map((player) => ({ userId: accounts[player.id], won: player.score === highestScore })),
+		});
 	}
 
 	async onConnect(connection: Party.Connection, context: Party.ConnectionContext) {
@@ -542,15 +563,22 @@ class SyncUpParty implements Party.Server {
 
 		try {
 			const data: ClientMessage = JSON.parse(message);
+			if (data.type !== "join") await this.joins.settled(sender);
+			if (!this.state) return;
 
 			switch (data.type) {
 				case "join": {
 					const member = this.gameNightMembers.get(sender);
-					const playerName = member?.name ?? data.name;
+					const account = await this.joins.verify(sender, data.authToken);
+					if (!this.state) return;
+					const playerName = member?.name ?? account?.displayName ?? data.name;
+					const wasVerified = Boolean(this.state.accounts?.[sender.id]);
+					if (account) this.state.accounts = { ...this.state.accounts, [sender.id]: account.userId };
 					const returning = markConnected(this.state.players, sender.id);
 					if (returning) {
 						// A reconnect, not a new player - never rejected mid-game.
-						returning.name = playerName || returning.name;
+						// A verified player keeps their profile name even if a later join comes without a token.
+						if (member || account || !wasVerified) returning.name = playerName || returning.name;
 						await this.saveState();
 						this.broadcast({ type: "player-joined", player: returning });
 						this.broadcast({ type: "state", state: this.getPublicState() });
@@ -570,7 +598,7 @@ class SyncUpParty implements Party.Server {
 
 					const player: SyncUpPlayer = {
 						id: sender.id,
-						name: member?.name ?? data.name.slice(0, 20),
+						name: playerName.slice(0, 20),
 						score: 0,
 						joinedAt: Date.now(),
 						connected: true,
@@ -736,6 +764,7 @@ class SyncUpParty implements Party.Server {
 
 				case "leave": {
 					delete this.state.players[sender.id];
+					delete this.state.accounts?.[sender.id];
 					if (this.state.status === "submitting") delete this.state.answers[sender.id];
 					if (Object.keys(this.state.players).length === 0) {
 						this.state = null;

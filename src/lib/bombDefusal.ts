@@ -172,7 +172,7 @@ export type BombSubmission =
   | { kind: "simon"; sequence: SimonColor[] }
 
 export type BombClientMessage =
-  | { type: "join"; name: string }
+  | { type: "join"; name: string; authToken?: unknown }
   | { type: "settings"; timeLimit?: number; difficulty?: BombDifficulty }
   | { type: "start" }
   | { type: "next"; missionId: string }

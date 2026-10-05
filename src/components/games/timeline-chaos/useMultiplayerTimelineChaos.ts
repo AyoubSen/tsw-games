@@ -10,6 +10,7 @@ import {
   leavePartySocket,
   PARTYKIT_HOST,
 } from "@/lib/partykit"
+import { useAuthTokenRef } from "@/lib/account"
 import type { Reaction } from "@/lib/reactions"
 import { useReactionBubbles } from "@/components/multiplayer/Reactions"
 import type {
@@ -31,6 +32,7 @@ export function useMultiplayerTimelineChaos() {
   const [state, setState] = useState(INITIAL_STATE)
   const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles()
   const socketRef = useRef<PartySocket | null>(null)
+  const authTokenRef = useAuthTokenRef()
   const roomCodeRef = useRef("")
   const isHost = Boolean(state.gameState && state.playerId && state.gameState.hostId === state.playerId)
 
@@ -58,10 +60,12 @@ export function useMultiplayerTimelineChaos() {
       maxEnqueuedMessages: 0,
     })
     socketRef.current = socket
-    socket.addEventListener("open", () => {
+    socket.addEventListener("open", async () => {
       if (socketRef.current !== socket) return
       setState((previous) => ({ ...previous, connectionStatus: "connected", playerId: socket.id }))
-      socket.send(JSON.stringify({ type: "join", name }))
+      const authToken = await authTokenRef.current()
+      if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return
+      socket.send(JSON.stringify({ type: "join", name, authToken }))
     })
     socket.addEventListener("message", (event) => {
       if (socketRef.current !== socket) return
@@ -81,7 +85,7 @@ export function useMultiplayerTimelineChaos() {
     }
     socket.addEventListener("close", reconnecting)
     socket.addEventListener("error", reconnecting)
-  }, [receiveReaction])
+  }, [receiveReaction, authTokenRef])
 
   const send = useCallback((message: object) => {
     const socket = socketRef.current

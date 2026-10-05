@@ -17,6 +17,7 @@ import {
 	validateGameNightConnection,
 	type GameNightMember,
 } from "./shared/gameNight";
+import { JoinVerifier, reportDirectResult } from "./shared/account";
 import {
 	isReaction,
 	takeReactionSlot,
@@ -107,6 +108,8 @@ export function flyDuration(groups: VoteGroup[]): number {
 
 export interface HotTakeGameState {
 	roomCode: string;
+	/** Server-only: player id -> verified account. Kept off HotTakePlayer, which is sent to clients as is. */
+	accounts?: Record<string, string>;
 	hostId: string;
 	players: Record<string, HotTakePlayer>;
 	status: "waiting" | "voting" | "reveal" | "finished";
@@ -147,7 +150,7 @@ export interface PublicHotTakeGameState {
 }
 
 export type ClientMessage =
-	| { type: "join"; name: string }
+	| { type: "join"; name: string; authToken?: unknown }
 	| { type: "start" }
 	| { type: "submit-vote"; position: HotTakePosition }
 	| { type: "skip-spotlight" }
@@ -242,7 +245,10 @@ function pickSpotlight(
 }
 
 class HotTakeArenaParty implements Party.Server {
-	constructor(readonly room: Party.Room) {}
+	constructor(readonly room: Party.Room) {
+		this.joins = new JoinVerifier(room);
+	}
+	joins: JoinVerifier;
 
 	state: HotTakeGameState | null = null;
 	reactedAt = new Map<string, number>();
@@ -467,8 +473,23 @@ class HotTakeArenaParty implements Party.Server {
 		this.state.reveal = null;
 		await this.room.storage.deleteAlarm();
 		await this.saveState();
+		this.reportFinish();
 		this.broadcast({ type: "game-over" });
 		this.broadcast({ type: "state", state: this.getPublicState() });
+	}
+
+	/** Same winners as the Game Night result: everyone on the top score. */
+	reportFinish() {
+		if (!this.state) return;
+		const players = Object.values(this.state.players);
+		const highestScore = Math.max(...players.map((player) => player.score), 0);
+		const accounts = this.state.accounts ?? {};
+		void reportDirectResult(this.room, {
+			resultId: `hot-take-arena:${this.state.roomCode}:${this.state.startedAt}`,
+			game: "hot-take-arena",
+			vsBot: false,
+			players: players.map((player) => ({ userId: accounts[player.id], won: player.score === highestScore })),
+		});
 	}
 
 	async onConnect(connection: Party.Connection, context: Party.ConnectionContext) {
@@ -520,15 +541,22 @@ class HotTakeArenaParty implements Party.Server {
 
 		try {
 			const data: ClientMessage = JSON.parse(message);
+			if (data.type !== "join") await this.joins.settled(sender);
+			if (!this.state) return;
 
 			switch (data.type) {
 				case "join": {
 					const member = this.gameNightMembers.get(sender);
-					const playerName = member?.name ?? data.name;
+					const account = await this.joins.verify(sender, data.authToken);
+					if (!this.state) return;
+					const playerName = member?.name ?? account?.displayName ?? data.name;
+					const wasVerified = Boolean(this.state.accounts?.[sender.id]);
+					if (account) this.state.accounts = { ...this.state.accounts, [sender.id]: account.userId };
 					const returning = markConnected(this.state.players, sender.id);
 					if (returning) {
 						// A reconnect, not a new player - never rejected mid-game.
-						returning.name = playerName || returning.name;
+						// A verified player keeps their profile name even if a later join comes without a token.
+						if (member || account || !wasVerified) returning.name = playerName || returning.name;
 						await this.saveState();
 						this.broadcast({ type: "player-joined", player: returning });
 						this.broadcast({ type: "state", state: this.getPublicState() });
@@ -547,7 +575,7 @@ class HotTakeArenaParty implements Party.Server {
 
 					const player: HotTakePlayer = {
 						id: sender.id,
-						name: member?.name ?? data.name.slice(0, 20),
+						name: playerName.slice(0, 20),
 						score: 0,
 						joinedAt: Date.now(),
 						connected: true,
@@ -685,6 +713,7 @@ class HotTakeArenaParty implements Party.Server {
 
 				case "leave": {
 					delete this.state.players[sender.id];
+					delete this.state.accounts?.[sender.id];
 					delete this.state.votes[sender.id];
 					if (Object.keys(this.state.players).length === 0) {
 						this.state = null;

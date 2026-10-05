@@ -28,6 +28,7 @@ import {
   validateGameNightConnection,
   type GameNightMember,
 } from "./shared/gameNight"
+import { JoinVerifier, reportDirectResult } from "./shared/account"
 
 export type TimelineRoundCount = 5 | 8 | 10
 export type TimelineSeconds = 15 | 20 | 30
@@ -52,6 +53,8 @@ export interface TimelinePlayer {
   joinedAt: number
   connected?: boolean
   disconnectedAt?: number | null
+  /** Server-only: the verified account behind this player. */
+  userId?: string
 }
 
 export type PublicTimelinePlayer = Omit<TimelinePlayer, "disconnectedAt">
@@ -140,7 +143,7 @@ export interface PublicTimelineGameState {
 }
 
 export type ClientMessage =
-  | { type: "join"; name: string }
+  | { type: "join"; name: string; authToken?: unknown }
   | { type: "start" }
   | { type: "arrange"; roundId: unknown; order: unknown }
   | { type: "submit-order"; roundId: unknown; order: unknown }
@@ -197,7 +200,10 @@ function resetStats(player: TimelinePlayer) {
 }
 
 class TimelineChaosParty implements Party.Server {
-  constructor(readonly room: Party.Room) {}
+  constructor(readonly room: Party.Room) {
+    this.joins = new JoinVerifier(room)
+  }
+  joins: JoinVerifier
   state: TimelineGameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
   gameNightMembers = new WeakMap<Party.Connection, GameNightMember>()
@@ -360,6 +366,13 @@ class TimelineChaosParty implements Party.Server {
       s.reveal = null
       s.finishedAt = Date.now()
       s.winnerIds = winners(s.players)
+      const winnerIds = new Set(s.winnerIds)
+      void reportDirectResult(this.room, {
+        resultId: `timeline-chaos:${s.roomCode}:${s.roundId}`,
+        game: "timeline-chaos",
+        vsBot: false,
+        players: Object.values(s.players).map((player) => ({ userId: player.userId, won: winnerIds.has(player.id) })),
+      })
     } else await this.startRound()
   }
 
@@ -423,6 +436,8 @@ class TimelineChaosParty implements Party.Server {
     if (!this.state) return
     try {
       const data = JSON.parse(message) as ClientMessage
+      if (data.type !== "join") await this.joins.settled(sender)
+      if (!this.state) return
       if (data.type !== "join" && !this.authenticated(sender)) {
         this.send(sender, { type: "error", message: "Invalid player session" })
         return
@@ -431,12 +446,16 @@ class TimelineChaosParty implements Party.Server {
         const gameNightMember = this.gameNightMembers.get(sender)
         const token = this.connectionTokens.get(sender)
         if (!token) return this.send(sender, { type: "error", message: "Invalid player session" })
+        const account = await this.joins.verify(sender, data.authToken)
+        if (!this.state) return
         const returning = this.state.players[sender.id]
         if (returning) {
           if (this.state.playerTokens[sender.id] !== token) return this.send(sender, { type: "error", message: "Invalid player session" })
           markConnected(this.state.players, sender.id)
           returning.disconnectedAt = null
-          returning.name = gameNightMember?.name ?? (data.name.trim().slice(0, 20) || returning.name)
+          // A verified player keeps their profile name even if a later join comes without a token.
+          returning.name = gameNightMember?.name ?? account?.displayName ?? (returning.userId ? returning.name : data.name.trim().slice(0, 20) || returning.name)
+          if (account) returning.userId = account.userId
           if (!this.state.players[this.state.hostId]) this.state.hostId = sender.id
           await this.save(); this.broadcast(); return
         }
@@ -448,11 +467,11 @@ class TimelineChaosParty implements Party.Server {
           }
         }
         if (Object.keys(this.state.players).length >= 12) return this.send(sender, { type: "error", message: "Game is full" })
-        const name = gameNightMember?.name ?? data.name.trim().slice(0, 20)
+        const name = gameNightMember?.name ?? account?.displayName ?? data.name.trim().slice(0, 20)
         if (!name) return this.send(sender, { type: "error", message: "Enter a player name" })
         this.state.players[sender.id] = {
           id: sender.id, name, score: 0, perfectRounds: 0, correctPositions: 0, correctPairs: 0, totalAnswerMs: 0, fastestLockMs: null,
-          joinedAt: Date.now(), connected: true, disconnectedAt: null,
+          joinedAt: Date.now(), connected: true, disconnectedAt: null, userId: account?.userId,
         }
         this.state.playerTokens[sender.id] = token
         if (!this.state.players[this.state.hostId]) this.state.hostId = sender.id

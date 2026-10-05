@@ -8,6 +8,7 @@ import {
 	PARTYKIT_HOST,
 	getPersistentPlayerId,
 } from "@/lib/partykit";
+import { useAuthTokenRef } from "@/lib/account";
 import type { Reaction } from "@/lib/reactions";
 import { useReactionBubbles } from "@/components/multiplayer/Reactions";
 import type {
@@ -42,6 +43,7 @@ export function useMultiplayerHotTakeArena() {
 
 	const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles();
 	const socketRef = useRef<PartySocket | null>(null);
+	const authTokenRef = useAuthTokenRef();
 	const roomCodeRef = useRef("");
 	const isHost = Boolean(
 		state.gameState &&
@@ -204,7 +206,7 @@ export function useMultiplayerHotTakeArena() {
 			});
 			socketRef.current = socket;
 
-			socket.addEventListener("open", () => {
+			socket.addEventListener("open", async () => {
 				if (socketRef.current !== socket) return;
 				setState((previous) => ({
 					...previous,
@@ -212,7 +214,9 @@ export function useMultiplayerHotTakeArena() {
 					playerId: socket.id,
 				}));
 
-				socket.send(JSON.stringify({ type: "join", name: playerName }));
+				const authToken = await authTokenRef.current();
+				if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return;
+				socket.send(JSON.stringify({ type: "join", name: playerName, authToken }));
 			});
 
 			socket.addEventListener("message", (event) => {
@@ -242,7 +246,7 @@ export function useMultiplayerHotTakeArena() {
 				}));
 			});
 		},
-		[handleMessage],
+		[handleMessage, authTokenRef],
 	);
 
 	const sendNow = useCallback((message: object) => {

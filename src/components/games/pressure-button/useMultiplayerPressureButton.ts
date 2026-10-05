@@ -8,6 +8,7 @@ import {
 	PARTYKIT_HOST,
 	getPersistentPlayerId,
 } from "@/lib/partykit";
+import { useAuthTokenRef } from "@/lib/account";
 import type { Reaction } from "@/lib/reactions";
 import { useReactionBubbles } from "@/components/multiplayer/Reactions";
 import type {
@@ -39,6 +40,7 @@ export function useMultiplayerPressureButton() {
 
 	const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles();
 	const socketRef = useRef<PartySocket | null>(null);
+	const authTokenRef = useAuthTokenRef();
 	const roomCodeRef = useRef<string | null>(null);
 	const isHost = Boolean(
 		state.gameState &&
@@ -172,7 +174,7 @@ export function useMultiplayerPressureButton() {
 			});
 			socketRef.current = socket;
 
-			socket.addEventListener("open", () => {
+			socket.addEventListener("open", async () => {
 				if (socketRef.current !== socket) return;
 				setState((previous) => ({
 					...previous,
@@ -181,9 +183,9 @@ export function useMultiplayerPressureButton() {
 					error: null,
 				}));
 
-				if (socket.readyState === WebSocket.OPEN) {
-					socket.send(JSON.stringify({ type: "join", name: playerName }));
-				}
+				const authToken = await authTokenRef.current();
+				if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return;
+				socket.send(JSON.stringify({ type: "join", name: playerName, authToken }));
 			});
 
 			socket.addEventListener("message", (event) => {
@@ -213,7 +215,7 @@ export function useMultiplayerPressureButton() {
 				}));
 			});
 		},
-		[handleMessage],
+		[handleMessage, authTokenRef],
 	);
 
 	const send = useCallback((payload: object) => {

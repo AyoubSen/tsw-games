@@ -2,6 +2,7 @@ import type * as Party from "partykit/server"
 import { runCleanupCron, withRoomCleanup } from "./shared/cleanup"
 import { isPresent, markConnected, markDisconnected } from "./shared/presence"
 import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight"
+import { JoinVerifier, reportDirectResult } from "./shared/account"
 
 export const WORDLE_PROTOCOL_VERSION = 4
 const STATE_SCHEMA_VERSION = 4
@@ -33,6 +34,8 @@ export interface Player {
   disconnectedAt: number | null
   graceHandled: boolean
   readyForNextTurn: boolean
+  /** Server-only: the verified account behind this player. */
+  userId?: string
 }
 
 export interface PublicPlayer {
@@ -116,7 +119,7 @@ export interface PublicGameState {
 }
 
 export type ClientMessage =
-  | { type: "join"; protocolVersion: number; name: string }
+  | { type: "join"; protocolVersion: number; name: string; authToken?: unknown }
   | { type: "start"; protocolVersion: number; roundId: string }
   | { type: "guess"; protocolVersion: number; roundId: string; word: string }
   | { type: "leave"; protocolVersion: number }
@@ -355,6 +358,7 @@ function normalizeStoredState(value: unknown, roomCode: string): GameState | nul
       disconnectedAt: !wasConnected && typeof player.disconnectedAt === "number" ? player.disconnectedAt : Date.now(),
       graceHandled: Boolean(player.graceHandled),
       readyForNextTurn: Boolean(player.readyForNextTurn),
+      userId: typeof player.userId === "string" ? player.userId : undefined,
     }
   }
 
@@ -414,7 +418,10 @@ function normalizeStoredState(value: unknown, roomCode: string): GameState | nul
 }
 
 class WordleParty implements Party.Server {
-  constructor(readonly room: Party.Room) {}
+  constructor(readonly room: Party.Room) {
+    this.joins = new JoinVerifier(room)
+  }
+  joins: JoinVerifier
 
   static async onCron(cron: Party.Cron, lobby: Party.CronLobby) {
     if (cron.name === "stale-room-cleanup") await runCleanupCron(lobby)
@@ -644,6 +651,16 @@ class WordleParty implements Party.Server {
         ? []
         : Object.entries(this.state.seriesScores).filter(([, score]) => score === highScore).map(([id]) => id)
     }
+    if (this.state.seriesComplete) {
+      // A series counts as one game, like in Game Night.
+      const winnerIds = this.state.seriesLength > 1 ? this.state.seriesWinnerIds : this.state.winnerIds
+      void reportDirectResult(this.room, {
+        resultId: `wordle:${this.state.roomCode}:${this.state.roundId}`,
+        game: "wordle",
+        vsBot: false,
+        players: players.map(player => ({ userId: player.userId, won: winnerIds.includes(player.id) })),
+      })
+    }
   }
 
   finishIfEveryoneDone(): boolean {
@@ -782,6 +799,8 @@ class WordleParty implements Party.Server {
         this.send(sender, { type: "error", message: "Wordle was updated. Refresh this page to continue." })
         return
       }
+      if (data.type !== "join") await this.joins.settled(sender)
+      if (!this.state) return
       if (data.type !== "join" && !this.state.players[sender.id]) {
         this.send(sender, { type: "error", message: "Join the game before sending actions" })
         return
@@ -790,7 +809,9 @@ class WordleParty implements Party.Server {
       switch (data.type) {
         case "join": {
           const rosterName = this.gameNightMembers.get(sender.id)?.name
-          const name = rosterName ?? (typeof data.name === "string" ? data.name.trim().slice(0, 20) : "")
+          const account = await this.joins.verify(sender, data.authToken)
+          if (!this.state) return
+          const name = rosterName ?? account?.displayName ?? (typeof data.name === "string" ? data.name.trim().slice(0, 20) : "")
           if (!name) {
             this.send(sender, { type: "error", message: "Enter a player name" })
             return
@@ -801,7 +822,9 @@ class WordleParty implements Party.Server {
             returning.connected = true
             returning.disconnectedAt = null
             returning.graceHandled = false
-            if (this.state.status !== "finished") returning.name = name
+            // A verified player keeps their profile name even if a later join comes without a token.
+            if (this.state.status !== "finished" && (rosterName || account || !returning.userId)) returning.name = name
+            if (account) returning.userId = account.userId
             this.syncClassicPlayer(returning)
           } else {
             if (this.state.status !== "waiting") {
@@ -829,6 +852,7 @@ class WordleParty implements Party.Server {
               disconnectedAt: null,
               graceHandled: false,
               readyForNextTurn: false,
+              userId: account?.userId,
             }
             this.state.seriesScores[this.state.players[sender.id].id] = 0
           }

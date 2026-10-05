@@ -1,6 +1,7 @@
 import type * as Party from "partykit/server"
 import { withRoomCleanup } from "./shared/cleanup"
 import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight"
+import { JoinVerifier, reportDirectResult } from "./shared/account"
 import {
   markConnected,
   markDisconnected,
@@ -39,11 +40,13 @@ export interface GameState {
   winnerId: string | null
   startedAt: number | null
   finishedAt: number | null
+  /** Server-only: player id -> verified account. Kept off Player, which is sent to clients as is. */
+  accounts?: Record<string, string>
 }
 
 // Message types from client
 export type ClientMessage =
-  | { type: "join"; name: string }
+  | { type: "join"; name: string; authToken?: unknown }
   | { type: "start" }
   | { type: "progress"; progress: number; wpm: number; accuracy: number; typedText: string }
   | { type: "complete"; wpm: number; accuracy: number }
@@ -109,7 +112,10 @@ function getRandomPhrase(): string {
 }
 
 class TypeRaceParty implements Party.Server {
-  constructor(readonly room: Party.Room) {}
+  constructor(readonly room: Party.Room) {
+    this.joins = new JoinVerifier(room)
+  }
+  joins: JoinVerifier
 
   state: GameState | null = null
   gameNightMembers = new Map<string, GameNightMember>()
@@ -200,14 +206,21 @@ class TypeRaceParty implements Party.Server {
 
     try {
       const data: ClientMessage = JSON.parse(message)
+      if (data.type !== "join") await this.joins.settled(sender)
+      if (!this.state) return
 
       switch (data.type) {
         case "join": {
-          const name = this.gameNightMembers.get(sender.id)?.name ?? data.name
+          const rosterName = this.gameNightMembers.get(sender.id)?.name
+          const account = await this.joins.verify(sender, data.authToken)
+          if (!this.state) return
+          const name = rosterName ?? account?.displayName ?? data.name
+          if (account) this.state.accounts = { ...this.state.accounts, [sender.id]: account.userId }
           const returning = markConnected(this.state.players, sender.id);
           if (returning) {
             // A reconnect, not a new player - never rejected mid-game.
-            returning.name = name || returning.name;
+            // A verified player keeps their profile name even if a later join comes without a token.
+            if (rosterName || account || !this.state.accounts?.[sender.id]) returning.name = name || returning.name;
             await this.saveState();
             this.broadcast({ type: "player-joined", player: returning });
             this.broadcast({ type: "state", state: this.getPublicState() });
@@ -325,6 +338,7 @@ class TypeRaceParty implements Party.Server {
             this.state.status = "finished"
             this.state.finishedAt = Date.now()
             await this.saveState()
+            this.reportFinish()
 
             const results: PlayerResult[] = Object.values(this.state.players).map((p) => ({
               id: p.id,
@@ -353,6 +367,7 @@ class TypeRaceParty implements Party.Server {
             this.state.winnerId = players[0].id
 
             await this.saveState()
+            this.reportFinish()
 
             const results: PlayerResult[] = players.map((p) => ({
               id: p.id,
@@ -425,6 +440,17 @@ class TypeRaceParty implements Party.Server {
     } catch (e) {
       console.error("Error processing message:", e)
     }
+  }
+
+  reportFinish() {
+    if (!this.state) return
+    const accounts = this.state.accounts ?? {}
+    void reportDirectResult(this.room, {
+      resultId: `typerace:${this.state.roomCode}:${this.state.startedAt}`,
+      game: "typerace",
+      vsBot: false,
+      players: Object.keys(this.state.players).map((id) => ({ userId: accounts[id], won: id === this.state!.winnerId })),
+    })
   }
 
   async onClose(conn: Party.Connection) {

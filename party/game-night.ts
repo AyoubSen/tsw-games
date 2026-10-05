@@ -1,5 +1,5 @@
 import type * as Party from "partykit/server";
-import { reportResult, type VerifiedAccount, verifyAccount } from "./shared/account";
+import { JoinVerifier, reportResult } from "./shared/account";
 import { withRoomCleanup } from "./shared/cleanup";
 import {
 	computeAwards,
@@ -43,11 +43,12 @@ interface ValidationRequest {
 const MAX_PLAYERS = 12;
 
 class GameNightParty implements Party.Server {
-	constructor(readonly room: Party.Room) {}
+	constructor(readonly room: Party.Room) {
+		this.joins = new JoinVerifier(room);
+	}
 	state: GameNightState | null = null;
 	connectionTokens = new WeakMap<Party.Connection, string>();
-	/** A join's account check, which later messages from that socket wait behind. */
-	verifyingJoins = new WeakMap<Party.Connection, Promise<VerifiedAccount | null>>();
+	joins: JoinVerifier;
 	reactedAt = new Map<string, number>();
 
 	async onStart() {
@@ -401,14 +402,12 @@ class GameNightParty implements Party.Server {
 		if (!this.state) return;
 		try {
 			const data = JSON.parse(message) as GameNightClientMessage;
-			if (data.type !== "join") await this.verifyingJoins.get(sender);
+			if (data.type !== "join") await this.joins.settled(sender);
 			if (!this.state) return;
 			if (data.type === "join") {
 				const token = this.connectionTokens.get(sender);
 				if (!token) return this.send(sender, { type: "error", message: "Invalid player session" });
-				const verifying = verifyAccount(this.room, data.authToken);
-				this.verifyingJoins.set(sender, verifying);
-				const account = await verifying;
+				const account = await this.joins.verify(sender, data.authToken);
 				if (!this.state) return;
 				const name = account?.displayName ?? data.name.trim().slice(0, 20);
 				const returning = this.state.players[sender.id];

@@ -1,5 +1,5 @@
 import type * as Party from "partykit/server"
-import { reportResult, verifyAccount, type VerifiedAccount } from "./shared/account"
+import { JoinVerifier, reportResult } from "./shared/account"
 import { withRoomCleanup } from "./shared/cleanup"
 import { isBotLevel, type BotLevel } from "../src/lib/botLevel"
 import { isReaction, pickReaction, takeReactionSlot, type Reaction, type ReactionMessage } from "../src/lib/reactions"
@@ -220,12 +220,13 @@ function ballList(numbers: number[]) {
 }
 
 class PoolParty implements Party.Server {
-  constructor(readonly room: Party.Room) {}
+  constructor(readonly room: Party.Room) {
+    this.joins = new JoinVerifier(room)
+  }
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
-  /** A join's account check, which later messages from that socket wait behind. */
-  verifyingJoins = new WeakMap<Party.Connection, Promise<VerifiedAccount | null>>()
+  joins: JoinVerifier
   reactedAt = new Map<string, number>()
   aimedAt = new Map<string, number>()
 
@@ -595,7 +596,7 @@ class PoolParty implements Party.Server {
     if (!this.state) return
     try {
       const data = JSON.parse(message) as ClientMessage
-      if (data.type !== "join") await this.verifyingJoins.get(sender)
+      if (data.type !== "join") await this.joins.settled(sender)
       const state = this.state
       if (!state) return
 
@@ -619,9 +620,7 @@ class PoolParty implements Party.Server {
             this.send(sender, { type: "error", message: "Invalid player session" })
             return
           }
-          const verifying = verifyAccount(this.room, data.authToken)
-          this.verifyingJoins.set(sender, verifying)
-          const account = await verifying
+          const account = await this.joins.verify(sender, data.authToken)
           const name = account?.displayName ?? (typeof data.name === "string" ? data.name.trim().slice(0, 20) : "")
           const identity = account ? { userId: account.userId, color: account.color } : {}
           const returning = state.players[sender.id]

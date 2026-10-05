@@ -8,6 +8,7 @@ import {
   getPersistentPlayerId,
   leavePartySocket,
 } from "@/lib/partykit"
+import { useAuthTokenRef } from "@/lib/account"
 import {
   WORDLE_PROTOCOL_VERSION,
   type ClientMessage,
@@ -55,6 +56,7 @@ function initialState(overrides: Partial<MultiplayerState> = {}): MultiplayerSta
 export function useMultiplayerWordle() {
   const [state, setState] = useState<MultiplayerState>(() => initialState())
   const socketRef = useRef<PartySocket | null>(null)
+  const authTokenRef = useAuthTokenRef()
   const roomCodeRef = useRef("")
   const roundIdRef = useRef("")
   const revisionRef = useRef(0)
@@ -162,14 +164,17 @@ export function useMultiplayerWordle() {
     })
     socketRef.current = socket
 
-    socket.addEventListener("open", () => {
+    socket.addEventListener("open", async () => {
       if (socketRef.current !== socket) return
       revisionRef.current = 0
       setState(prev => ({ ...prev, error: null }))
+      const authToken = await authTokenRef.current()
+      if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return
       const join: ClientMessage = {
         type: "join",
         protocolVersion: WORDLE_PROTOCOL_VERSION,
         name: playerName,
+        authToken,
       }
       socket.send(JSON.stringify(join))
     })
@@ -206,7 +211,7 @@ export function useMultiplayerWordle() {
         error: null,
       }))
     })
-  }, [handleMessage])
+  }, [handleMessage, authTokenRef])
 
   const sendNow = useCallback((message: ClientMessage) => {
     const socket = socketRef.current

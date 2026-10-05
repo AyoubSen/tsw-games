@@ -75,3 +75,8 @@ export async function getGameNightResultMatch(
 	if (!stored || stored.gameId !== gameId || stored.matchId !== body.matchId) return null;
 	return stored;
 }
+
+/** Whether this room hosts a Game Night match. Safe inside onAlarm. */
+export async function isGameNightRoom(room: Party.Room): Promise<boolean> {
+	return Boolean(await room.storage.get<StoredGameNightMatch>(STORAGE_KEY));
+}

@@ -1,5 +1,6 @@
 import { verifyToken } from "@clerk/backend"
 import type * as Party from "partykit/server"
+import { isGameNightRoom } from "./gameNight"
 
 /** A signed-in player, with the name and colour from their Convex profile. */
 export interface VerifiedAccount {
@@ -76,4 +77,37 @@ export async function reportResult(room: Party.Room, report: GameResultReport): 
   } catch (error) {
     console.error("Could not report game result", error)
   }
+}
+
+/**
+ * Runs the account check for each `join`. Other messages from that socket
+ * should `await settled(sender)` first, so they wait behind the check.
+ */
+export class JoinVerifier {
+  private pending = new WeakMap<Party.Connection, Promise<VerifiedAccount | null>>()
+
+  constructor(private readonly room: Party.Room) {}
+
+  verify(connection: Party.Connection, authToken: unknown): Promise<VerifiedAccount | null> {
+    const verifying = verifyAccount(this.room, authToken)
+    this.pending.set(connection, verifying)
+    return verifying
+  }
+
+  async settled(connection: Party.Connection): Promise<void> {
+    await this.pending.get(connection)
+  }
+}
+
+/**
+ * Reports a game played outside Game Night, which reports its own matches.
+ * Guests (no userId) are left out.
+ */
+export async function reportDirectResult(
+  room: Party.Room,
+  report: Omit<GameResultReport, "players"> & { players: { userId?: string; won: boolean }[] },
+): Promise<void> {
+  if (await isGameNightRoom(room)) return
+  const players = report.players.flatMap(({ userId, won }) => (userId ? [{ userId, won }] : []))
+  await reportResult(room, { ...report, players })
 }

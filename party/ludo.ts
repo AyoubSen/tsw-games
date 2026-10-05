@@ -35,6 +35,7 @@ import {
   validateGameNightConnection,
   type GameNightMember,
 } from "./shared/gameNight"
+import { JoinVerifier, reportDirectResult } from "./shared/account"
 import { clearSpectators, dropSpectator, MAX_SPECTATORS, publicSpectators, type PublicSpectator, type Spectator } from "./shared/spectators"
 
 export interface Player {
@@ -47,6 +48,8 @@ export interface Player {
   tokens: number[]
   isBot?: boolean
   botLevel?: BotLevel
+  /** Server-only: the verified account behind this seat. */
+  userId?: string
 }
 
 export interface WinnerSnapshot {
@@ -146,7 +149,7 @@ export interface PublicGameState {
 }
 
 export type ClientMessage =
-  | { type: "join"; name: string }
+  | { type: "join"; name: string; authToken?: unknown }
   | { type: "start" }
   | { type: "add-bot" }
   | { type: "remove-player"; playerId: unknown }
@@ -180,7 +183,10 @@ function freshTokens(quick: boolean): number[] {
 }
 
 class LudoParty implements Party.Server {
-  constructor(readonly room: Party.Room) {}
+  constructor(readonly room: Party.Room) {
+    this.joins = new JoinVerifier(room)
+  }
+  joins: JoinVerifier
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
@@ -403,6 +409,7 @@ class LudoParty implements Party.Server {
             finishedAt: Date.now(),
           }
         : null
+    this.reportFinish()
     this.logEvent(
       survivors.length > 0
         ? `${this.state.winner?.name} wins - everyone else left`
@@ -576,6 +583,7 @@ class LudoParty implements Party.Server {
       this.state.legalMoves = []
       this.state.turnDeadline = null
       this.state.winner = winner
+      this.reportFinish()
       this.logEvent(`${winner.name} got every pawn home`)
       return
     }
@@ -587,6 +595,18 @@ class LudoParty implements Party.Server {
     }
     this.state.turnDeadline =
       auto || actor.isBot ? Date.now() + BOT_STEP_MS : this.turnDeadlineFor(turnSeat)
+  }
+
+  reportFinish() {
+    const state = this.state
+    if (!state?.winner) return
+    const seated = Object.values(state.players).filter((player) => player.seat !== null)
+    void reportDirectResult(this.room, {
+      resultId: `ludo:${state.roomCode}:${state.roundId}`,
+      game: "ludo",
+      vsBot: seated.some((player) => player.isBot),
+      players: seated.map((player) => ({ userId: player.userId, won: state.winner!.ids.includes(player.id) })),
+    })
   }
 
   /** In 2v2 both partners must be home; in classic one player is enough. */
@@ -677,6 +697,8 @@ class LudoParty implements Party.Server {
 
     try {
       const data = JSON.parse(message) as ClientMessage
+      if (data.type !== "join") await this.joins.settled(sender)
+      if (!this.state) return
 
       if (data.type !== "join" && !this.isAuthenticated(sender)) {
         this.send(sender, { type: "error", message: "Invalid player session" })
@@ -701,6 +723,8 @@ class LudoParty implements Party.Server {
             this.send(sender, { type: "error", message: "Invalid player session" })
             return
           }
+          const account = await this.joins.verify(sender, data.authToken)
+          if (!this.state) return
 
           const returning = this.state.players[sender.id]
           if (returning) {
@@ -709,7 +733,9 @@ class LudoParty implements Party.Server {
               return
             }
             markConnected(this.state.players, sender.id)
-            returning.name = gameNightMember?.name ?? (data.name.trim().slice(0, 20) || returning.name)
+            // A verified player keeps their profile name even if a later join comes without a token.
+            returning.name = gameNightMember?.name ?? account?.displayName ?? (returning.userId ? returning.name : data.name.trim().slice(0, 20) || returning.name)
+            if (account) returning.userId = account.userId
             returning.disconnectedAt = null
             if (
               !this.state.hostId ||
@@ -728,14 +754,15 @@ class LudoParty implements Party.Server {
               this.send(sender, { type: "error", message: "Invalid player session" })
               return
             }
-            watching.name = gameNightMember?.name ?? (data.name.trim().slice(0, 20) || watching.name)
+            watching.name = gameNightMember?.name ?? account?.displayName ?? (watching.userId ? watching.name : data.name.trim().slice(0, 20) || watching.name)
+            if (account) watching.userId = account.userId
             await this.saveState()
             this.broadcastState()
             return
           }
 
           if (this.state.status !== "waiting") {
-            const name = gameNightMember?.name ?? data.name.trim().slice(0, 20)
+            const name = gameNightMember?.name ?? account?.displayName ?? data.name.trim().slice(0, 20)
             if (!name) {
               this.send(sender, { type: "error", message: "Enter a player name" })
               return
@@ -745,7 +772,7 @@ class LudoParty implements Party.Server {
               this.send(sender, { type: "error", message: "Too many people are watching" })
               return
             }
-            this.state.spectators[sender.id] = { id: sender.id, name, joinedAt: Date.now() }
+            this.state.spectators[sender.id] = { id: sender.id, name, joinedAt: Date.now(), userId: account?.userId }
             this.state.playerTokens[sender.id] = playerToken
             await this.saveState()
             this.broadcastState()
@@ -759,7 +786,7 @@ class LudoParty implements Party.Server {
             return
           }
 
-          const name = gameNightMember?.name ?? data.name.trim().slice(0, 20)
+          const name = gameNightMember?.name ?? account?.displayName ?? data.name.trim().slice(0, 20)
           if (!name) {
             this.send(sender, { type: "error", message: "Enter a player name" })
             return
@@ -773,6 +800,7 @@ class LudoParty implements Party.Server {
             disconnectedAt: null,
             seat: null,
             tokens: freshTokens(this.state.quick),
+            userId: account?.userId,
           }
           this.state.playerTokens[sender.id] = playerToken
           if (
@@ -819,6 +847,7 @@ class LudoParty implements Party.Server {
             disconnectedAt: null,
             seat: null,
             tokens: freshTokens(this.state.quick),
+            userId: spectator.userId,
           }
           await this.saveState()
           this.broadcastState()

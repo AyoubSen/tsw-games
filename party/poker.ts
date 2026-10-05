@@ -16,6 +16,7 @@ import {
   validateGameNightConnection,
   type GameNightMember,
 } from "./shared/gameNight"
+import { JoinVerifier, reportDirectResult } from "./shared/account"
 import { clearSpectators, dropSpectator, MAX_SPECTATORS, publicSpectators, type PublicSpectator, type Spectator } from "./shared/spectators"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -96,6 +97,8 @@ export interface Player {
   botLevel?: BotLevel
   rebuys: number
   sittingOut: boolean
+  /** Server-only: the verified account behind this seat. */
+  userId?: string
 }
 
 export interface WinnerInfo {
@@ -221,7 +224,7 @@ export interface PublicGameState {
 }
 
 export type ClientMessage =
-  | { type: "join"; name: string }
+  | { type: "join"; name: string; authToken?: unknown }
   | { type: "leave" }
   | { type: "start-game" }
   | { type: "add-bot" }
@@ -325,7 +328,10 @@ function netResult(settings: PokerSettings, p: { chips: number; rebuys: number }
 // ─── Server ──────────────────────────────────────────────────────────────────
 
 class PokerParty implements Party.Server {
-  constructor(readonly room: Party.Room) {}
+  constructor(readonly room: Party.Room) {
+    this.joins = new JoinVerifier(room)
+  }
+  joins: JoinVerifier
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
@@ -587,7 +593,7 @@ class PokerParty implements Party.Server {
 
     if (aliveSeatIndices.length < 2) {
       // Nobody left who could still play ends the game; otherwise wait for a rebuy or a sit-in.
-      if (this.isGameOver()) s.status = "finished"
+      if (this.isGameOver()) this.finishGame()
       s.handInProgress = false
       s.pending = null
       return
@@ -703,6 +709,22 @@ class PokerParty implements Party.Server {
     if (p.chips === 0) {
       p.allIn = true
     }
+  }
+
+  /** Ends the game; the best net result wins, so rebuys don't count as winnings. */
+  finishGame() {
+    const s = this.state
+    if (!s || s.status === "finished") return
+    s.status = "finished"
+    const players = Object.values(s.players)
+    const net = (player: Player) => netResult(s.settings, player)
+    const best = Math.max(...players.map(net))
+    void reportDirectResult(this.room, {
+      resultId: `poker:${s.roomCode}:${Date.now()}`,
+      game: "poker",
+      vsBot: players.some((player) => player.isBot),
+      players: players.map((player) => ({ userId: player.userId, won: net(player) === best })),
+    })
   }
 
   /** The game ends once fewer than two players have chips or could still buy back in. */
@@ -1211,7 +1233,7 @@ class PokerParty implements Party.Server {
     }
 
     if (this.isGameOver()) {
-      s.status = "finished"
+      this.finishGame()
     } else if (!s.autoDealPaused && this.readyToDeal()) {
       this.schedule("next-hand", NEXT_HAND_MS)
     }
@@ -1548,6 +1570,8 @@ class PokerParty implements Party.Server {
 
     try {
       const data: ClientMessage = JSON.parse(message)
+      if (data.type !== "join") await this.joins.settled(sender)
+      if (!this.state) return
 
       if (data.type !== "join" && !this.isAuthenticated(sender)) {
         this.send(sender, { type: "error", message: "Invalid player session" })
@@ -1571,7 +1595,9 @@ class PokerParty implements Party.Server {
 			this.send(sender, { type: "error", message: "Invalid player session" })
 			return
 		  }
-		  const name = this.gameNightMembers.get(sender)?.name ?? data.name
+		  const account = await this.joins.verify(sender, data.authToken)
+		  if (!this.state) return
+		  const name = this.gameNightMembers.get(sender)?.name ?? account?.displayName ?? data.name
 		  const returningPlayer = this.state.players[sender.id]
 		  const expectedToken = this.state.playerTokens[sender.id]
 		  if (returningPlayer && expectedToken !== playerToken) {
@@ -1584,7 +1610,9 @@ class PokerParty implements Party.Server {
               this.send(sender, { type: "error", message: "Invalid player session" })
               return
             }
-            watching.name = name
+            // A verified player keeps their profile name even if a later join comes without a token.
+            if (account || !watching.userId) watching.name = name
+            if (account) watching.userId = account.userId
             await this.saveState()
             this.broadcastState()
             return
@@ -1595,7 +1623,7 @@ class PokerParty implements Party.Server {
               this.send(sender, { type: "error", message: "Too many people are watching" })
               return
             }
-            this.state.spectators[sender.id] = { id: sender.id, name, joinedAt: Date.now() }
+            this.state.spectators[sender.id] = { id: sender.id, name, joinedAt: Date.now(), userId: account?.userId }
             this.state.playerTokens[sender.id] = playerToken
             await this.saveState()
             this.broadcastState()
@@ -1610,8 +1638,10 @@ class PokerParty implements Party.Server {
           // Reconnection
           if (this.state.players[sender.id]) {
 			this.state.playerTokens[sender.id] = playerToken
-            this.state.players[sender.id].connected = true
-            this.state.players[sender.id].name = name
+            const returning = this.state.players[sender.id]
+            returning.connected = true
+            if (account || !returning.userId) returning.name = name
+            if (account) returning.userId = account.userId
             await this.saveState()
             this.broadcastState()
             return
@@ -1633,6 +1663,7 @@ class PokerParty implements Party.Server {
             lastAction: null,
             rebuys: 0,
             sittingOut: false,
+            userId: account?.userId,
           }
 
           this.state.players[sender.id] = player
@@ -1721,6 +1752,7 @@ class PokerParty implements Party.Server {
             lastAction: null,
             rebuys: 0,
             sittingOut: false,
+            userId: spectator.userId,
           }
           this.state.seatOrder.push(spectator.id)
           this.resumeDealing()
@@ -1982,7 +2014,7 @@ class PokerParty implements Party.Server {
             this.send(sender, { type: "error", message: "Wait for the hand to finish" })
             return
           }
-          this.state.status = "finished"
+          this.finishGame()
           this.state.pending = null
           await this.room.storage.deleteAlarm()
           await this.saveState()

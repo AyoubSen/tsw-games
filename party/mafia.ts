@@ -5,6 +5,7 @@ import {
   validateGameNightConnection,
   type GameNightMember,
 } from "./shared/gameNight"
+import { JoinVerifier, reportDirectResult } from "./shared/account"
 import { isReaction, takeReactionSlot, type Reaction, type ReactionMessage } from "../src/lib/reactions"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -54,6 +55,8 @@ export interface Player {
   alive: boolean
   connected: boolean
   isBot?: boolean
+  /** Server-only: the verified account behind this player. */
+  userId?: string
 }
 
 export type ChatChannel = "day" | "wolf" | "ghost"
@@ -216,7 +219,7 @@ export interface PublicGameState {
 }
 
 export type ClientMessage =
-  | { type: "join"; name: string }
+  | { type: "join"; name: string; authToken?: unknown }
   | { type: "leave" }
   | { type: "start-game" }
   | { type: "add-bot" }
@@ -334,7 +337,10 @@ function generateId(): string {
 // ─── Server ─────────────────────────────────────────────────────────────────
 
 class MafiaParty implements Party.Server {
-  constructor(readonly room: Party.Room) {}
+  constructor(readonly room: Party.Room) {
+    this.joins = new JoinVerifier(room)
+  }
+  joins: JoinVerifier
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
@@ -986,6 +992,13 @@ class MafiaParty implements Party.Server {
     this.state.winner = winner
     this.state.winningPlayerIds = winningIds
     this.state.status = "finished"
+    const seated = this.state.playerOrder.flatMap((id) => this.state!.players[id] ?? [])
+    void reportDirectResult(this.room, {
+      resultId: `mafia:${this.state.roomCode}:${Date.now()}`,
+      game: "mafia",
+      vsBot: seated.some((player) => player.isBot),
+      players: seated.map((player) => ({ userId: player.userId, won: winningIds.includes(player.id) })),
+    })
 
     const winText: Record<string, string> = {
       villagers: "The village wins! All werewolves have been eliminated.",
@@ -1355,6 +1368,8 @@ class MafiaParty implements Party.Server {
 
     try {
       const msg: ClientMessage = JSON.parse(message)
+      if (msg.type !== "join") await this.joins.settled(sender)
+      if (!this.state) return
 
 	  if (msg.type !== "join" && !this.isAuthenticated(sender)) {
 		this.sendError(sender, "Invalid player session")
@@ -1369,6 +1384,8 @@ class MafiaParty implements Party.Server {
 			return
 		  }
 		  const coordinatorName = this.gameNightMembers.get(sender)?.name
+		  const account = await this.joins.verify(sender, msg.authToken)
+		  if (!this.state) return
 		  const returningPlayer = this.state.players[sender.id]
 		  const expectedToken = this.state.playerTokens[sender.id]
 		  if (returningPlayer && expectedToken !== playerToken) {
@@ -1382,7 +1399,9 @@ class MafiaParty implements Party.Server {
           if (returning) {
 			this.state.playerTokens[sender.id] = playerToken
             returning.connected = true
-            returning.name = coordinatorName || msg.name.trim().slice(0, 20) || returning.name
+            // A verified player keeps their profile name even if a later join comes without a token.
+            returning.name = coordinatorName || account?.displayName || (returning.userId ? returning.name : msg.name.trim().slice(0, 20) || returning.name)
+            if (account) returning.userId = account.userId
             await this.saveState()
             // Per-connection state, so they get their own role back and only theirs.
             this.broadcastState()
@@ -1400,10 +1419,11 @@ class MafiaParty implements Party.Server {
 
           const player: Player = {
             id: sender.id,
-            name: coordinatorName || msg.name.trim().slice(0, 20) || "Player",
+            name: coordinatorName || account?.displayName || msg.name.trim().slice(0, 20) || "Player",
             role: "villager", // placeholder until game starts
             alive: true,
             connected: true,
+            userId: account?.userId,
           }
           this.state.players[sender.id] = player
           this.state.playerOrder.push(sender.id)

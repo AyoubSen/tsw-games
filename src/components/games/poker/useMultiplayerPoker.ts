@@ -10,6 +10,7 @@ import {
   getPersistentPlayerToken,
   leavePartySocket,
 } from "@/lib/partykit"
+import { useAuthTokenRef } from "@/lib/account"
 import type { BotLevel } from "@/lib/botLevel"
 import type { Reaction } from "@/lib/reactions"
 import { useReactionBubbles } from "@/components/multiplayer/Reactions"
@@ -44,6 +45,7 @@ export function useMultiplayerPoker() {
   })
 
   const socketRef = useRef<PartySocket | null>(null)
+  const authTokenRef = useAuthTokenRef()
   const roomCodeRef = useRef("")
   const playerNameRef = useRef<string>("")
   const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles()
@@ -87,7 +89,7 @@ export function useMultiplayerPoker() {
       })
       socketRef.current = socket
 
-      socket.addEventListener("open", () => {
+      socket.addEventListener("open", async () => {
         if (socketRef.current !== socket) return
         setState((prev) => ({
           ...prev,
@@ -95,7 +97,9 @@ export function useMultiplayerPoker() {
           playerId: socket.id,
           error: null,
         }))
-        socket.send(JSON.stringify({ type: "join", name: playerName }))
+        const authToken = await authTokenRef.current()
+        if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return
+        socket.send(JSON.stringify({ type: "join", name: playerName, authToken }))
       })
 
       socket.addEventListener("message", (event) => {
@@ -126,7 +130,7 @@ export function useMultiplayerPoker() {
         }))
       })
     },
-    []
+    [authTokenRef]
   )
 
   const handleMessage = useCallback((message: ServerMessage) => {

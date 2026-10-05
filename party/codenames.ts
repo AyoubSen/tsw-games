@@ -11,6 +11,7 @@ import {
   validateGameNightConnection,
   type GameNightMember,
 } from "./shared/gameNight"
+import { JoinVerifier, reportDirectResult } from "./shared/account"
 import { clearSpectators, dropSpectator, MAX_SPECTATORS, publicSpectators, type PublicSpectator, type Spectator } from "./shared/spectators"
 import { isReaction, takeReactionSlot, type Reaction, type ReactionMessage } from "../src/lib/reactions"
 
@@ -169,6 +170,8 @@ export interface GameState {
   finishedAt: number | null
   /** People who joined mid-game; the host can seat them between games. */
   spectators?: Record<string, Spectator>
+  /** Server-only: player id -> verified account. Kept off Player, which is sent to clients as is. */
+  accounts?: Record<string, string>
 }
 
 // Public state sent to clients (hides card types for non-spymasters)
@@ -203,7 +206,7 @@ export interface PublicCard {
 
 // Message types from client
 export type ClientMessage =
-  | { type: "join"; name: string }
+  | { type: "join"; name: string; authToken?: unknown }
   | { type: "leave" }
   | { type: "proceed-to-team-selection" }
   | { type: "select-team"; team: Team; role: PlayerRole }
@@ -323,7 +326,10 @@ type GuessPending = Extract<Pending, { kind: "guess" }>
 const otherTeam = (team: Team): Team => (team === "red" ? "blue" : "red")
 
 class CodenamesParty implements Party.Server {
-  constructor(readonly room: Party.Room) {}
+  constructor(readonly room: Party.Room) {
+    this.joins = new JoinVerifier(room)
+  }
+  joins: JoinVerifier
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
@@ -494,6 +500,19 @@ class CodenamesParty implements Party.Server {
     this.state.turnDeadline = null
     this.state.intents = {}
     this.state.finishedAt = Date.now()
+    const duet = this.state.duet
+    this.reportFinish(duet.playerIds, (id) => outcome === "win" && duet.playerIds.includes(id))
+  }
+
+  reportFinish(playerIds: string[], won: (id: string) => boolean) {
+    if (!this.state) return
+    const accounts = this.state.accounts ?? {}
+    void reportDirectResult(this.room, {
+      resultId: `codenames:${this.state.roomCode}:${this.state.finishedAt}`,
+      game: "codenames",
+      vsBot: false,
+      players: playerIds.map((id) => ({ userId: accounts[id], won: won(id) })),
+    })
   }
 
   endDuetTurn() {
@@ -807,6 +826,8 @@ class CodenamesParty implements Party.Server {
     this.state.turnDeadline = null
     this.state.intents = {}
     this.state.finishedAt = Date.now()
+    const players = Object.values(this.state.players).filter((player) => player.team !== null)
+    this.reportFinish(players.map((player) => player.id), (id) => this.state!.players[id]?.team === winner)
   }
 
   canConsider(playerId: string, cardIndex: number | null) {
@@ -890,6 +911,8 @@ class CodenamesParty implements Party.Server {
 
     try {
       const data: ClientMessage = JSON.parse(message)
+      if (data.type !== "join") await this.joins.settled(sender)
+      if (!this.state) return
 
       if (data.type !== "join" && !this.isAuthenticated(sender)) {
         this.send(sender, { type: "error", message: "Invalid player session" })
@@ -914,6 +937,10 @@ class CodenamesParty implements Party.Server {
 			return
 		  }
 		  const gameNightName = this.gameNightMembers.get(sender)?.name
+		  const account = await this.joins.verify(sender, data.authToken)
+		  if (!this.state) return
+		  // A verified player keeps their profile name even if a later join comes without a token.
+		  const typedName = this.state.accounts?.[sender.id] && !account ? "" : data.name
 		  const returningPlayer = this.state.players[sender.id]
 		  const expectedToken = this.state.playerTokens[sender.id]
 		  if (returningPlayer && expectedToken !== playerToken) {
@@ -926,7 +953,8 @@ class CodenamesParty implements Party.Server {
               this.send(sender, { type: "error", message: "Invalid player session" })
               return
             }
-            watching.name = gameNightName || data.name || watching.name
+            watching.name = gameNightName || account?.displayName || typedName || watching.name
+            if (account) this.state.accounts = { ...this.state.accounts, [sender.id]: account.userId }
             await this.saveState()
             this.broadcastState()
             return
@@ -937,7 +965,8 @@ class CodenamesParty implements Party.Server {
           const returning = markConnected(this.state.players, sender.id)
           if (returning) {
 			this.state.playerTokens[sender.id] = playerToken
-            returning.name = gameNightName || data.name || returning.name
+            returning.name = gameNightName || account?.displayName || typedName || returning.name
+            if (account) this.state.accounts = { ...this.state.accounts, [sender.id]: account.userId }
             await this.saveState()
             this.broadcast({ type: "player-joined", player: returning })
             this.broadcastState()
@@ -951,8 +980,9 @@ class CodenamesParty implements Party.Server {
               this.send(sender, { type: "error", message: "Too many people are watching" })
               return
             }
-            this.state.spectators[sender.id] = { id: sender.id, name: gameNightName || data.name || "Spectator", joinedAt: Date.now() }
+            this.state.spectators[sender.id] = { id: sender.id, name: gameNightName || account?.displayName || data.name || "Spectator", joinedAt: Date.now() }
             this.state.playerTokens[sender.id] = playerToken
+            if (account) this.state.accounts = { ...this.state.accounts, [sender.id]: account.userId }
             await this.saveState()
             this.broadcastState()
             return
@@ -965,7 +995,7 @@ class CodenamesParty implements Party.Server {
 
           const player: Player = {
             id: sender.id,
-            name: gameNightName || data.name,
+            name: gameNightName || account?.displayName || data.name,
             team: null,
             role: null,
             joinedAt: Date.now(),
@@ -974,6 +1004,7 @@ class CodenamesParty implements Party.Server {
 
           this.state.players[sender.id] = player
 		  this.state.playerTokens[sender.id] = playerToken
+          if (account) this.state.accounts = { ...this.state.accounts, [sender.id]: account.userId }
           await this.saveState()
 
           this.broadcast({ type: "player-joined", player })

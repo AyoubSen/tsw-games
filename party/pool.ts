@@ -36,6 +36,8 @@ export interface Player {
   /** Clerk user id for signed-in players; never sent to clients. */
   userId?: string
   color?: string
+  /** Cue id from their profile, drawn whenever they shoot. */
+  cue?: string
 }
 
 export interface PoolShotRecord {
@@ -134,6 +136,7 @@ export interface PublicPlayer {
   /** Signed in: the name is their profile name and can't be spoofed. */
   verified?: boolean
   color?: string
+  cue?: string
 }
 
 export interface PublicGameState {
@@ -279,6 +282,7 @@ class PoolParty implements Party.Server {
           botLevel: player.isBot ? (player.botLevel ?? "normal") : undefined,
           verified: player.userId ? true : undefined,
           color: player.color,
+          cue: player.cue,
         },
       ]),
     )
@@ -387,12 +391,18 @@ class PoolParty implements Party.Server {
     state.shotEndsAt = null
     const player = this.seatPlayer(seat)
     if (player?.isBot) {
-      state.botPlan = chooseBotShot(state.balls, {
-        group: state.groups[seat],
-        isBreak: state.isBreak,
-        ballInHand,
-        level: player.botLevel ?? "normal",
-      })
+      try {
+        state.botPlan = chooseBotShot(state.balls, {
+          group: state.groups[seat],
+          isBreak: state.isBreak,
+          ballInHand,
+          level: player.botLevel ?? "normal",
+        })
+      } catch (error) {
+        // Without a plan the bot just runs out of time, which still moves the game on.
+        console.error("Pool bot could not plan a shot", error)
+        state.botPlan = null
+      }
       state.turnDeadline = Date.now() + BOT_THINK_MS + Math.random() * 900 + (ballInHand ? 700 : 0)
     } else {
       state.botPlan = null
@@ -622,7 +632,7 @@ class PoolParty implements Party.Server {
           }
           const account = await this.joins.verify(sender, data.authToken)
           const name = account?.displayName ?? (typeof data.name === "string" ? data.name.trim().slice(0, 20) : "")
-          const identity = account ? { userId: account.userId, color: account.color } : {}
+          const identity = account ? { userId: account.userId, color: account.color, cue: account.poolCue } : {}
           const returning = state.players[sender.id]
           if (returning) {
             if (state.playerTokens[sender.id] !== playerToken) {
@@ -696,7 +706,7 @@ class PoolParty implements Party.Server {
             return
           }
           delete state.spectators![spectator.id]
-          state.players[spectator.id] = { id: spectator.id, name: spectator.name, joinedAt: Date.now(), connected: true, disconnectedAt: null, seat: null, userId: spectator.userId, color: spectator.color }
+          state.players[spectator.id] = { id: spectator.id, name: spectator.name, joinedAt: Date.now(), connected: true, disconnectedAt: null, seat: null, userId: spectator.userId, color: spectator.color, cue: spectator.cue }
           if (state.status === "finished") {
             state.status = "waiting"
             state.seatOrder = Array.from({ length: POOL_SEATS }, () => null)
@@ -936,29 +946,38 @@ class PoolParty implements Party.Server {
   async onAlarm() {
     const state = this.state
     if (!state || state.status !== "playing") return
-    if (state.phase === "rolling") {
-      if (!state.shotEndsAt || state.shotEndsAt > Date.now()) {
-        await this.refreshAlarm()
-        return
-      }
-      this.applyPending()
-    } else {
-      if (!state.turnDeadline || state.turnDeadline > Date.now()) {
-        await this.refreshAlarm()
-        return
-      }
-      const plan = state.botPlan
-      if (plan && this.seatPlayer(state.turnSeat)?.isBot) {
-        this.takeShot(state.turnSeat, { ...plan })
+    // A throw here used to leave the table half-moved, unsaved and with no alarm: stuck on "balls rolling".
+    // Whatever happens, the state is saved, re-armed and sent below.
+    try {
+      if (state.phase === "rolling") {
+        if (!state.shotEndsAt || state.shotEndsAt > Date.now()) {
+          await this.refreshAlarm()
+          return
+        }
+        if (state.pending) this.applyPending()
+        // The outcome was lost to an earlier error: the shooter plays from the same table again.
+        else this.beginTurn(state.turnSeat, state.ballInHand)
       } else {
-        // A human ran out of time: the other player gets ball in hand (or the break).
-        const player = this.seatPlayer(state.turnSeat)
-        const text = `${player?.name ?? "The shooter"} ran out of time`
-        state.shotCount += 1
-        state.result = { shotId: state.shotCount, text: `${text} - ball in hand`, foul: true }
-        this.pushLog([this.logEntry(text, "foul")])
-        this.beginTurn(1 - state.turnSeat, state.isBreak ? "kitchen" : "table")
+        if (!state.turnDeadline || state.turnDeadline > Date.now()) {
+          await this.refreshAlarm()
+          return
+        }
+        const plan = state.botPlan
+        if (plan && this.seatPlayer(state.turnSeat)?.isBot) {
+          this.takeShot(state.turnSeat, { ...plan })
+        } else {
+          // A human ran out of time: the other player gets ball in hand (or the break).
+          const player = this.seatPlayer(state.turnSeat)
+          const text = `${player?.name ?? "The shooter"} ran out of time`
+          state.shotCount += 1
+          state.result = { shotId: state.shotCount, text: `${text} - ball in hand`, foul: true }
+          this.pushLog([this.logEntry(text, "foul")])
+          this.beginTurn(1 - state.turnSeat, state.isBreak ? "kitchen" : "table")
+        }
       }
+    } catch (error) {
+      console.error("Pool alarm error:", error)
+      if (state.status === "playing" && state.phase === "aim" && !state.turnDeadline) state.turnDeadline = Date.now() + POOL_TURN_MS
     }
     await this.saveState()
     await this.refreshAlarm()

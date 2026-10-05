@@ -14,6 +14,8 @@ export interface Spectator {
   /** Clerk user id, when the spectator signed in - carried over if they are seated. */
   userId?: string
   color?: string
+  /** Pool cue id, carried over like the colour. */
+  cue?: string
 }
 
 export interface PublicSpectator {

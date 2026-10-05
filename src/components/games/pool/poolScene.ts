@@ -20,6 +20,7 @@ import {
   type ShotEvent,
   type ShotInput,
 } from "@/lib/pool"
+import { ballHex, type BallSet, type ClothStyle, type CueStyle } from "../../../../convex/poolCosmetics"
 
 export interface PoolPlayback {
   /** A new key starts a new replay. */
@@ -60,6 +61,8 @@ export interface PoolSceneState {
   pockets: { selectable: boolean; called: number | null }
   camera: "top" | "cue"
   interactive: boolean
+  /** The shooter's cue; the cloth and ball set are this viewer's own. */
+  look: { cue: CueStyle; cloth: ClothStyle; ballSet: BallSet }
 }
 
 export interface PoolSceneHandlers {
@@ -98,12 +101,6 @@ const trayX = (slot: number) => -0.48 + slot * (BALL_R * 2 + 0.002)
 /** Cue-view players watch the first moments of a shot from behind the cue before the camera rises. */
 const SHOT_CAM_S = 1.1
 
-export const BALL_HEX: Record<number, string> = {
-  0: "#f5f1e6",
-  1: "#f2b705", 2: "#1d4ed8", 3: "#d62828", 4: "#6d28d9", 5: "#f06a0f", 6: "#13804a", 7: "#7a1f1f", 8: "#111111",
-  9: "#f2b705", 10: "#1d4ed8", 11: "#d62828", 12: "#6d28d9", 13: "#f06a0f", 14: "#13804a", 15: "#7a1f1f",
-}
-
 function canvasTexture(width: number, height: number, draw: (ctx: CanvasRenderingContext2D) => void) {
   const canvas = document.createElement("canvas")
   canvas.width = width
@@ -115,11 +112,11 @@ function canvasTexture(width: number, height: number, draw: (ctx: CanvasRenderin
   return texture
 }
 
-function ballTexture(n: number) {
+function ballTexture(n: number, set: BallSet) {
   return canvasTexture(512, 256, (ctx) => {
-    const color = BALL_HEX[n]
+    const color = ballHex(set, n)
     const stripe = n >= 9
-    ctx.fillStyle = n === 0 ? BALL_HEX[0] : stripe ? "#f5f1e6" : color
+    ctx.fillStyle = stripe ? "#f5f1e6" : color
     ctx.fillRect(0, 0, 512, 256)
     if (stripe) {
       ctx.fillStyle = color
@@ -473,8 +470,10 @@ export function createPoolScene(container: HTMLElement, handlers: PoolSceneHandl
   // ─── Balls ───
   const ballGeometry = keep(new THREE.SphereGeometry(BALL_R, 48, 32))
   const ballMeshes = new Map<number, THREE.Mesh>()
+  const ballMaterials: THREE.MeshPhysicalMaterial[] = []
   for (let n = 0; n <= 15; n++) {
-    const material = keep(new THREE.MeshPhysicalMaterial({ map: keep(ballTexture(n)), roughness: 0.16, clearcoat: 1, clearcoatRoughness: 0.06 }))
+    const material = keep(new THREE.MeshPhysicalMaterial({ roughness: 0.16, clearcoat: 1, clearcoatRoughness: 0.06 }))
+    ballMaterials.push(material)
     const mesh = new THREE.Mesh(ballGeometry, material)
     mesh.castShadow = true
     mesh.visible = false
@@ -561,12 +560,11 @@ export function createPoolScene(container: HTMLElement, handlers: PoolSceneHandl
 
   // ─── Cue stick: tip at the origin, pointing down +x ───
   const cueGroup = new THREE.Group()
-  const cueWood = keep(woodTexture("#c99a5b", "#e3bd84", "#8a5a2b", 1))
-  const shaftMaterial = keep(new THREE.MeshStandardMaterial({ map: cueWood, roughness: 0.35 }))
-  const buttMaterial = keep(new THREE.MeshStandardMaterial({ color: 0x2a1208, roughness: 0.3, metalness: 0.1 }))
-  const wrapMaterial = keep(new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 }))
+  const shaftMaterial = keep(new THREE.MeshStandardMaterial({ roughness: 0.35 }))
+  const buttMaterial = keep(new THREE.MeshStandardMaterial({ roughness: 0.3, metalness: 0.1 }))
+  const wrapMaterial = keep(new THREE.MeshStandardMaterial({ roughness: 0.8 }))
   const ferruleMaterial = keep(new THREE.MeshStandardMaterial({ color: 0xf5f2ea, roughness: 0.3 }))
-  const tipMaterial = keep(new THREE.MeshStandardMaterial({ color: 0x2b6cb0, roughness: 0.9 }))
+  const tipMaterial = keep(new THREE.MeshStandardMaterial({ roughness: 0.9 }))
   const cuePart = (radiusTip: number, radiusButt: number, from: number, to: number, material: THREE.Material) => {
     const geometry = keep(new THREE.CylinderGeometry(radiusTip, radiusButt, to - from, 24))
     geometry.rotateZ(-Math.PI / 2)
@@ -584,6 +582,34 @@ export function createPoolScene(container: HTMLElement, handlers: PoolSceneHandl
   cuePart(radiusAt(1.3), 0.0145, 1.3, CUE_LENGTH, buttMaterial)
   cueGroup.visible = false
   scene.add(cueGroup)
+
+  // ─── Looks: cue, cloth and balls swap in place when a pick changes ───
+  const shown = { cue: "", cloth: "", ballSet: "" }
+  disposables.push({ dispose: () => [shaftMaterial, ...ballMaterials].forEach((material) => material.map?.dispose()) })
+  function applyLook(look: PoolSceneState["look"]) {
+    if (look.cue.id !== shown.cue) {
+      shown.cue = look.cue.id
+      shaftMaterial.map?.dispose()
+      shaftMaterial.map = woodTexture(...look.cue.shaft, 1)
+      shaftMaterial.needsUpdate = true
+      buttMaterial.color.set(look.cue.butt)
+      wrapMaterial.color.set(look.cue.wrap)
+      tipMaterial.color.set(look.cue.tip)
+    }
+    if (look.cloth.id !== shown.cloth) {
+      shown.cloth = look.cloth.id
+      feltMaterial.color.set(look.cloth.felt)
+      cushionMaterial.color.set(look.cloth.cushion)
+    }
+    if (look.ballSet.id !== shown.ballSet) {
+      shown.ballSet = look.ballSet.id
+      ballMaterials.forEach((material, n) => {
+        material.map?.dispose()
+        material.map = ballTexture(n, look.ballSet)
+        material.needsUpdate = true
+      })
+    }
+  }
 
   // ─── State ───
   let state: PoolSceneState | null = null
@@ -1143,6 +1169,7 @@ export function createPoolScene(container: HTMLElement, handlers: PoolSceneHandl
       trayOrder = []
       trail = null
     }
+    applyLook(next.look)
     state = next
   }
 

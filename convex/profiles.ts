@@ -1,5 +1,6 @@
 import { v } from "convex/values"
 import { internalQuery, mutation, query, type QueryCtx } from "./_generated/server"
+import { isUnlocked, POOL_COSMETICS, type Cosmetic } from "./poolCosmetics"
 import { cleanDisplayName, PROFILE_COLORS } from "./profileColors"
 
 function profileFor(ctx: QueryCtx, clerkUserId: string) {
@@ -49,6 +50,27 @@ export const update = mutation({
     if (!displayName) throw new Error("Enter a display name")
     if (!(PROFILE_COLORS as readonly string[]).includes(args.color)) throw new Error("Pick one of the colours")
     await ctx.db.patch(profile._id, { displayName, color: args.color, updatedAt: Date.now() })
+  },
+})
+
+/** Equips a Pool cue, cloth or ball set, once the player's stats have unlocked it. */
+export const setPoolCosmetic = mutation({
+  args: { slot: v.union(v.literal("cue"), v.literal("cloth"), v.literal("ballSet")), id: v.string() },
+  handler: async (ctx, { slot, id }) => {
+    const identity = await ctx.auth.getUserIdentity()
+    if (!identity) throw new Error("Not signed in")
+    const profile = await profileFor(ctx, identity.subject)
+    if (!profile) throw new Error("Profile not found")
+    const item = (POOL_COSMETICS[slot] as Cosmetic[]).find((candidate) => candidate.id === id)
+    if (!item) throw new Error("Unknown item")
+    const stats = await ctx.db
+      .query("gameStats")
+      .withIndex("by_user", (q) => q.eq("clerkUserId", identity.subject))
+      .collect()
+    if (!isUnlocked(item, stats)) throw new Error("Not unlocked yet")
+    const pool = { ...profile.cosmetics.pool }
+    pool[slot] = id
+    await ctx.db.patch(profile._id, { cosmetics: { ...profile.cosmetics, pool }, updatedAt: Date.now() })
   },
 })
 
@@ -122,6 +144,6 @@ export const publicProfile = internalQuery({
   args: { clerkUserId: v.string() },
   handler: async (ctx, { clerkUserId }) => {
     const profile = await profileFor(ctx, clerkUserId)
-    return profile ? { displayName: profile.displayName, color: profile.color } : null
+    return profile ? { displayName: profile.displayName, color: profile.color, poolCue: profile.cosmetics.pool?.cue ?? null } : null
   },
 })

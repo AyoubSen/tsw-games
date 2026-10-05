@@ -2,6 +2,7 @@ import { BadgeCheck, Bot, Camera, ChevronLeft, ChevronRight, Crosshair, Hand, Ro
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import { GLASS, GlassButton, PartyTable, SidePanel, TableTopBar, TimerRing, useBeat, useNow, useSoundCue } from "@/components/games/party-shell/shell"
 import { ReactionBubble, type ReactionBubbles } from "@/components/multiplayer/Reactions"
+import { useProfile } from "@/lib/account"
 import {
   BALL_R,
   clampPlacement,
@@ -20,8 +21,9 @@ import {
 import type { Reaction } from "@/lib/reactions"
 import { playSound } from "@/lib/sounds"
 import { cn } from "@/lib/utils"
+import { ballHex, pickBallSet, pickCloth, pickCue, type BallSet } from "../../../../convex/poolCosmetics"
 import type { AimMessage, PublicGameState } from "../../../../party/pool"
-import { BALL_HEX, createPoolScene, type PoolScene, type PoolSceneHandlers, type PoolSceneState } from "./poolScene"
+import { createPoolScene, type PoolScene, type PoolSceneHandlers, type PoolSceneState } from "./poolScene"
 import type { PoolAimCommand, PoolShotCommand } from "./useMultiplayerPool"
 
 interface PoolGameProps {
@@ -93,8 +95,8 @@ function PoolCanvas({ view, handlers }: { view: PoolSceneState; handlers: PoolSc
   return <div ref={containerRef} className="absolute inset-0" />
 }
 
-function BallPip({ n, down, size = 18 }: { n: number; down?: boolean; size?: number }) {
-  const color = BALL_HEX[n]
+function BallPip({ n, set, down, size = 18 }: { n: number; set: BallSet; down?: boolean; size?: number }) {
+  const color = ballHex(set, n)
   const background = n >= 9 ? `linear-gradient(180deg, #f5f1e6 0 24%, ${color} 24% 76%, #f5f1e6 76%)` : color
   return (
     <span
@@ -107,8 +109,9 @@ function BallPip({ n, down, size = 18 }: { n: number; down?: boolean; size?: num
   )
 }
 
-function PlayerPanel({ game, seat, align, balls, reactions, active }: {
+function PlayerPanel({ game, seat, align, balls, ballSet, reactions, active }: {
   game: PublicGameState
+  ballSet: BallSet
   seat: number
   align: "left" | "right"
   balls: PoolBall[]
@@ -137,9 +140,9 @@ function PlayerPanel({ game, seat, align, balls, reactions, active }: {
       <div className={cn("mt-1.5 flex items-center gap-1", align === "right" && "flex-row-reverse")}>
         {group ? (
           <>
-            {groupBalls(group).map((n) => <BallPip key={n} n={n} down={balls.find((ball) => ball.n === n)?.down} size={17} />)}
+            {groupBalls(group).map((n) => <BallPip key={n} n={n} set={ballSet} down={balls.find((ball) => ball.n === n)?.down} size={17} />)}
             <span className="mx-0.5 h-4 w-px bg-white/20" />
-            <span className={cn("rounded-full", onEight && !eightDown && "ring-2 ring-amber-300")}><BallPip n={8} size={17} down={!onEight} /></span>
+            <span className={cn("rounded-full", onEight && !eightDown && "ring-2 ring-amber-300")}><BallPip n={8} set={ballSet} size={17} down={!onEight} /></span>
           </>
         ) : (
           <span className="text-xs text-white/60">{game.isBreak ? "Waiting for the break" : "Open table"}</span>
@@ -283,6 +286,8 @@ export function PoolGame({ game, playerId, roomLabel, connected, error, clockOff
   const lastClack = useRef(0)
 
   const me = game.players[playerId]
+  const { profile } = useProfile()
+  const ballSet = pickBallSet(profile?.cosmetics.pool?.ballSet)
   const mySeat = me?.seat ?? null
   const playing = game.status === "playing"
   /** It's this player's shot; `myTurn` drops once the shot is sent, while `mine` holds until the balls roll. */
@@ -503,6 +508,11 @@ export function PoolGame({ game, playerId, roomLabel, connected, error, clockOff
     pockets: { selectable: mustCall, called: playback ? null : calledPocket },
     camera,
     interactive: myTurn,
+    look: {
+      cue: pickCue(game.players[game.seatOrder[playback && shot ? shot.seat : game.turnSeat] ?? ""]?.cue),
+      cloth: pickCloth(profile?.cosmetics.pool?.cloth),
+      ballSet,
+    },
   }
 
   const handlers: PoolSceneHandlers = {
@@ -596,8 +606,8 @@ export function PoolGame({ game, playerId, roomLabel, connected, error, clockOff
       />
 
       <div className="pointer-events-none absolute inset-x-3 top-[68px] z-20 flex items-start justify-between gap-2">
-        <div className="pointer-events-auto"><PlayerPanel game={game} seat={0} align="left" balls={balls} reactions={reactions} active={playing && game.turnSeat === 0} /></div>
-        <div className="pointer-events-auto"><PlayerPanel game={game} seat={1} align="right" balls={balls} reactions={reactions} active={playing && game.turnSeat === 1} /></div>
+        <div className="pointer-events-auto"><PlayerPanel game={game} seat={0} align="left" balls={balls} ballSet={ballSet} reactions={reactions} active={playing && game.turnSeat === 0} /></div>
+        <div className="pointer-events-auto"><PlayerPanel game={game} seat={1} align="right" balls={balls} ballSet={ballSet} reactions={reactions} active={playing && game.turnSeat === 1} /></div>
       </div>
 
       {showResult && game.result && (

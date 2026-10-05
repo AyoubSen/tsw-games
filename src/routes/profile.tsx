@@ -1,7 +1,15 @@
 import { SignInButton, useAuth } from "@clerk/tanstack-react-start";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import { Check, History, Swords, Trophy, UserRound } from "lucide-react";
+import {
+	Check,
+	History,
+	Lock,
+	Palette,
+	Swords,
+	Trophy,
+	UserRound,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +24,19 @@ import { useProfile } from "@/lib/account";
 import { liveGames } from "@/lib/gameCatalog";
 import { cn } from "@/lib/utils";
 import { api } from "../../convex/_generated/api";
+import {
+	type BallSet,
+	ballHex,
+	type ClothStyle,
+	type Cosmetic,
+	type CueStyle,
+	isUnlocked,
+	POOL_COSMETICS,
+	type PoolCosmeticSlot,
+	type StatRow,
+	unlockProgress,
+	unlockText,
+} from "../../convex/poolCosmetics";
 import {
 	cleanDisplayName,
 	MAX_DISPLAY_NAME,
@@ -210,6 +231,11 @@ function SignedInProfile() {
 				</CardContent>
 			</Card>
 
+			<PoolLooks
+				chosen={profile.cosmetics.pool ?? {}}
+				stats={stats ?? []}
+			/>
+
 			<Card>
 				<CardHeader>
 					<CardTitle className="flex items-center gap-2">
@@ -220,7 +246,7 @@ function SignedInProfile() {
 				</CardHeader>
 				<CardContent>
 					{recentGames === undefined ? (
-						<p className="text-sm text-muted-foreground">Loading…</p>
+						<p className="text-sm text-muted-foreground">Loadingâ€¦</p>
 					) : recentGames.length === 0 ? (
 						<p className="text-sm text-muted-foreground">No games yet.</p>
 					) : (
@@ -234,9 +260,9 @@ function SignedInProfile() {
 										<p className="font-medium">{gameTitle(game.game)}</p>
 										<p className="truncate text-xs text-muted-foreground">
 											{playedWhen(game.playedAt)}
-											{game.vsBot && " · with bots"}
+											{game.vsBot && " Â· with bots"}
 											{game.opponents.length > 0 &&
-												` · with ${game.opponents.map((opponent) => opponent.displayName).join(", ")}`}
+												` Â· with ${game.opponents.map((opponent) => opponent.displayName).join(", ")}`}
 										</p>
 									</div>
 									<span
@@ -267,7 +293,7 @@ function SignedInProfile() {
 				</CardHeader>
 				<CardContent>
 					{headToHead === undefined ? (
-						<p className="text-sm text-muted-foreground">Loading…</p>
+						<p className="text-sm text-muted-foreground">Loadingâ€¦</p>
 					) : headToHead.length === 0 ? (
 						<p className="text-sm text-muted-foreground">
 							No games against other signed-in players yet.
@@ -278,7 +304,7 @@ function SignedInProfile() {
 								<tr>
 									<th className="pb-2 font-medium">Player</th>
 									<th className="pb-2 text-right font-medium">Played</th>
-									<th className="pb-2 text-right font-medium">W–L</th>
+									<th className="pb-2 text-right font-medium">Wâ€“L</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -297,7 +323,7 @@ function SignedInProfile() {
 											{record.played}
 										</td>
 										<td className="py-2 text-right tabular-nums">
-											{record.wins}–{record.losses}
+											{record.wins}â€“{record.losses}
 										</td>
 									</tr>
 								))}
@@ -307,5 +333,151 @@ function SignedInProfile() {
 				</CardContent>
 			</Card>
 		</main>
+	);
+}
+
+const SLOT_TITLES: Record<PoolCosmeticSlot, string> = {
+	cue: "Cue",
+	cloth: "Cloth",
+	ballSet: "Ball set",
+};
+
+function CosmeticPreview({
+	slot,
+	item,
+}: {
+	slot: PoolCosmeticSlot;
+	item: Cosmetic;
+}) {
+	if (slot === "cue") {
+		const cue = item as CueStyle;
+		return (
+			<span
+				className="block h-2.5 w-full rounded-full"
+				style={{
+					background: `linear-gradient(90deg, ${cue.tip} 0 4%, #f5f2ea 4% 8%, ${cue.shaft[1]} 8% 30%, ${cue.shaft[0]} 30% 62%, ${cue.butt} 62% 72%, ${cue.wrap} 72% 88%, ${cue.butt} 88%)`,
+				}}
+			/>
+		);
+	}
+	if (slot === "cloth") {
+		const cloth = item as ClothStyle;
+		return (
+			<span
+				className="block h-6 w-full rounded"
+				style={{
+					background: cloth.felt,
+					boxShadow: `inset 0 0 0 3px ${cloth.cushion}`,
+				}}
+			/>
+		);
+	}
+	const set = item as BallSet;
+	return (
+		<span className="flex justify-center gap-0.5">
+			{[1, 9, 2, 10, 3, 11].map((n) => {
+				const color = ballHex(set, n);
+				return (
+					<span
+						key={n}
+						className="h-3.5 w-3.5 rounded-full"
+						style={{
+							background:
+								n >= 9
+									? `linear-gradient(180deg, #f5f1e6 0 24%, ${color} 24% 76%, #f5f1e6 76%)`
+									: color,
+						}}
+					/>
+				);
+			})}
+		</span>
+	);
+}
+
+function PoolLooks({
+	chosen,
+	stats,
+}: {
+	chosen: Partial<Record<PoolCosmeticSlot, string>>;
+	stats: StatRow[];
+}) {
+	const setCosmetic = useMutation(api.profiles.setPoolCosmetic);
+	const [error, setError] = useState<string | null>(null);
+
+	const choose = async (slot: PoolCosmeticSlot, id: string) => {
+		setError(null);
+		try {
+			await setCosmetic({ slot, id });
+		} catch {
+			setError("Could not equip that.");
+		}
+	};
+
+	return (
+		<Card className="md:col-span-2">
+			<CardHeader>
+				<CardTitle className="flex items-center gap-2">
+					<Palette className="h-5 w-5 text-primary" />
+					Pool looks
+				</CardTitle>
+				<CardDescription>
+					Unlock these by playing. Everyone at the table sees your cue; the
+					cloth and ball set are only on your screen.
+				</CardDescription>
+			</CardHeader>
+			<CardContent className="space-y-5">
+				{(Object.keys(POOL_COSMETICS) as PoolCosmeticSlot[]).map((slot) => {
+					const items: Cosmetic[] = POOL_COSMETICS[slot];
+					const selected = chosen[slot] ?? items[0].id;
+					return (
+						<div key={slot}>
+							<h3 className="mb-2 text-sm font-medium">{SLOT_TITLES[slot]}</h3>
+							<div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+								{items.map((item) => {
+									const unlocked = isUnlocked(item, stats);
+									const active = item.id === selected;
+									return (
+										<button
+											key={item.id}
+											type="button"
+											disabled={!unlocked || active}
+											onClick={() => choose(slot, item.id)}
+											aria-pressed={active}
+											className={cn(
+												"flex flex-col gap-2 rounded-lg border p-2 text-left text-sm transition",
+												active && "border-primary ring-1 ring-primary",
+												unlocked
+													? "hover:bg-muted"
+													: "cursor-not-allowed opacity-60",
+											)}
+										>
+											<CosmeticPreview slot={slot} item={item} />
+											<span className="flex items-center gap-1 font-medium">
+												{!unlocked && <Lock className="h-3 w-3" />}
+												{item.name}
+												{active && (
+													<Check className="ml-auto h-4 w-4 text-primary" />
+												)}
+											</span>
+											{item.unlock && !unlocked && (
+												<span className="text-xs text-muted-foreground">
+													{unlockText(item.unlock)} (
+													{Math.min(
+														unlockProgress(item.unlock, stats),
+														item.unlock.count,
+													)}
+													/{item.unlock.count})
+												</span>
+											)}
+										</button>
+									);
+								})}
+							</div>
+						</div>
+					);
+				})}
+				{error && <p className="text-sm text-muted-foreground">{error}</p>}
+			</CardContent>
+		</Card>
 	);
 }

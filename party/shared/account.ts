@@ -7,6 +7,8 @@ export interface VerifiedAccount {
   userId: string
   displayName: string
   color: string
+  /** Pool cue id from their profile; everyone at the table sees it. */
+  poolCue?: string
 }
 
 export interface GameResultReport {
@@ -57,9 +59,14 @@ export async function verifyAccount(room: Party.Room, authToken: unknown): Promi
       body: JSON.stringify({ clerkUserId: claims.sub }),
     })
     if (!response.ok) return null
-    const profile = (await response.json()) as { displayName?: unknown; color?: unknown }
+    const profile = (await response.json()) as { displayName?: unknown; color?: unknown; poolCue?: unknown }
     if (typeof profile.displayName !== "string" || !profile.displayName || typeof profile.color !== "string") return null
-    return { userId: claims.sub, displayName: profile.displayName.slice(0, 20), color: profile.color }
+    return {
+      userId: claims.sub,
+      displayName: profile.displayName.slice(0, 20),
+      color: profile.color,
+      poolCue: typeof profile.poolCue === "string" ? profile.poolCue.slice(0, 40) : undefined,
+    }
   } catch (error) {
     console.warn("Clerk token rejected", error)
     return null

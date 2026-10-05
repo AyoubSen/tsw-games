@@ -9,6 +9,7 @@
  */
 
 import type * as http from "../http.js";
+import type * as poolCosmetics from "../poolCosmetics.js";
 import type * as profileColors from "../profileColors.js";
 import type * as profiles from "../profiles.js";
 import type * as results from "../results.js";
@@ -21,6 +22,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   http: typeof http;
+  poolCosmetics: typeof poolCosmetics;
   profileColors: typeof profileColors;
   profiles: typeof profiles;
   results: typeof results;

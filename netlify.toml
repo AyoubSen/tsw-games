@@ -1,5 +1,5 @@
 [build]
-  command = "vite build"
+  command = "npx convex deploy --cmd 'vite build'"
   dir = "dist/client"
 [dev]
   command = "npm run dev"

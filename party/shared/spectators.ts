@@ -11,6 +11,9 @@ export interface Spectator {
   id: string
   name: string
   joinedAt: number
+  /** Clerk user id, when the spectator signed in - carried over if they are seated. */
+  userId?: string
+  color?: string
 }
 
 export interface PublicSpectator {

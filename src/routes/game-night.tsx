@@ -1,10 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { Gamepad2, Trophy, Users, Vote } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GameNightLounge } from "@/components/game-night/GameNightLounge";
 import { useGameNight } from "@/components/game-night/GameNightProvider";
 import { GameIcon } from "@/components/game-night/stage";
 import { GLASS } from "@/components/games/party-shell/shell";
+import { useProfileName } from "@/components/multiplayer/shared";
 import { GAME_NIGHT_GAMES } from "@/lib/gameNight";
 import { parseInviteSearch } from "@/lib/inviteLinks";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,7 @@ function GameNightPage() {
 	const { room: invitedRoom } = Route.useSearch();
 	const gameNight = useGameNight();
 	const [name, setName] = useState("");
+	const profile = useProfileName(name, setName);
 	const [roomCode, setRoomCode] = useState(invitedRoom ?? "");
 	const [message, setMessage] = useState<string | null>(null);
 	const joined = Boolean(gameNight.state);
@@ -76,7 +78,16 @@ function GameNightPage() {
 						<p className="flex items-center gap-2 text-lg font-black"><Gamepad2 className="size-5 text-amber-300" />Start Game Night</p>
 						<p className="text-sm text-white/60">Share one code and pick each game together.</p>
 					</div>
-					<input className={input} value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" maxLength={20} />
+					{profile ? (
+						<div className={cn(input, "flex items-center gap-2")}>
+							<span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: profile.color }} />
+							<span className="text-white/60">Playing as</span>
+							<span className="truncate font-bold">{profile.displayName}</span>
+							<Link to="/profile" className="ml-auto text-xs text-amber-300 hover:underline">Edit</Link>
+						</div>
+					) : (
+						<input className={input} value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" maxLength={20} />
+					)}
 					<div className="grid grid-cols-[1fr_auto] gap-2">
 						<input className={cn(input, "font-mono uppercase tracking-[0.3em]")} value={roomCode} onChange={(event) => setRoomCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))} placeholder="CODE" maxLength={6} />
 						<button type="button" onClick={joinRoom} className="h-11 rounded-xl border border-white/15 bg-white/10 px-4 text-sm font-bold transition hover:bg-white/20">Join</button>

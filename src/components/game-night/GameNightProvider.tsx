@@ -15,6 +15,7 @@ import type {
 	PublicGameNightState,
 } from "@/lib/gameNight";
 import { getGameNightGame } from "@/lib/gameNight";
+import { useAuthTokenRef } from "@/lib/account";
 import type { Reaction } from "@/lib/reactions";
 import { type ReactionBubbles, useReactionBubbles } from "@/components/multiplayer/Reactions";
 import {
@@ -86,6 +87,7 @@ export function GameNightProvider({ children }: { children: ReactNode }) {
 	const navigatedMatchRef = useRef<string | null>(null);
 	const inLoungeRef = useRef(false);
 	const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles();
+	const authTokenRef = useAuthTokenRef();
 	const navigate = useNavigate();
 	const pathname = useRouterState({ select: (routerState) => routerState.location.pathname });
 
@@ -109,10 +111,12 @@ export function GameNightProvider({ children }: { children: ReactNode }) {
 		setPlayerId(id);
 		setConnectionStatus("connecting");
 		setError(null);
-		socket.addEventListener("open", () => {
+		socket.addEventListener("open", async () => {
 			if (socketRef.current !== socket) return;
 			setConnectionStatus("connected");
-			socket.send(JSON.stringify({ type: "join", name }));
+			const authToken = await authTokenRef.current();
+			if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return;
+			socket.send(JSON.stringify({ type: "join", name, authToken }));
 			if (inLoungeRef.current) socket.send(JSON.stringify({ type: "lounge", here: true }));
 		});
 		socket.addEventListener("message", (event) => {

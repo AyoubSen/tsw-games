@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server"
+import { reportResult, verifyAccount, type VerifiedAccount } from "./shared/account"
 import { withRoomCleanup } from "./shared/cleanup"
 import { isBotLevel, type BotLevel } from "../src/lib/botLevel"
 import { isReaction, pickReaction, takeReactionSlot, type Reaction, type ReactionMessage } from "../src/lib/reactions"
@@ -32,6 +33,9 @@ export interface Player {
   seat: number | null
   isBot?: boolean
   botLevel?: BotLevel
+  /** Clerk user id for signed-in players; never sent to clients. */
+  userId?: string
+  color?: string
 }
 
 export interface PoolShotRecord {
@@ -127,6 +131,9 @@ export interface PublicPlayer {
   seat: number | null
   isBot?: boolean
   botLevel?: BotLevel
+  /** Signed in: the name is their profile name and can't be spoofed. */
+  verified?: boolean
+  color?: string
 }
 
 export interface PublicGameState {
@@ -158,7 +165,7 @@ export interface PublicGameState {
 }
 
 export type ClientMessage =
-  | { type: "join"; name: string }
+  | { type: "join"; name: string; authToken?: unknown }
   | { type: "start" }
   | { type: "add-bot"; level?: unknown }
   | { type: "remove-player"; playerId: unknown }
@@ -217,6 +224,8 @@ class PoolParty implements Party.Server {
 
   state: GameState | null = null
   connectionTokens = new WeakMap<Party.Connection, string>()
+  /** A join's account check, which later messages from that socket wait behind. */
+  verifyingJoins = new WeakMap<Party.Connection, Promise<VerifiedAccount | null>>()
   reactedAt = new Map<string, number>()
   aimedAt = new Map<string, number>()
 
@@ -267,6 +276,8 @@ class PoolParty implements Party.Server {
           seat: player.seat,
           isBot: player.isBot,
           botLevel: player.isBot ? (player.botLevel ?? "normal") : undefined,
+          verified: player.userId ? true : undefined,
+          color: player.color,
         },
       ]),
     )
@@ -520,6 +531,14 @@ class PoolParty implements Party.Server {
     state.botPlan = null
     state.pending = null
     state.wins[winner.id] = (state.wins[winner.id] ?? 0) + 1
+    const seated = state.seatOrder.map((id) => (id ? state.players[id] : undefined)).filter((player) => player !== undefined)
+    void reportResult(this.room, {
+      // Not this.room.id: finish() runs inside onAlarm, where PartyKit throws on reading it.
+      resultId: `pool:${state.roomCode}:${state.roundId}`,
+      game: "pool",
+      vsBot: seated.some((player) => player.isBot),
+      players: seated.flatMap((player) => (player.userId ? [{ userId: player.userId, won: player.id === winner.id }] : [])),
+    })
   }
 
   /** With one seat left there is no game: the remaining player takes the rack. */
@@ -576,7 +595,9 @@ class PoolParty implements Party.Server {
     if (!this.state) return
     try {
       const data = JSON.parse(message) as ClientMessage
+      if (data.type !== "join") await this.verifyingJoins.get(sender)
       const state = this.state
+      if (!state) return
 
       if (data.type !== "join" && !this.isAuthenticated(sender)) {
         this.send(sender, { type: "error", message: "Invalid player session" })
@@ -598,7 +619,11 @@ class PoolParty implements Party.Server {
             this.send(sender, { type: "error", message: "Invalid player session" })
             return
           }
-          const name = typeof data.name === "string" ? data.name.trim().slice(0, 20) : ""
+          const verifying = verifyAccount(this.room, data.authToken)
+          this.verifyingJoins.set(sender, verifying)
+          const account = await verifying
+          const name = account?.displayName ?? (typeof data.name === "string" ? data.name.trim().slice(0, 20) : "")
+          const identity = account ? { userId: account.userId, color: account.color } : {}
           const returning = state.players[sender.id]
           if (returning) {
             if (state.playerTokens[sender.id] !== playerToken) {
@@ -606,7 +631,9 @@ class PoolParty implements Party.Server {
               return
             }
             markConnected(state.players, sender.id)
-            returning.name = name || returning.name
+            // A verified player keeps their profile name even if a later join comes without a token.
+            if (account || !returning.userId) returning.name = name || returning.name
+            Object.assign(returning, identity)
             returning.disconnectedAt = null
             if (!state.hostId || !isPresent(state.players[state.hostId])) state.hostId = sender.id
             await this.saveState()
@@ -619,7 +646,8 @@ class PoolParty implements Party.Server {
               this.send(sender, { type: "error", message: "Invalid player session" })
               return
             }
-            watching.name = name || watching.name
+            if (account || !watching.userId) watching.name = name || watching.name
+            Object.assign(watching, identity)
             await this.saveState()
             this.broadcastState()
             return
@@ -635,13 +663,13 @@ class PoolParty implements Party.Server {
               this.send(sender, { type: "error", message: "Too many people are watching" })
               return
             }
-            state.spectators[sender.id] = { id: sender.id, name, joinedAt: Date.now() }
+            state.spectators[sender.id] = { id: sender.id, name, joinedAt: Date.now(), ...identity }
             state.playerTokens[sender.id] = playerToken
             await this.saveState()
             this.broadcastState()
             return
           }
-          state.players[sender.id] = { id: sender.id, name, joinedAt: Date.now(), connected: true, disconnectedAt: null, seat: null }
+          state.players[sender.id] = { id: sender.id, name, joinedAt: Date.now(), connected: true, disconnectedAt: null, seat: null, ...identity }
           state.playerTokens[sender.id] = playerToken
           if (!state.hostId || !isPresent(state.players[state.hostId])) state.hostId = sender.id
           await this.saveState()
@@ -669,7 +697,7 @@ class PoolParty implements Party.Server {
             return
           }
           delete state.spectators![spectator.id]
-          state.players[spectator.id] = { id: spectator.id, name: spectator.name, joinedAt: Date.now(), connected: true, disconnectedAt: null, seat: null }
+          state.players[spectator.id] = { id: spectator.id, name: spectator.name, joinedAt: Date.now(), connected: true, disconnectedAt: null, seat: null, userId: spectator.userId, color: spectator.color }
           if (state.status === "finished") {
             state.status = "waiting"
             state.seatOrder = Array.from({ length: POOL_SEATS }, () => null)

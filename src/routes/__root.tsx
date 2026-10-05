@@ -1,10 +1,13 @@
+import { ClerkProvider, useAuth } from "@clerk/tanstack-react-start";
 import { TanStackDevtools } from "@tanstack/react-devtools";
 import { createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { ConvexProviderWithClerk } from "convex/react-clerk";
 
 import Header from "../components/Header";
 import { GameNightBar } from "../components/game-night/GameNightBar";
 import { GameNightProvider } from "../components/game-night/GameNightProvider";
+import { convex } from "../lib/account";
 
 import appCss from "../styles.css?url";
 
@@ -64,11 +67,15 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 				<script dangerouslySetInnerHTML={{ __html: settingsScript }} />
 			</head>
 			<body>
-				<GameNightProvider>
-					<Header />
-					<GameNightBar />
-					{children}
-				</GameNightProvider>
+				<ClerkProvider>
+					<ConvexProviderWithClerk client={convex} useAuth={useAuth}>
+						<GameNightProvider>
+							<Header />
+							<GameNightBar />
+							{children}
+						</GameNightProvider>
+					</ConvexProviderWithClerk>
+				</ClerkProvider>
 				<TanStackDevtools
 					config={{
 						position: "bottom-right",

@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as GameNightRouteImport } from './routes/game-night'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as GamesWordleRouteImport } from './routes/games/wordle'
@@ -33,6 +34,11 @@ import { Route as GamesCodenamesRouteImport } from './routes/games/codenames'
 import { Route as GamesCodeBreakerRouteImport } from './routes/games/code-breaker'
 import { Route as GamesBombDefusalRouteImport } from './routes/games/bomb-defusal'
 
+const ProfileRoute = ProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GameNightRoute = GameNightRouteImport.update({
   id: '/game-night',
   path: '/game-night',
@@ -152,6 +158,7 @@ const GamesBombDefusalRoute = GamesBombDefusalRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/game-night': typeof GameNightRoute
+  '/profile': typeof ProfileRoute
   '/games/bomb-defusal': typeof GamesBombDefusalRoute
   '/games/code-breaker': typeof GamesCodeBreakerRoute
   '/games/codenames': typeof GamesCodenamesRoute
@@ -177,6 +184,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/game-night': typeof GameNightRoute
+  '/profile': typeof ProfileRoute
   '/games/bomb-defusal': typeof GamesBombDefusalRoute
   '/games/code-breaker': typeof GamesCodeBreakerRoute
   '/games/codenames': typeof GamesCodenamesRoute
@@ -203,6 +211,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/game-night': typeof GameNightRoute
+  '/profile': typeof ProfileRoute
   '/games/bomb-defusal': typeof GamesBombDefusalRoute
   '/games/code-breaker': typeof GamesCodeBreakerRoute
   '/games/codenames': typeof GamesCodenamesRoute
@@ -230,6 +239,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/game-night'
+    | '/profile'
     | '/games/bomb-defusal'
     | '/games/code-breaker'
     | '/games/codenames'
@@ -255,6 +265,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/game-night'
+    | '/profile'
     | '/games/bomb-defusal'
     | '/games/code-breaker'
     | '/games/codenames'
@@ -280,6 +291,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/game-night'
+    | '/profile'
     | '/games/bomb-defusal'
     | '/games/code-breaker'
     | '/games/codenames'
@@ -306,6 +318,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   GameNightRoute: typeof GameNightRoute
+  ProfileRoute: typeof ProfileRoute
   GamesBombDefusalRoute: typeof GamesBombDefusalRoute
   GamesCodeBreakerRoute: typeof GamesCodeBreakerRoute
   GamesCodenamesRoute: typeof GamesCodenamesRoute
@@ -331,6 +344,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/profile': {
+      id: '/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof ProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/game-night': {
       id: '/game-night'
       path: '/game-night'
@@ -498,6 +518,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   GameNightRoute: GameNightRoute,
+  ProfileRoute: ProfileRoute,
   GamesBombDefusalRoute: GamesBombDefusalRoute,
   GamesCodeBreakerRoute: GamesCodeBreakerRoute,
   GamesCodenamesRoute: GamesCodenamesRoute,
@@ -525,10 +546,11 @@ export const routeTree = rootRouteImport
   ._addFileTypes<FileRouteTypes>()
 
 import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
+import type { startInstance } from './start.ts'
 declare module '@tanstack/react-start' {
   interface Register {
     ssr: true
     router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
   }
 }

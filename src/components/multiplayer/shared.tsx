@@ -1,6 +1,6 @@
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { ArrowLeft, Check, Copy, Crown, Play, Users } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -10,6 +10,7 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useProfile } from "@/lib/account";
 
 export interface MultiplayerPlayer {
 	id: string;
@@ -65,6 +66,32 @@ export function GameTopBar({
 	);
 }
 
+/**
+ * Signed-in players play under their profile name: this keeps the route's name
+ * state in sync with it. Returns the profile, or null for guests.
+ */
+export function useProfileName(playerName: string, onPlayerNameChange: (value: string) => void) {
+	const { profile } = useProfile();
+	const profileName = profile?.displayName;
+	useEffect(() => {
+		if (profileName && playerName !== profileName) onPlayerNameChange(profileName);
+	}, [profileName, playerName, onPlayerNameChange]);
+	return profile;
+}
+
+export function ProfileNameChip({ name, color }: { name: string; color: string }) {
+	return (
+		<div className="flex h-9 items-center gap-2 rounded-md border bg-muted/40 px-3 text-sm">
+			<span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+			<span className="text-muted-foreground">Playing as</span>
+			<span className="truncate font-semibold">{name}</span>
+			<Link to="/profile" className="ml-auto text-xs text-primary hover:underline">
+				Edit
+			</Link>
+		</div>
+	);
+}
+
 interface MultiplayerSetupCardProps {
 	title: string;
 	description: string;
@@ -94,6 +121,7 @@ export function MultiplayerSetupCard({
 	children,
 	message,
 }: MultiplayerSetupCardProps) {
+	const profile = useProfileName(playerName, onPlayerNameChange);
 	return (
 		<Card>
 			<CardHeader>
@@ -104,12 +132,16 @@ export function MultiplayerSetupCard({
 				<CardDescription>{description}</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
-				<Input
-					value={playerName}
-					onChange={(event) => onPlayerNameChange(event.target.value)}
-					placeholder="Your name"
-					maxLength={20}
-				/>
+				{profile ? (
+					<ProfileNameChip name={profile.displayName} color={profile.color} />
+				) : (
+					<Input
+						value={playerName}
+						onChange={(event) => onPlayerNameChange(event.target.value)}
+						placeholder="Your name"
+						maxLength={20}
+					/>
+				)}
 				<div className="grid gap-3 sm:grid-cols-[1fr_auto]">
 					<Input
 						value={roomCode}

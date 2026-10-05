@@ -33,6 +33,9 @@ export interface GameNightPlayer {
 	connected?: boolean;
 	/** On the Game Night page rather than inside a game. */
 	inLounge?: boolean;
+	/** Signed in: the name is their profile name and can't be spoofed. */
+	verified?: boolean;
+	color?: string;
 }
 
 export interface GameNightMatch {
@@ -125,7 +128,7 @@ export interface GameNightConnection {
 }
 
 export type GameNightClientMessage =
-	| { type: "join"; name: string }
+	| { type: "join"; name: string; authToken?: unknown }
 	| { type: "select-game"; gameId: GameNightGameId }
 	| { type: "match-ready"; matchId: string }
 	| { type: "complete-match"; matchId: string }

@@ -1,3 +1,9 @@
+import {
+	SignedIn,
+	SignedOut,
+	SignInButton,
+	UserButton,
+} from "@clerk/tanstack-react-start";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
 	Clock3,
@@ -5,10 +11,12 @@ import {
 	Home,
 	Layers,
 	LayoutGrid,
+	LogIn,
 	Menu,
 	Moon,
 	Settings,
 	Sun,
+	UserRound,
 	X,
 } from "lucide-react";
 import { useState } from "react";
@@ -115,6 +123,26 @@ export default function Header() {
 							</DropdownMenuItem>
 						</DropdownMenuContent>
 					</DropdownMenu>
+
+					<SignedOut>
+						<SignInButton mode="modal">
+							<Button variant="outline" size="sm">
+								<LogIn className="mr-2 h-4 w-4" />
+								Sign in
+							</Button>
+						</SignInButton>
+					</SignedOut>
+					<SignedIn>
+						<UserButton>
+							<UserButton.MenuItems>
+								<UserButton.Link
+									label="Profile & stats"
+									labelIcon={<UserRound size={16} />}
+									href="/profile"
+								/>
+							</UserButton.MenuItems>
+						</UserButton>
+					</SignedIn>
 				</div>
 			</header>
 

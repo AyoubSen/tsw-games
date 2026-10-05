@@ -9,6 +9,7 @@ import {
   leavePartySocket,
   PARTYKIT_HOST,
 } from "@/lib/partykit"
+import { useAuthTokenRef } from "@/lib/account"
 import type { BotLevel } from "@/lib/botLevel"
 import type { Reaction } from "@/lib/reactions"
 import { useReactionBubbles } from "@/components/multiplayer/Reactions"
@@ -63,6 +64,7 @@ export function useMultiplayerPool() {
   const roomCodeRef = useRef("")
   const aimTimerRef = useRef<{ last: number; timer: number | null; queued: object | null }>({ last: 0, timer: null, queued: null })
   const { bubbles: reactions, receive: receiveReaction, clear: clearReactions } = useReactionBubbles()
+  const authTokenRef = useAuthTokenRef()
   const isHost = Boolean(state.gameState && state.playerId && state.gameState.hostId === state.playerId)
 
   const handleMessage = useCallback((message: ServerMessage) => {
@@ -104,10 +106,12 @@ export function useMultiplayerPool() {
       socketRef.current = socket
       let botQueued = Boolean(vsBot)
 
-      socket.addEventListener("open", () => {
+      socket.addEventListener("open", async () => {
         if (socketRef.current !== socket) return
         setState((previous) => ({ ...previous, connectionStatus: "connected", playerId: socket.id }))
-        socket.send(JSON.stringify({ type: "join", name: playerName }))
+        const authToken = await authTokenRef.current()
+        if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return
+        socket.send(JSON.stringify({ type: "join", name: playerName, authToken }))
         // "Play a bot" skips the lobby: seat a bot and rack straight away.
         if (botQueued) {
           botQueued = false
@@ -132,7 +136,7 @@ export function useMultiplayerPool() {
       socket.addEventListener("close", markReconnecting)
       socket.addEventListener("error", markReconnecting)
     },
-    [handleMessage],
+    [handleMessage, authTokenRef],
   )
 
   const sendNow = useCallback((message: object) => {

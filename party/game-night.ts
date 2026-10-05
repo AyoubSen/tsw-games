@@ -1,4 +1,5 @@
 import type * as Party from "partykit/server";
+import { reportResult, type VerifiedAccount, verifyAccount } from "./shared/account";
 import { withRoomCleanup } from "./shared/cleanup";
 import {
 	computeAwards,
@@ -25,6 +26,10 @@ import { markConnected, markDisconnected, nextHost } from "./shared/presence";
 interface GameNightState extends PublicGameNightState {
 	playerTokens: Record<string, string>;
 	matchTickets: Record<string, string>;
+	/** Clerk user ids of signed-in players, by player id. Never sent to clients. */
+	accounts?: Record<string, string>;
+	/** The night's result has been sent to Convex; a resumed night is not counted twice. */
+	reported?: boolean;
 }
 
 interface ValidationRequest {
@@ -41,6 +46,8 @@ class GameNightParty implements Party.Server {
 	constructor(readonly room: Party.Room) {}
 	state: GameNightState | null = null;
 	connectionTokens = new WeakMap<Party.Connection, string>();
+	/** A join's account check, which later messages from that socket wait behind. */
+	verifyingJoins = new WeakMap<Party.Connection, Promise<VerifiedAccount | null>>();
 	reactedAt = new Map<string, number>();
 
 	async onStart() {
@@ -358,26 +365,53 @@ class GameNightParty implements Party.Server {
 		}
 	}
 
+	/** Sends the finished night to Convex: everyone played, the top scorers won. */
+	reportNight() {
+		const s = this.state;
+		if (!s?.finale || s.reported || s.history.length === 0) return;
+		s.reported = true;
+		const top = Math.max(0, ...Object.values(s.players).map((player) => player.wins));
+		void reportResult(this.room, {
+			resultId: `gamenight:${this.room.id}:${s.finale.endedAt}`,
+			game: "game-night",
+			vsBot: false,
+			players: Object.entries(s.accounts ?? {})
+				.filter(([id]) => s.players[id])
+				.map(([id, userId]) => ({ userId, won: top > 0 && s.players[id].wins === top })),
+		});
+	}
+
 	async onMessage(message: string, sender: Party.Connection) {
 		if (!this.state) return;
 		try {
 			const data = JSON.parse(message) as GameNightClientMessage;
+			if (data.type !== "join") await this.verifyingJoins.get(sender);
+			if (!this.state) return;
 			if (data.type === "join") {
 				const token = this.connectionTokens.get(sender);
 				if (!token) return this.send(sender, { type: "error", message: "Invalid player session" });
+				const verifying = verifyAccount(this.room, data.authToken);
+				this.verifyingJoins.set(sender, verifying);
+				const account = await verifying;
+				if (!this.state) return;
+				const name = account?.displayName ?? data.name.trim().slice(0, 20);
 				const returning = this.state.players[sender.id];
 				if (returning) {
 					if (this.state.playerTokens[sender.id] !== token) return this.send(sender, { type: "error", message: "Invalid player session" });
 					markConnected(this.state.players, sender.id);
-					returning.name = data.name.trim().slice(0, 20) || returning.name;
+					// A verified player keeps their profile name even if a later join comes without a token.
+					if (account || !this.state.accounts?.[sender.id]) returning.name = name || returning.name;
 				} else {
 					if (Object.keys(this.state.players).length >= MAX_PLAYERS) return this.send(sender, { type: "error", message: "Game Night room is full" });
 					if (this.state.activeMatch && this.state.activeMatch.status !== "finished") return this.send(sender, { type: "error", message: "A game is already in progress" });
-					const name = data.name.trim().slice(0, 20);
 					if (!name) return this.send(sender, { type: "error", message: "Enter a player name" });
 					const player: GameNightPlayer = { id: sender.id, name, wins: 0, joinedAt: Date.now(), connected: true };
 					this.state.players[sender.id] = player;
 					this.state.playerTokens[sender.id] = token;
+				}
+				if (account) {
+					this.state.accounts = { ...this.state.accounts, [sender.id]: account.userId };
+					Object.assign(this.state.players[sender.id], { verified: true, color: account.color });
 				}
 				if (!this.state.players[this.state.hostId]) this.state.hostId = sender.id;
 				this.state.revision += 1;
@@ -435,6 +469,7 @@ class GameNightParty implements Party.Server {
 					this.state.vote = null;
 					this.state.recap = null;
 					this.state.finale = { endedAt: Date.now(), awards: computeAwards(this.state.players, this.state.history) };
+					this.reportNight();
 					return await this.commit();
 				}
 				case "resume-night":

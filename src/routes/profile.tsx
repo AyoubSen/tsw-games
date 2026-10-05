@@ -1,7 +1,7 @@
 import { SignInButton, useAuth } from "@clerk/tanstack-react-start";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import { Check, Trophy, UserRound } from "lucide-react";
+import { Check, History, Swords, Trophy, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,6 +29,15 @@ const gameTitle = (game: string) =>
 		? "Game Night"
 		: (liveGames.find((entry) => entry.id === game)?.title ?? game);
 
+const playedWhen = (time: number) => {
+	const minutes = Math.round((Date.now() - time) / 60000);
+	if (minutes < 1) return "just now";
+	if (minutes < 60) return `${minutes}m ago`;
+	const hours = Math.round(minutes / 60);
+	if (hours < 24) return `${hours}h ago`;
+	return new Date(time).toLocaleDateString();
+};
+
 function ProfilePage() {
 	const { isLoaded, isSignedIn } = useAuth();
 	if (!isLoaded) return null;
@@ -53,6 +62,8 @@ function ProfilePage() {
 function SignedInProfile() {
 	const { profile } = useProfile();
 	const stats = useQuery(api.profiles.myStats);
+	const recentGames = useQuery(api.profiles.myRecentGames);
+	const headToHead = useQuery(api.profiles.myHeadToHead);
 	const update = useMutation(api.profiles.update);
 	const [name, setName] = useState("");
 	const [color, setColor] = useState<string>(PROFILE_COLORS[0]);
@@ -190,6 +201,103 @@ function SignedInProfile() {
 										<td className="py-2 text-right tabular-nums">{stat.wins}</td>
 										<td className="py-2 text-right tabular-nums">
 											{Math.round((stat.wins / stat.played) * 100)}%
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					)}
+				</CardContent>
+			</Card>
+
+			<Card>
+				<CardHeader>
+					<CardTitle className="flex items-center gap-2">
+						<History className="h-5 w-5 text-primary" />
+						Recent games
+					</CardTitle>
+					<CardDescription>Your last 20 finished games.</CardDescription>
+				</CardHeader>
+				<CardContent>
+					{recentGames === undefined ? (
+						<p className="text-sm text-muted-foreground">Loading…</p>
+					) : recentGames.length === 0 ? (
+						<p className="text-sm text-muted-foreground">No games yet.</p>
+					) : (
+						<ul className="divide-y text-sm">
+							{recentGames.map((game) => (
+								<li
+									key={game._id}
+									className="flex items-start justify-between gap-3 py-2"
+								>
+									<div className="min-w-0">
+										<p className="font-medium">{gameTitle(game.game)}</p>
+										<p className="truncate text-xs text-muted-foreground">
+											{playedWhen(game.playedAt)}
+											{game.vsBot && " · with bots"}
+											{game.opponents.length > 0 &&
+												` · with ${game.opponents.map((opponent) => opponent.displayName).join(", ")}`}
+										</p>
+									</div>
+									<span
+										className={cn(
+											"shrink-0 font-medium",
+											game.won ? "text-primary" : "text-muted-foreground",
+										)}
+									>
+										{game.won ? "Won" : "Played"}
+									</span>
+								</li>
+							))}
+						</ul>
+					)}
+				</CardContent>
+			</Card>
+
+			<Card>
+				<CardHeader>
+					<CardTitle className="flex items-center gap-2">
+						<Swords className="h-5 w-5 text-primary" />
+						Head-to-head
+					</CardTitle>
+					<CardDescription>
+						Signed-in players you've played most. A win counts when you won
+						and they didn't.
+					</CardDescription>
+				</CardHeader>
+				<CardContent>
+					{headToHead === undefined ? (
+						<p className="text-sm text-muted-foreground">Loading…</p>
+					) : headToHead.length === 0 ? (
+						<p className="text-sm text-muted-foreground">
+							No games against other signed-in players yet.
+						</p>
+					) : (
+						<table className="w-full text-sm">
+							<thead className="text-left text-muted-foreground">
+								<tr>
+									<th className="pb-2 font-medium">Player</th>
+									<th className="pb-2 text-right font-medium">Played</th>
+									<th className="pb-2 text-right font-medium">W–L</th>
+								</tr>
+							</thead>
+							<tbody>
+								{headToHead.map((record) => (
+									<tr key={record._id} className="border-t">
+										<td className="py-2 font-medium">
+											<span className="flex items-center gap-2">
+												<span
+													className="h-3 w-3 shrink-0 rounded-full"
+													style={{ backgroundColor: record.color }}
+												/>
+												{record.displayName}
+											</span>
+										</td>
+										<td className="py-2 text-right tabular-nums">
+											{record.played}
+										</td>
+										<td className="py-2 text-right tabular-nums">
+											{record.wins}–{record.losses}
 										</td>
 									</tr>
 								))}

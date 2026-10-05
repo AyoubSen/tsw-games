@@ -45,5 +45,23 @@ export const record = internalMutation({
       }
     }
     await ctx.db.insert("gameResults", { resultId, game, vsBot, players: recorded, reportedAt: now })
+
+    for (const player of recorded) {
+      const opponents = recorded.filter((other) => other.clerkUserId !== player.clerkUserId)
+      await ctx.db.insert("userGames", { clerkUserId: player.clerkUserId, game, vsBot, won: player.won, opponents, playedAt: now })
+      for (const opponent of opponents) {
+        const win = player.won && !opponent.won ? 1 : 0
+        const loss = opponent.won && !player.won ? 1 : 0
+        const record = await ctx.db
+          .query("headToHead")
+          .withIndex("by_pair", (q) => q.eq("clerkUserId", player.clerkUserId).eq("opponentId", opponent.clerkUserId))
+          .unique()
+        if (record) {
+          await ctx.db.patch(record._id, { played: record.played + 1, wins: record.wins + win, losses: record.losses + loss, lastPlayedAt: now })
+        } else {
+          await ctx.db.insert("headToHead", { clerkUserId: player.clerkUserId, opponentId: opponent.clerkUserId, played: 1, wins: win, losses: loss, lastPlayedAt: now })
+        }
+      }
+    }
   },
 })

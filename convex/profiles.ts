@@ -64,6 +64,59 @@ export const myStats = query({
   },
 })
 
+/** Name and colour of another player, without their account id. */
+async function opponentFor(ctx: QueryCtx, clerkUserId: string) {
+  const profile = await profileFor(ctx, clerkUserId)
+  return { displayName: profile?.displayName ?? "Player", color: profile?.color ?? "#94a3b8" }
+}
+
+export const myRecentGames = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity()
+    if (!identity) return []
+    const games = await ctx.db
+      .query("userGames")
+      .withIndex("by_user", (q) => q.eq("clerkUserId", identity.subject))
+      .order("desc")
+      .take(20)
+    return Promise.all(
+      games.map(async (game) => ({
+        _id: game._id,
+        game: game.game,
+        vsBot: game.vsBot,
+        won: game.won,
+        playedAt: game.playedAt,
+        opponents: await Promise.all(
+          game.opponents.map(async (opponent) => ({ ...(await opponentFor(ctx, opponent.clerkUserId)), won: opponent.won })),
+        ),
+      })),
+    )
+  },
+})
+
+export const myHeadToHead = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity()
+    if (!identity) return []
+    const records = await ctx.db
+      .query("headToHead")
+      .withIndex("by_pair", (q) => q.eq("clerkUserId", identity.subject))
+      .collect()
+    const top = records.sort((a, b) => b.played - a.played || b.lastPlayedAt - a.lastPlayedAt).slice(0, 10)
+    return Promise.all(
+      top.map(async (record) => ({
+        _id: record._id,
+        ...(await opponentFor(ctx, record.opponentId)),
+        played: record.played,
+        wins: record.wins,
+        losses: record.losses,
+      })),
+    )
+  },
+})
+
 /** Used by PartyKit (through http.ts) to resolve a verified Clerk user to their profile name. */
 export const publicProfile = internalQuery({
   args: { clerkUserId: v.string() },

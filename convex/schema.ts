@@ -37,4 +37,26 @@ export default defineSchema({
     players: v.array(v.object({ clerkUserId: v.string(), won: v.boolean() })),
     reportedAt: v.number(),
   }).index("by_result", ["resultId"]),
+
+  /** One row per signed-in player per result, so a user's history can be read by time. */
+  userGames: defineTable({
+    clerkUserId: v.string(),
+    game: v.string(),
+    vsBot: v.boolean(),
+    won: v.boolean(),
+    /** The other signed-in players in the same result. */
+    opponents: v.array(v.object({ clerkUserId: v.string(), won: v.boolean() })),
+    playedAt: v.number(),
+  }).index("by_user", ["clerkUserId", "playedAt"]),
+
+  /** Running record of one user against another signed-in player. Both directions are stored. */
+  headToHead: defineTable({
+    clerkUserId: v.string(),
+    opponentId: v.string(),
+    played: v.number(),
+    /** Games this user won and the opponent did not, and the reverse. Shared wins and shared losses count as played only. */
+    wins: v.number(),
+    losses: v.number(),
+    lastPlayedAt: v.number(),
+  }).index("by_pair", ["clerkUserId", "opponentId"]),
 })

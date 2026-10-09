@@ -170,7 +170,7 @@ export function HotTakeGame(props: HotTakeGameProps) {
   )
 
   return (
-    <PartyTable tableRef={tableRef} background={TABLE_BG}>
+    <PartyTable tableRef={tableRef} background={TABLE_BG} className="min-h-[560px]">
       {/* Stage light. */}
       <div aria-hidden="true" className="pointer-events-none absolute rounded-[50%] bg-fuchsia-300/[.06] blur-2xl" style={{ left: cx - rx * 0.9, top: cy - ry * 0.75, width: rx * 1.8, height: ry * 1.5 }} />
 

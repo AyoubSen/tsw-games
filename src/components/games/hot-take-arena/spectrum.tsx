@@ -103,7 +103,7 @@ export function Spectrum({ geometry, compact, interactive, choice, myPick, marks
               }}
             >
               <span className={cn("font-black leading-none", compact ? "text-base" : "text-xl")} aria-hidden="true">{meta.glyph}</span>
-              <span className={cn("mt-0.5 font-bold uppercase leading-none tracking-wide", compact ? "text-[8px]" : "text-[10px]")}>{meta.short}</span>
+              <span className={cn("mt-0.5 font-bold uppercase leading-none tracking-wide", compact ? "text-[9px]" : "text-[10px]")}>{meta.short}</span>
               {mine && (
                 <span className="uno-tag absolute -bottom-2.5 left-1/2 flex -translate-x-1/2 items-center gap-0.5 whitespace-nowrap rounded-full bg-white px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-black shadow">
                   <Check className="size-2.5" /> You

@@ -128,7 +128,7 @@ export const liveGames: LiveGameCatalogEntry[] = [
 		id: "quick-math",
 		title: "Quick Math",
 		description:
-			"Rapid-fire arithmetic where the fastest correct answer steals the point. Sprint solo or race friends as the problems get harder.",
+			"Rapid-fire maths: solve, fill the gap, compare and estimate. The fastest right answers score most. Sprint solo or race friends as the problems get harder.",
 		icon: <Calculator className="w-10 h-10" />,
 		path: "/games/quick-math",
 		players: "1-8 players",

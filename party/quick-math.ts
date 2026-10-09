@@ -16,6 +16,8 @@ import {
 	QUICK_MATH_TIME_OPTIONS,
 	levelForRound,
 	parseQuickMathAnswer,
+	quickMathPoints,
+	type QuickMathKind,
 } from "../src/lib/quickMath";
 import {
 	isReaction,
@@ -43,17 +45,37 @@ export interface QuickMathPlayer {
 
 export type PublicQuickMathPlayer = Omit<QuickMathPlayer, "userId">;
 
+export interface QuickMathAnswer {
+	value: number;
+	/** From the question appearing to the server receiving the answer. */
+	ms: number;
+	correct: boolean;
+	/** Set when the question resolves: 3/2/1 by speed among correct answers, doubled on the final question. */
+	points: number;
+}
+
 export interface QuickMathRound {
 	number: number;
 	level: number;
+	kind: QuickMathKind;
+	prompt: string;
 	text: string;
+	options: string[] | null;
 	answer: number;
-	winnerId: string | null;
-	/** How long the winner took, from the question appearing. */
-	winnerMs: number | null;
-	/** Gave a wrong answer; out of this question. */
-	lockedOutIds: string[];
+	note: string | null;
+	/** The final question is worth double. */
+	double: boolean;
+	/** One locked-in answer per player. */
+	answers: Record<string, QuickMathAnswer>;
 }
+
+/** While the question is open, answers and the solution stay hidden; only who has answered shows. */
+export type PublicQuickMathRound = Omit<QuickMathRound, "answer" | "note" | "answers"> & {
+	answer: number | null;
+	note: string | null;
+	answers: Record<string, QuickMathAnswer> | null;
+	answeredIds: string[];
+};
 
 export type QuickMathPhase = "countdown" | "question" | "reveal";
 
@@ -82,8 +104,7 @@ export interface PublicQuickMathState {
 	phase: QuickMathPhase | null;
 	/** Milliseconds left in the phase when this state was sent (clients re-anchor to their own clock). */
 	msLeft: number | null;
-	/** The answer stays hidden until the question is resolved. */
-	round: (Omit<QuickMathRound, "answer"> & { answer: number | null }) | null;
+	round: PublicQuickMathRound | null;
 	history: QuickMathRound[];
 	winnerIds: string[];
 	startedAt: number | null;
@@ -156,7 +177,13 @@ class QuickMathParty implements Party.Server {
 			status: this.state.status,
 			phase,
 			msLeft: this.state.phaseEndsAt === null ? null : Math.max(0, this.state.phaseEndsAt - Date.now()),
-			round: round && { ...round, answer: phase === "question" ? null : round.answer },
+			round: round && {
+				...round,
+				answer: phase === "question" ? null : round.answer,
+				note: phase === "question" ? null : round.note,
+				answers: phase === "question" ? null : round.answers,
+				answeredIds: Object.keys(round.answers),
+			},
 			history: this.state.history,
 			winnerIds: this.state.winnerIds,
 			startedAt: this.state.startedAt,
@@ -190,29 +217,30 @@ class QuickMathParty implements Party.Server {
 	startQuestion(number: number) {
 		if (!this.state) return;
 		const problem = generateQuickMathProblem(levelForRound(number, this.state.settings.rounds), this.state.round?.text);
-		this.state.round = {
-			number,
-			level: problem.level,
-			text: problem.text,
-			answer: problem.answer,
-			winnerId: null,
-			winnerMs: null,
-			lockedOutIds: [],
-		};
+		this.state.round = { ...problem, number, double: number === this.state.settings.rounds, answers: {} };
 		this.setPhase("question", this.state.settings.questionTime * 1000);
 	}
 
 	resolveQuestion() {
-		if (!this.state?.round) return;
-		this.state.history.push({ ...this.state.round, lockedOutIds: [...this.state.round.lockedOutIds] });
+		const round = this.state?.round;
+		if (!this.state || !round) return;
+		const correct = Object.entries(round.answers)
+			.filter(([, answer]) => answer.correct)
+			.sort(([, left], [, right]) => left.ms - right.ms);
+		correct.forEach(([id, answer], rank) => {
+			answer.points = quickMathPoints(rank, round.double);
+			const player = this.state!.players[id];
+			if (player) player.score += answer.points;
+		});
+		this.state.history.push(structuredClone(round));
 		this.setPhase("reveal", QUICK_MATH_MS.reveal);
 	}
 
-	/** Everyone still at the table has guessed wrong, so nobody can take it. */
-	allLockedOut() {
+	/** Everyone still at the table has locked in, so the question can end early. */
+	allAnswered() {
 		if (!this.state?.round) return false;
 		const present = Object.values(this.state.players).filter((player) => player.connected !== false);
-		return present.length > 0 && present.every((player) => this.state!.round!.lockedOutIds.includes(player.id));
+		return present.length > 0 && present.every((player) => this.state!.round!.answers[player.id]);
 	}
 
 	finish() {
@@ -372,22 +400,20 @@ class QuickMathParty implements Party.Server {
 					const round = this.state.round;
 					const player = this.state.players[sender.id];
 					if (this.state.status !== "playing" || this.state.phase !== "question" || !round || !player) return;
-					if (round.lockedOutIds.includes(sender.id)) return;
-					const value = parseQuickMathAnswer(data.value);
+					if (round.answers[sender.id]) return;
+					const value = parseQuickMathAnswer(data.value, round.options);
 					if (value === null) {
-						this.send(sender, { type: "error", message: "Type a whole number" });
+						this.send(sender, { type: "error", message: round.options ? "Pick one of the options" : "Type a whole number" });
 						return;
 					}
 
-					if (value === round.answer) {
-						round.winnerId = sender.id;
-						round.winnerMs = Date.now() - (this.state.phaseStartedAt ?? Date.now());
-						player.score += 1;
-						this.resolveQuestion();
-					} else {
-						round.lockedOutIds.push(sender.id);
-						if (this.allLockedOut()) this.resolveQuestion();
-					}
+					round.answers[sender.id] = {
+						value,
+						ms: Date.now() - (this.state.phaseStartedAt ?? Date.now()),
+						correct: value === round.answer,
+						points: 0,
+					};
+					if (this.allAnswered()) this.resolveQuestion();
 					await this.saveState();
 					this.broadcastState();
 					break;
@@ -418,7 +444,7 @@ class QuickMathParty implements Party.Server {
 						if (next ?? fallback) this.state.hostId = next ?? fallback!;
 					}
 
-					if (this.state.phase === "question" && this.allLockedOut()) this.resolveQuestion();
+					if (this.state.phase === "question" && this.allAnswered()) this.resolveQuestion();
 					await this.saveState();
 					this.broadcastState();
 					break;
@@ -464,10 +490,17 @@ class QuickMathParty implements Party.Server {
 			return;
 		}
 
-		const nextNumber = (this.state.round?.number ?? 0) + 1;
-		if (this.state.phase === "question") this.resolveQuestion();
-		else if (nextNumber > this.state.settings.rounds) this.finish();
-		else this.startQuestion(nextNumber);
+		try {
+			const nextNumber = (this.state.round?.number ?? 0) + 1;
+			if (this.state.phase === "question") this.resolveQuestion();
+			else if (nextNumber > this.state.settings.rounds) this.finish();
+			else this.startQuestion(nextNumber);
+		} catch (error) {
+			// Never leave the room stuck: retry the step shortly.
+			console.error("Quick Math alarm error:", error);
+			this.state.phaseEndsAt = Date.now() + 2000;
+			await this.room.storage.setAlarm(this.state.phaseEndsAt);
+		}
 
 		await this.saveState();
 		this.broadcastState();
@@ -484,7 +517,7 @@ class QuickMathParty implements Party.Server {
 		this.gameNightMembers.delete(connection.id);
 
 		markDisconnected(this.state.players, connection.id);
-		if (this.state.phase === "question" && this.allLockedOut()) this.resolveQuestion();
+		if (this.state.phase === "question" && this.allAnswered()) this.resolveQuestion();
 
 		await this.saveState();
 		this.broadcastState();

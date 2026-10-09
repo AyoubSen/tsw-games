@@ -157,7 +157,7 @@ function QuickMathPage() {
 				<div className="mx-auto grid max-w-5xl gap-6 px-4 py-8 md:grid-cols-2">
 					<MultiplayerSetupCard
 						title="Multiplayer"
-						description="Everyone gets the same problem. First correct answer scores, one guess each, and the problems get harder as the match goes on."
+						description="Everyone answers the same problem privately, one answer each. The fastest right answers score 3, 2 and 1, problems get harder as the match goes on, and the last question counts double."
 						icon={<Users className="h-5 w-5 text-primary" />}
 						playerName={playerName}
 						roomCode={joinRoomCode}
@@ -255,7 +255,7 @@ function QuickMathPage() {
 				players={playerList}
 				hostId={multiplayer.gameState.hostId}
 				currentPlayerId={multiplayer.playerId}
-				playerDescription="Need at least 2 players. First correct answer takes each point."
+				playerDescription="Need at least 2 players. Fastest right answers score 3, 2 and 1."
 				settings={
 					<div className="rounded-2xl border px-4 py-3 text-sm text-muted-foreground">
 						<p>

@@ -1,15 +1,15 @@
-import { Calculator, Check, LogOut, RotateCcw, Send, Timer, Trophy, X, Zap } from "lucide-react"
+import { Calculator, Check, Lock, LogOut, RotateCcw, Send, Timer, Trophy, X, Zap } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { Reaction } from "@/lib/reactions"
 import type { ReactionBubbles } from "@/components/multiplayer/Reactions"
-import { QUICK_MATH_LEVELS } from "@/lib/quickMath"
+import { QUICK_MATH_LEVELS, QUICK_MATH_POINTS, quickMathFill, splitQuickMath } from "@/lib/quickMath"
 import { playSound } from "@/lib/sounds"
 import { cn } from "@/lib/utils"
 import { GLASS, GlassButton, PartyTable, TableTopBar, TimerRing, useElementSize, useNow, useSoundCue } from "../party-shell/shell"
 import { PartyAvatar, Seat, SeatChip, ringLayout, viewerFirst } from "../party-shell/SeatRing"
 import { PromptCard } from "../party-shell/PromptStage"
 import { Podium, Scoreboard, type ScoreRow } from "../party-shell/Scoreboard"
-import type { PublicQuickMathPlayer, PublicQuickMathState } from "../../../../party/quick-math"
+import type { PublicQuickMathPlayer, PublicQuickMathRound, PublicQuickMathState } from "../../../../party/quick-math"
 
 export interface QuickMathGameProps {
   state: PublicQuickMathState
@@ -38,8 +38,9 @@ export function QuickMathGame(props: QuickMathGameProps) {
   const question = state.status === "playing" && state.phase === "question"
   const reveal = state.status === "playing" && state.phase === "reveal"
   const countdown = state.status === "playing" && state.phase === "countdown"
-  const lockedOut = Boolean(round?.lockedOutIds.includes(playerId))
-  const canAnswer = question && Boolean(me) && !lockedOut && connected
+  const answered = Boolean(round?.answeredIds.includes(playerId))
+  const canAnswer = question && Boolean(me) && !answered && connected
+  const options = round?.options ?? null
 
   const [tableRef, box] = useElementSize<HTMLDivElement>()
   const wide = box.w >= 1024
@@ -55,16 +56,20 @@ export function QuickMathGame(props: QuickMathGameProps) {
   const roundKey = `${state.startedAt}:${round?.number ?? 0}`
   const [draft, setDraft] = useState({ key: "", value: "" })
   const value = draft.key === roundKey ? draft.value : ""
+  // What this player locked in, shown in the dock until the reveal.
+  const [sent, setSent] = useState({ key: "", value: "" })
+  const lockedIn = sent.key === roundKey ? sent.value : ""
   const inputRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
-    if (canAnswer) inputRef.current?.focus()
-  }, [canAnswer, roundKey])
+    if (canAnswer && !options) inputRef.current?.focus()
+  }, [canAnswer, options, roundKey])
 
+  const mine = reveal ? round?.answers?.[playerId] : undefined
   useSoundCue(question ? roundKey : null, () => playSound("deal"))
-  useSoundCue(lockedOut ? `${roundKey}:wrong` : null, () => playSound("wrong"))
+  useSoundCue(answered && question ? `${roundKey}:lock` : null, () => playSound("lockin"))
   useSoundCue(reveal ? `${roundKey}:reveal` : null, () => {
-    if (round?.winnerId === playerId) playSound("correct")
-    else if (round?.winnerId) playSound("turn")
+    if (mine?.correct) playSound("correct")
+    else if (mine) playSound("wrong")
     else playSound("buzzer")
   })
   useSoundCue(over ? `over:${state.finishedAt}` : null, () => playSound("win"))
@@ -75,19 +80,39 @@ export function QuickMathGame(props: QuickMathGameProps) {
   const ring = ringLayout(seatOrder, box.w, box.h, { top: 64, bottomReserve: 84, insetLeft: wide && scoresOpen ? 236 : 0 })
   const { compact, avatar, seatW, cx, cy, rx } = ring
   const promptW = Math.min(520, Math.max(220, 1.5 * rx - seatW))
-  const winner = round?.winnerId ? state.players[round.winnerId] : undefined
+  const correct = reveal && round?.answers
+    ? Object.entries(round.answers).filter(([, answer]) => answer.correct).sort(([, left], [, right]) => left.ms - right.ms)
+    : []
+  const fastest = correct[0] ? state.players[correct[0][0]] : undefined
 
   const scoreRows: ScoreRow[] = players.map((player) => ({
     id: player.id,
     name: player.name,
     score: player.score,
-    gained: reveal && round?.winnerId === player.id ? 1 : undefined,
+    gained: (reveal && round?.answers?.[player.id]?.points) || undefined,
   }))
 
-  const submit = () => {
-    if (!canAnswer || !value.trim()) return
-    if (props.onAnswer(value.trim())) setDraft({ key: roundKey, value: "" })
+  const send = (answer: string, shown: string) => {
+    if (!canAnswer) return
+    if (props.onAnswer(answer)) {
+      setDraft({ key: roundKey, value: "" })
+      setSent({ key: roundKey, value: shown })
+    }
   }
+  const submit = () => {
+    if (value.trim()) send(value.trim(), value.trim())
+  }
+
+  // Keys 1-4 pick an option.
+  useEffect(() => {
+    if (!canAnswer || !options) return
+    const onKey = (event: KeyboardEvent) => {
+      const index = Number(event.key) - 1
+      if (Number.isInteger(index) && index >= 0 && index < options.length) send(String(index), options[index]!)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  })
 
   const status = (
     <>
@@ -97,7 +122,7 @@ export function QuickMathGame(props: QuickMathGameProps) {
           {over ? "Final scores" : round ? <><span className="max-sm:hidden">Question </span>{round.number} / {state.settings.rounds}</> : "Get ready"}
         </p>
         <p className="truncate text-[11px] text-white/60">
-          {round && !over ? QUICK_MATH_LEVELS[round.level] : over ? `${state.history.length} questions` : "First correct answer takes the point"}
+          {round && !over ? `${QUICK_MATH_LEVELS[round.level]}${round.double ? " · Double points" : ""}` : over ? `${state.history.length} questions` : `Fastest right answers score ${QUICK_MATH_POINTS.join(" · ")}`}
         </p>
       </div>
       {question && <TimerRing left={secondsLeft} limit={state.settings.questionTime} />}
@@ -138,23 +163,25 @@ export function QuickMathGame(props: QuickMathGameProps) {
           {round && !countdown && !over && (
             <PromptCard
               dealKey={roundKey}
-              eyebrow={`Question ${round.number}`}
+              eyebrow={round.double ? "Final · ×2" : `Question ${round.number}`}
               tag={QUICK_MATH_LEVELS[round.level]}
               text=""
               compact={compact}
+              className={round.double ? "ring-4 ring-amber-300/80" : undefined}
               style={{ left: cx, top: cy, width: promptW }}
             >
-              <p className={cn("-mt-1 font-mono font-black tabular-nums tracking-tight", compact ? "text-4xl" : "text-6xl")}>
-                {round.text} <span className="text-[#1b1712]/40">=</span>{" "}
-                {round.answer === null ? <span className="text-[#1b1712]/30">?</span> : <span className="uno-pop inline-block text-emerald-700">{round.answer}</span>}
-              </p>
+              <p className="-mt-1 text-xs font-bold uppercase tracking-wider text-[#1b1712]/60">{round.prompt}</p>
+              <ProblemText round={round} compact={compact} />
+              {reveal && round.note && <p className="uno-rise mt-1 font-mono text-xs font-bold text-[#1b1712]/55">{round.note}</p>}
               {reveal && (
                 <p className="uno-rise mt-3 flex items-center justify-center gap-2 text-sm font-bold">
-                  {winner ? (
+                  {fastest ? (
                     <>
-                      <PartyAvatar id={winner.id} name={winner.name} size={22} className="ring-1" />
-                      {winner.id === playerId ? "You" : winner.name} got it
-                      {round.winnerMs !== null && <span className="font-mono text-[#1b1712]/55">{seconds(round.winnerMs)}</span>}
+                      <Zap className="size-4 text-amber-500" />
+                      <PartyAvatar id={fastest.id} name={fastest.name} size={22} className="ring-1" />
+                      {fastest.id === playerId ? "You" : fastest.name}
+                      <span className="font-mono text-[#1b1712]/55">{seconds(correct[0]![1].ms)}</span>
+                      <span className="text-[#1b1712]/55">· {correct.length}/{players.length} right</span>
                     </>
                   ) : (
                     <span className="text-[#1b1712]/55">Nobody got it</span>
@@ -168,12 +195,15 @@ export function QuickMathGame(props: QuickMathGameProps) {
             const player = state.players[id]
             const seat = ring.seats[id]
             if (!player || !seat) return null
-            const won = reveal && round?.winnerId === id
-            const chip = round?.lockedOutIds.includes(id) && !over
-              ? <SeatChip tone="alert"><X className="size-2.5" />Wrong</SeatChip>
-              : won
-                ? <SeatChip tone="done"><Check className="size-2.5" />Got it</SeatChip>
-                : null
+            const answer = reveal ? round?.answers?.[id] : undefined
+            const won = Boolean(answer?.correct)
+            const chip = question && round?.answeredIds.includes(id)
+              ? <SeatChip tone="waiting"><Lock className="size-2.5" />Locked</SeatChip>
+              : answer?.correct
+                ? <SeatChip tone="done"><Check className="size-2.5" />{seconds(answer.ms)}</SeatChip>
+                : answer && round
+                  ? <SeatChip tone="alert"><X className="size-2.5" />{quickMathFill(round.options, answer.value)}</SeatChip>
+                  : null
             return (
               <Seat
                 key={id}
@@ -192,9 +222,9 @@ export function QuickMathGame(props: QuickMathGameProps) {
                 bubble={reactions[id]}
                 bubbleSide={seat.y < cy - ring.ry * 0.3 ? "bottom" : "top"}
               >
-                {reveal && round?.winnerId === id && (
-                  <span className="party-float pointer-events-none absolute bottom-full left-1/2 z-20 rounded-full bg-lime-400 px-2 py-0.5 text-sm font-black text-lime-950 shadow-lg">+1</span>
-                )}
+                {answer?.points ? (
+                  <span className="party-float pointer-events-none absolute bottom-full left-1/2 z-20 rounded-full bg-lime-400 px-2 py-0.5 text-sm font-black text-lime-950 shadow-lg">+{answer.points}</span>
+                ) : null}
               </Seat>
             )
           })}
@@ -203,7 +233,26 @@ export function QuickMathGame(props: QuickMathGameProps) {
 
       {/* Answer dock. */}
       <div className="absolute bottom-3 z-30 flex -translate-x-1/2 justify-center" style={{ left: box.w ? cx : "50%" }}>
-        {question && me && !lockedOut && (
+        {question && me && !answered && options && (
+          <div className="uno-rise flex items-center gap-2">
+            {options.map((option, index) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => send(String(index), option)}
+                disabled={!connected}
+                aria-label={`Answer ${option}`}
+                className={cn(
+                  "h-12 rounded-2xl bg-lime-400 px-3 font-mono font-black tabular-nums text-lime-950 shadow-[0_10px_30px_rgb(0_0_0/.5)] transition hover:scale-[1.04] disabled:bg-white/20 disabled:text-white/60",
+                  option.length > 3 ? "min-w-16 text-sm sm:min-w-20 sm:text-base" : "min-w-14 text-xl sm:min-w-16 sm:text-2xl",
+                )}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        )}
+        {question && me && !answered && !options && (
           <form
             className="uno-rise flex items-center gap-2"
             onSubmit={(event) => {
@@ -232,14 +281,14 @@ export function QuickMathGame(props: QuickMathGameProps) {
             </button>
           </form>
         )}
-        {question && lockedOut && (
+        {question && answered && (
           <p className={cn(GLASS, "uno-rise flex h-11 items-center gap-2 whitespace-nowrap px-4 text-sm font-semibold")}>
-            <X className="size-4 text-rose-300" /> Wrong · wait for the next one
+            <Lock className="size-4 text-lime-200" /> Locked in{lockedIn && <span className="font-mono font-black">{lockedIn}</span>}<span className="text-white/55 max-sm:hidden">· waiting for the others</span>
           </p>
         )}
         {countdown && (
-          <p className={cn(GLASS, "flex h-11 items-center gap-2 whitespace-nowrap px-4 text-sm font-semibold")}>
-            <Timer className="size-4 text-lime-200" /> {state.settings.rounds} questions · one guess each
+          <p className={cn(GLASS, "flex h-11 items-center gap-2 whitespace-nowrap px-4 text-sm font-semibold max-sm:text-xs")}>
+            <Timer className="size-4 text-lime-200" /> {state.settings.rounds} questions · one answer each · last one ×2
           </p>
         )}
         {over && resultsHidden && (
@@ -295,11 +344,15 @@ function GameOver({ state, rows, meId, isHost, onRestart, onHide, onLeave }: {
     : winners.some((row) => row.id === meId)
       ? winners.length > 1 ? "You share the win!" : "Fastest brain at the table!"
       : winners.length > 1 ? `Tie: ${winners.map((row) => row.name).join(" & ")}` : `${winners[0]!.name} wins`
-  const fastest = state.history.reduce<(typeof state.history)[number] | null>(
-    (best, entry) => entry.winnerMs !== null && (best?.winnerMs == null || entry.winnerMs < best.winnerMs) ? entry : best,
-    null,
-  )
-  const fastestPlayer = fastest?.winnerId ? state.players[fastest.winnerId] : undefined
+  let fastest: { id: string; ms: number; text: string; answer: string } | null = null
+  for (const entry of state.history) {
+    for (const [id, answer] of Object.entries(entry.answers)) {
+      if (answer.correct && (!fastest || answer.ms < fastest.ms)) {
+        fastest = { id, ms: answer.ms, text: entry.text, answer: quickMathFill(entry.options, entry.answer) }
+      }
+    }
+  }
+  const fastestPlayer = fastest ? state.players[fastest.id] : undefined
 
   return (
     <div className="uno-fade-in absolute inset-0 z-40 overflow-y-auto bg-[#040905]/80 backdrop-blur-sm">
@@ -312,7 +365,7 @@ function GameOver({ state, rows, meId, isHost, onRestart, onHide, onLeave }: {
 
         <Podium rows={rows} meId={meId} unit={(score) => (score === 1 ? "pt" : "pts")} />
 
-        {fastest && fastestPlayer && fastest.winnerMs !== null && (
+        {fastest && fastestPlayer && (
           <div className={cn(GLASS, "uno-pop w-full max-w-sm p-4")} style={{ animationDelay: "900ms" }}>
             <p className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.2em] text-lime-300">
               <Zap className="size-3.5" /> Fastest answer
@@ -321,7 +374,7 @@ function GameOver({ state, rows, meId, isHost, onRestart, onHide, onLeave }: {
               <PartyAvatar id={fastestPlayer.id} name={fastestPlayer.name} size={44} style={{ boxShadow: "0 0 0 3px #a3e635" }} />
               <div className="min-w-0">
                 <p className="truncate text-lg font-black">{fastestPlayer.id === meId ? "You" : fastestPlayer.name}</p>
-                <p className="font-mono text-xs text-white/65">{fastest.text} = {fastest.answer} in {seconds(fastest.winnerMs)}</p>
+                <p className="font-mono text-xs text-white/65">{fastest.text.replace("?", fastest.answer)} in {seconds(fastest.ms)}</p>
               </div>
             </div>
           </div>
@@ -355,5 +408,20 @@ function GameOver({ state, rows, meId, isHost, onRestart, onHide, onLeave }: {
         </div>
       </div>
     </div>
+  )
+}
+
+/** The expression, with its blank showing "?" until the answer is revealed. */
+function ProblemText({ round, compact }: { round: PublicQuickMathRound; compact: boolean }) {
+  const [before, after] = splitQuickMath(round.text)
+  const long = round.text.length > 14
+  return (
+    <p className={cn("mt-1 whitespace-nowrap font-mono font-black tabular-nums tracking-tight", compact ? (long ? "text-2xl" : "text-4xl") : long ? "text-4xl" : "text-6xl")}>
+      {before}
+      {round.answer === null
+        ? <span className="text-[#1b1712]/30">?</span>
+        : <span className="uno-pop inline-block text-emerald-700">{quickMathFill(round.options, round.answer)}</span>}
+      {after}
+    </p>
   )
 }

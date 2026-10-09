@@ -2,7 +2,7 @@ import { Flame, RotateCcw, Send, Target, Timer, Trophy } from "lucide-react"
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { generateQuickMathProblem, levelForSolved, QUICK_MATH_LEVELS, type QuickMathProblem } from "@/lib/quickMath"
+import { generateQuickMathProblem, levelForSolved, QUICK_MATH_LEVELS, splitQuickMath, type QuickMathProblem } from "@/lib/quickMath"
 import { playSound } from "@/lib/sounds"
 import { cn } from "@/lib/utils"
 
@@ -44,9 +44,10 @@ export function SoloSprint() {
     if (done) playSound("win")
   }, [done])
 
+  const options = running ? sprint!.problem.options : null
   useEffect(() => {
-    if (running) inputRef.current?.focus()
-  }, [running])
+    if (running && !options) inputRef.current?.focus()
+  }, [running, options])
 
   const start = () => {
     setSprint(newSprint())
@@ -55,9 +56,9 @@ export function SoloSprint() {
     setFlash(null)
   }
 
-  const submit = () => {
-    if (!sprint || !running || !value) return
-    if (Number(value) === sprint.problem.answer) {
+  const answer = (picked: number) => {
+    if (!sprint || !running) return
+    if (picked === sprint.problem.answer) {
       const solved = sprint.solved + 1
       const streak = sprint.streak + 1
       setSprint({
@@ -77,6 +78,20 @@ export function SoloSprint() {
     setValue("")
     inputRef.current?.focus()
   }
+  const submit = () => {
+    if (value) answer(Number(value))
+  }
+
+  // Keys 1-4 pick an option.
+  useEffect(() => {
+    if (!options) return
+    const onKey = (event: KeyboardEvent) => {
+      const index = Number(event.key) - 1
+      if (Number.isInteger(index) && index >= 0 && index < options.length) answer(index)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  })
 
   if (!sprint) {
     return (
@@ -86,7 +101,7 @@ export function SoloSprint() {
           <div>
             <h2 className="text-2xl font-black">{SPRINT_SECONDS}-second sprint</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              Answer as many as you can. Every five correct answers the problems get harder. A wrong answer costs {WRONG_PENALTY_MS / 1000} seconds.
+              Solve, fill the gap, compare and estimate as many as you can. Every five correct answers the problems get harder. A wrong answer costs {WRONG_PENALTY_MS / 1000} seconds.
             </p>
           </div>
           <Button size="lg" className="w-full" onClick={start}>Start sprint</Button>
@@ -120,6 +135,7 @@ export function SoloSprint() {
   }
 
   const level = sprint.problem.level
+  const [before, after] = splitQuickMath(sprint.problem.text)
   return (
     <Card className="mx-auto max-w-xl overflow-hidden">
       <div className="h-1.5 bg-muted">
@@ -135,16 +151,29 @@ export function SoloSprint() {
           </span>
         </div>
 
-        <p
-          key={`${sprint.problem.text}:${flash?.at ?? 0}`}
-          className={cn(
-            "py-6 text-center font-mono text-5xl font-black tabular-nums tracking-tight sm:text-6xl",
-            flash?.kind === "wrong" ? "animate-shake text-rose-500" : "uno-pop",
-          )}
-        >
-          {sprint.problem.text} <span className="text-muted-foreground">=</span> ?
-        </p>
+        <div className="pt-4 text-center">
+          <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{sprint.problem.prompt}</p>
+          <p
+            key={`${sprint.problem.text}:${flash?.at ?? 0}`}
+            className={cn(
+              "whitespace-nowrap pb-6 pt-2 font-mono font-black tabular-nums tracking-tight",
+              sprint.problem.text.length > 14 ? "text-3xl sm:text-5xl" : "text-5xl sm:text-6xl",
+              flash?.kind === "wrong" ? "animate-shake text-rose-500" : "uno-pop",
+            )}
+          >
+            {before}<span className="text-muted-foreground">?</span>{after}
+          </p>
+        </div>
 
+        {options ? (
+          <div className="flex justify-center gap-2">
+            {options.map((option, index) => (
+              <Button key={option} type="button" size="lg" className="h-12 min-w-16 flex-1 font-mono text-lg font-black" onClick={() => answer(index)}>
+                {option}
+              </Button>
+            ))}
+          </div>
+        ) : (
         <form
           className="flex gap-2"
           onSubmit={(event) => {
@@ -166,6 +195,7 @@ export function SoloSprint() {
             <Send className="h-5 w-5" />
           </Button>
         </form>
+        )}
       </CardContent>
     </Card>
   )

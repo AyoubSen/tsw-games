@@ -265,16 +265,16 @@ function HistoryPanel({ hands, me, onClose }: { hands: PublicHandRecord[]; me: s
       <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/50">History</span>
       {hand && (
         <div className="flex items-center gap-1">
-          <button type="button" aria-label="Previous hand" disabled={index <= 0} onClick={() => { setPicked(hands[index - 1].handNumber); setStreet("pre-flop") }} className="rounded-md p-0.5 text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-25 disabled:hover:bg-transparent">
+          <button type="button" aria-label="Previous hand" disabled={index <= 0} onClick={() => { setPicked(hands[index - 1].handNumber); setStreet("pre-flop") }} className="grid size-10 place-items-center rounded-md text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-25 disabled:hover:bg-transparent">
             <ChevronLeft className="h-4 w-4" />
           </button>
           <span className="min-w-[64px] text-center font-mono text-[11px] font-semibold text-white/85">Hand #{hand.handNumber}</span>
-          <button type="button" aria-label="Next hand" disabled={index >= hands.length - 1} onClick={() => { setPicked(index + 1 === hands.length - 1 ? null : hands[index + 1].handNumber); setStreet("pre-flop") }} className="rounded-md p-0.5 text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-25 disabled:hover:bg-transparent">
+          <button type="button" aria-label="Next hand" disabled={index >= hands.length - 1} onClick={() => { setPicked(index + 1 === hands.length - 1 ? null : hands[index + 1].handNumber); setStreet("pre-flop") }} className="grid size-10 place-items-center rounded-md text-white/60 hover:bg-white/10 hover:text-white disabled:opacity-25 disabled:hover:bg-transparent">
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
       )}
-      <button type="button" aria-label="Close history" onClick={onClose} className="rounded-md p-0.5 text-white/40 hover:bg-white/10 hover:text-white">
+      <button type="button" aria-label="Close history" onClick={onClose} className="grid size-10 place-items-center rounded-md text-white/40 hover:bg-white/10 hover:text-white">
         <X className="h-3.5 w-3.5" />
       </button>
     </div>
@@ -423,7 +423,7 @@ function SeatPlate({ player, isMe, active, winner, compact, deadline, total, off
       </div>
       <div className="min-w-0 flex-1 leading-tight">
         <div className="flex items-center gap-1">
-          <span className={cn("truncate font-semibold text-white/90", compact ? "text-[10px]" : "text-xs")}>{isMe ? "You" : player.name}</span>
+          <span className={cn("truncate font-semibold text-white/90", compact ? "text-[11px]" : "text-xs")}>{isMe ? "You" : player.name}</span>
           {!player.connected && <WifiOff className="h-3 w-3 shrink-0 text-rose-400" />}
           {player.isBot && player.botLevel && (
             <span title={`${BOT_LEVEL_LABELS[player.botLevel]} bot`} className="shrink-0 rounded-full bg-white/10 px-1 text-[9px] font-bold uppercase text-white/60">
@@ -711,7 +711,7 @@ export function PokerGame({ state, history, playerId, isHost, spectating, watchi
   })()
 
   return (
-    <div className="relative flex h-[calc(100dvh-73px)] flex-col overflow-hidden bg-[#0b0907] text-white">
+    <div className="relative flex h-[calc(100dvh-73px)] min-h-[560px] flex-col overflow-hidden bg-[#0b0907] text-white">
       {showGameOver && <GameOverModal players={state.players} settings={state.settings} isHost={isHost} onRestart={onNextHand} onLeave={onLeave} />}
 
       {/* Room */}
@@ -1046,13 +1046,13 @@ export function PokerGame({ state, history, playerId, isHost, spectating, watchi
 
         {/* Top bar */}
         <div className="pointer-events-none absolute inset-x-0 top-0 z-40 flex items-start justify-between gap-2 p-2 sm:p-3">
-          <div className={cn(GLASS, "flex items-center gap-1 py-1 pl-1 pr-3")}>
-            <button type="button" onClick={onLeave} className="flex items-center gap-1 rounded-xl px-2 py-1.5 text-xs font-semibold text-white/60 transition-colors hover:bg-white/10 hover:text-white">
+          <div className={cn(GLASS, "flex items-center gap-1 p-0.5 sm:py-1 sm:pl-1 sm:pr-3")}>
+            <button type="button" onClick={onLeave} aria-label="Leave" className="flex min-h-10 min-w-10 items-center justify-center gap-1 rounded-xl px-2 py-1.5 text-xs font-semibold text-white/60 transition-colors hover:bg-white/10 hover:text-white">
               <ArrowLeft className="h-4 w-4" />
               <span className="hidden sm:inline">Leave</span>
             </button>
-            <div className="h-6 w-px bg-white/10" />
-            <div className="pl-2 leading-tight">
+            <div className="hidden h-6 w-px bg-white/10 sm:block" />
+            <div className="hidden pl-2 leading-tight sm:block">
               <div className="text-xs font-bold text-white/90">Texas Hold'em</div>
               <div className="font-mono text-[10px] text-white/45">
                 {roomLabel} · Hand {state.handNumber} · {state.settings.smallBlind}/{bigBlind}
@@ -1069,10 +1069,10 @@ export function PokerGame({ state, history, playerId, isHost, spectating, watchi
                 setLogOpen((open) => !open)
                 setHistoryOpen(false)
               }}
-              className={cn("flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/5 hover:text-white/80", logOpen && "bg-white/10 text-white")}
+              className={cn("flex min-h-10 min-w-10 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/5 hover:text-white/80 sm:pointer-fine:min-h-0 sm:pointer-fine:min-w-0", logOpen && "bg-white/10 text-white")}
             >
               <ScrollText size={13} />
-              <span>Log</span>
+              <span className="max-sm:sr-only">Log</span>
             </button>
             <button
               type="button"
@@ -1080,10 +1080,10 @@ export function PokerGame({ state, history, playerId, isHost, spectating, watchi
                 setHistoryOpen((open) => !open)
                 setLogOpen(false)
               }}
-              className={cn("flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/5 hover:text-white/80", historyOpen && "bg-white/10 text-white")}
+              className={cn("flex min-h-10 min-w-10 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/5 hover:text-white/80 sm:pointer-fine:min-h-0 sm:pointer-fine:min-w-0", historyOpen && "bg-white/10 text-white")}
             >
               <HistoryIcon size={13} />
-              <span>History</span>
+              <span className="max-sm:sr-only">History</span>
             </button>
             {!spectating && (
               <button
@@ -1091,10 +1091,10 @@ export function PokerGame({ state, history, playerId, isHost, spectating, watchi
                 onClick={toggleLearning}
                 aria-pressed={learning}
                 title="Learning mode: your win chance and pot odds, visible only to you"
-                className={cn("flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/5 hover:text-white/80", learning && "bg-sky-400/15 text-sky-200")}
+                className={cn("flex min-h-10 min-w-10 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors hover:bg-white/5 hover:text-white/80 sm:pointer-fine:min-h-0 sm:pointer-fine:min-w-0", learning && "bg-sky-400/15 text-sky-200")}
               >
                 <GraduationCap size={13} />
-                <span>Learn</span>
+                <span className="max-sm:sr-only">Learn</span>
               </button>
             )}
           </div>
@@ -1109,7 +1109,7 @@ export function PokerGame({ state, history, playerId, isHost, spectating, watchi
           <div className={cn(GLASS, "poker-rise absolute right-2 top-14 z-40 flex max-h-[min(420px,calc(100%-80px))] w-[min(300px,calc(100%-16px))] flex-col overflow-hidden sm:right-3")}>
             <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
               <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/50">Hand log</span>
-              <button type="button" aria-label="Close log" onClick={() => setLogOpen(false)} className="rounded-md p-0.5 text-white/40 hover:bg-white/10 hover:text-white">
+              <button type="button" aria-label="Close log" onClick={() => setLogOpen(false)} className="grid size-10 place-items-center rounded-md text-white/40 hover:bg-white/10 hover:text-white">
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -1200,7 +1200,7 @@ export function PokerGame({ state, history, playerId, isHost, spectating, watchi
                     onClick={onToggleSitOut}
                     aria-pressed={me.sittingOut}
                     className={cn(
-                      "flex h-8 items-center gap-1.5 rounded-xl px-3 text-[11px] font-bold uppercase tracking-wider ring-1 transition-all active:scale-[0.98]",
+                      "flex h-10 items-center gap-1.5 rounded-xl px-3 text-[11px] font-bold uppercase tracking-wider ring-1 transition-all active:scale-[0.98]",
                       me.sittingOut ? "bg-sky-300/15 text-sky-200 ring-sky-300/50 hover:bg-sky-300/25" : "bg-white/[0.05] text-white/55 ring-white/12 hover:bg-white/[0.09] hover:text-white",
                     )}
                   >

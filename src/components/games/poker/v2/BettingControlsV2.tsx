@@ -92,7 +92,7 @@ export function BettingControls({
               type="button"
               aria-label="Lower raise"
               onClick={() => setRaiseAmount(Math.max(minRaiseTotal, clamped - step))}
-              className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/[0.07] text-white/70 hover:bg-white/15 hover:text-white"
+              className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/[0.07] text-white/70 hover:bg-white/15 hover:text-white"
             >
               <Minus className="h-4 w-4" />
             </button>
@@ -104,13 +104,13 @@ export function BettingControls({
               type="button"
               aria-label="Raise more"
               onClick={() => setRaiseAmount(Math.min(maxRaise, clamped + step))}
-              className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/[0.07] text-white/70 hover:bg-white/15 hover:text-white"
+              className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/[0.07] text-white/70 hover:bg-white/15 hover:text-white"
             >
               <Plus className="h-4 w-4" />
             </button>
           </div>
 
-          <div className="relative flex h-6 items-center">
+          <div className="relative flex h-10 items-center sm:pointer-fine:h-6">
             <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
               <div className="h-full rounded-full bg-gradient-to-r from-amber-500 to-amber-300" style={{ width: `${sliderPct}%` }} />
             </div>
@@ -134,7 +134,7 @@ export function BettingControls({
                 type="button"
                 onClick={() => setRaiseAmount(p.value)}
                 className={cn(
-                  "flex-1 rounded-lg py-1.5 text-[11px] font-bold transition-colors",
+                  "min-h-10 flex-1 rounded-lg py-1.5 text-[11px] font-bold transition-colors sm:pointer-fine:min-h-0",
                   clamped === p.value ? "bg-amber-300 text-black" : "bg-white/[0.07] text-white/55 hover:bg-white/12 hover:text-white",
                 )}
               >

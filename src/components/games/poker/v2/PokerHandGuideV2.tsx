@@ -123,10 +123,10 @@ export function PokerHandGuide({ currentCategory = null }: PokerHandGuideProps) 
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-white/40 transition-colors hover:bg-white/5 hover:text-white/80"
+        className="flex min-h-10 min-w-10 items-center justify-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-white/40 transition-colors hover:bg-white/5 hover:text-white/80 sm:pointer-fine:min-h-0 sm:pointer-fine:min-w-0"
       >
         <HelpCircle size={13} />
-        <span>Hand rankings</span>
+        <span className="max-sm:sr-only">Hand rankings</span>
       </button>
 
       {isOpen && (
@@ -155,7 +155,7 @@ export function PokerHandGuide({ currentCategory = null }: PokerHandGuideProps) 
                 type="button"
                 onClick={() => setIsOpen(false)}
                 aria-label="Close"
-                className="rounded-md p-1 text-white/40 transition-colors hover:bg-white/5 hover:text-white"
+                className="grid size-10 place-items-center rounded-md text-white/40 transition-colors hover:bg-white/5 hover:text-white"
               >
                 <X size={16} />
               </button>

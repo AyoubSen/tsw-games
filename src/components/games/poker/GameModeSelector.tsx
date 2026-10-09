@@ -171,7 +171,7 @@ export function GameModeSelector({
                     onClick={() => setStartingChips(opt.value)}
                     disabled={isConnecting}
                     className={cn(
-                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors",
+                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors pointer-coarse:min-h-10",
                       startingChips === opt.value
                         ? "border-primary bg-primary/10 text-primary"
                         : "border-border hover:border-primary/50"
@@ -195,7 +195,7 @@ export function GameModeSelector({
                     onClick={() => setSmallBlind(opt.value)}
                     disabled={isConnecting}
                     className={cn(
-                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors",
+                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors pointer-coarse:min-h-10",
                       smallBlind === opt.value
                         ? "border-primary bg-primary/10 text-primary"
                         : "border-border hover:border-primary/50"
@@ -219,7 +219,7 @@ export function GameModeSelector({
                     onClick={() => setBlindIncrease(opt.value)}
                     disabled={isConnecting}
                     className={cn(
-                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors",
+                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors pointer-coarse:min-h-10",
                       blindIncrease === opt.value
                         ? "border-primary bg-primary/10 text-primary"
                         : "border-border hover:border-primary/50"
@@ -243,7 +243,7 @@ export function GameModeSelector({
                     onClick={() => setTurnTimeLimit(opt.value)}
                     disabled={isConnecting}
                     className={cn(
-                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors",
+                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors pointer-coarse:min-h-10",
                       turnTimeLimit === opt.value
                         ? "border-primary bg-primary/10 text-primary"
                         : "border-border hover:border-primary/50"

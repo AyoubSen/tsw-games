@@ -121,7 +121,7 @@ function BombDefusalPage() {
         {game.canControl ? <>
           <div><p className="mb-1.5 text-xs font-medium text-muted-foreground">Time per device</p><div className="grid grid-cols-3 gap-2">
             {BOMB_TIME_OPTIONS.map((seconds) => <button key={seconds} type="button" aria-pressed={game.timeLimit === seconds} disabled={!connected} onClick={() => multiplayer.updateSettings({ timeLimit: seconds })}
-              className={`rounded-lg border px-2 py-2 text-sm font-semibold ${game.timeLimit === seconds ? "border-primary bg-primary/10 text-primary" : "border-border hover:bg-muted"}`}>{seconds / 60} min</button>)}
+              className={`rounded-lg border px-2 py-2.5 text-sm font-semibold ${game.timeLimit === seconds ? "border-primary bg-primary/10 text-primary" : "border-border hover:bg-muted"}`}>{seconds / 60} min</button>)}
           </div></div>
           <div><p className="mb-1.5 text-xs font-medium text-muted-foreground">Difficulty</p><div className="grid grid-cols-3 gap-2">
             {(Object.keys(BOMB_DIFFICULTIES) as BombDifficulty[]).map((level) => <button key={level} type="button" aria-pressed={game.difficulty === level} disabled={!connected} onClick={() => multiplayer.updateSettings({ difficulty: level })}

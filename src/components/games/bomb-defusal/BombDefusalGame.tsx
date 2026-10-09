@@ -374,7 +374,7 @@ export function BombDefusalGame(props: BombDefusalGameProps) {
       {/* Expert desk: the manual, never the device */}
       {!isOperator && (live || status === "handoff") && (
         <div className="absolute inset-0 flex flex-col items-center gap-3 px-3 pb-3 pt-[68px] sm:pl-[232px] xl:pl-3">
-          <div className={cn(GLASS, "flex w-full max-w-3xl flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3")}>
+          <div className={cn(GLASS, "flex w-full max-w-3xl flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3 [@media(max-height:500px)]:hidden")}>
             <div className="rounded-lg border border-white/10 bg-[#120404] px-3 py-1">
               <span role="timer" aria-label="Time remaining" className={cn(RED_DIGITS, "text-3xl sm:text-4xl", mood === "defused" && "text-emerald-300")}>{display}</span>
             </div>
@@ -399,7 +399,7 @@ export function BombDefusalGame(props: BombDefusalGameProps) {
               ? <div className={cn(GLASS, "grid h-full place-items-center p-6 text-center text-sm text-white/60")}>The manual opens when the clock starts.</div>
               : <ManualBinder key={game.missionId} modules={game.modules.filter((module) => module.expertId === playerId)} strikes={game.strikes} className="h-full" />}
           </div>
-          <p className="text-center text-[11px] text-white/45">Describe nothing. Ask questions. You can’t see the device — {operator?.name ?? "the operator"} can.</p>
+          <p className="text-center text-[11px] text-white/45 [@media(max-height:500px)]:hidden">Describe nothing. Ask questions. You can’t see the device — {operator?.name ?? "the operator"} can.</p>
         </div>
       )}
 
@@ -413,7 +413,7 @@ export function BombDefusalGame(props: BombDefusalGameProps) {
                 <div className="flex flex-wrap justify-center gap-1.5">
                   {game.modules.map((module, index) => (
                     <button key={module.kind} type="button" onClick={() => setFocus(index)}
-                      className={cn("flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
+                      className={cn("flex min-h-10 items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
                         module.solved ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-200" : "border-white/15 bg-white/5 hover:bg-white/10")}>
                       {module.solved ? <Check className="size-3.5" /> : <span className="size-2 rounded-full bg-red-500" />}
                       {MODULE_LABELS[module.kind]}

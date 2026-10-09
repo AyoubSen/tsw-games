@@ -133,7 +133,7 @@ export function ManualBinder({ modules, strikes, className }: { modules: PublicB
         </article>
       </div>
       {pages.length > 1 && (
-        <div role="tablist" aria-label="Manual sections" className="flex flex-col gap-1.5 pt-6">
+        <div role="tablist" aria-label="Manual sections" className="flex min-h-0 flex-col gap-1.5 overflow-y-auto pt-6">
           {pages.map((module, index) => {
             const selected = module === active
             return (
@@ -144,7 +144,7 @@ export function ManualBinder({ modules, strikes, className }: { modules: PublicB
                 aria-selected={selected}
                 onClick={() => setTab(index)}
                 className={cn(
-                  "-ml-1 rounded-r-lg py-3 pl-2 pr-1.5 text-xs font-black text-[#1c1a17] shadow-md transition [writing-mode:vertical-rl] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white",
+                  "-ml-1 min-w-10 shrink-0 rounded-r-lg py-3 pl-2 pr-1.5 text-xs font-black text-[#1c1a17] shadow-md transition [writing-mode:vertical-rl] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white",
                   selected ? "translate-x-0.5 brightness-110" : "opacity-75 hover:opacity-100",
                 )}
                 style={{ background: TAB_TINTS[modules.indexOf(module) % TAB_TINTS.length] }}

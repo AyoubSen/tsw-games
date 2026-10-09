@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
-import { Loader2, Timer, Zap } from "lucide-react";
+import { Timer, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge";
 import { PressureButtonGame } from "@/components/games/pressure-button/PressureButtonGame";

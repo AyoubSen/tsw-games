@@ -1013,9 +1013,10 @@ class LudoParty implements Party.Server {
             { length: LUDO_SEATS },
             () => null,
           )
+          const quick = this.state.quick
           seated.forEach((player, index) => {
             player.seat = index
-            player.tokens = freshTokens(this.state.quick)
+            player.tokens = freshTokens(quick)
             seatOrder[index] = player.id
           })
           this.state.seatOrder = seatOrder

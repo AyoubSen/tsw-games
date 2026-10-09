@@ -159,7 +159,7 @@ export function HotTakeGame(props: HotTakeGameProps) {
       <Vote className="size-4 shrink-0 text-fuchsia-200" />
       <div className="min-w-0 flex-1 leading-tight">
         <p className="truncate text-sm font-semibold">
-          {over ? "Final scores" : `Round ${state.roundNumber} / ${state.settings.rounds}`}
+          {over ? "Final scores" : <><span className="max-sm:hidden">Round </span>{state.roundNumber} / {state.settings.rounds}</>}
         </p>
         <p className="truncate text-[11px] text-white/60">
           {voting ? `${state.submittedPlayerIds.length} / ${players.length} locked in` : stage ? STAGE_LINE[stage] : over ? `${history.length} takes argued` : ""}

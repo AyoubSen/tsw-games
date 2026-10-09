@@ -92,6 +92,9 @@ export function HotTakeGame(props: HotTakeGameProps) {
   const elapsed = useBeat(reveal ? `${reveal.seq}` : null, beatLen, stage === "fly" ? 90 : stage === "spotlight" ? 250 : 0)
   const departed = (position: HotTakePosition) =>
     landed && (stage !== "fly" || elapsed >= LIFT_MS + order.indexOf(position) * REVEAL_MS.flyStep)
+  /** A spot's count shows once its avatars have touched down. */
+  const arrived = (position: HotTakePosition) =>
+    landed && (stage !== "fly" || elapsed >= LIFT_MS + order.indexOf(position) * REVEAL_MS.flyStep + FLIGHT_MS)
 
   const scoring = state.voteGroups.some((group) => group.points > 0)
   const loners = state.voteGroups.some((group) => group.playerIds.length === 1)
@@ -219,7 +222,7 @@ export function HotTakeGame(props: HotTakeGameProps) {
             interactive={canVote}
             choice={canVote ? picks.choice : null}
             myPick={myPick}
-            marks={landed ? marksOf(state.voteGroups, order) : null}
+            marks={landed ? marksOf(state.voteGroups.filter((group) => arrived(group.position)), order) : null}
             lit={lit}
             onChoose={(position) => setPickState({ ...picks, choice: position })}
           />

@@ -2,6 +2,7 @@ import {
 	Binary,
 	Bomb,
 	Brain,
+	Calculator,
 	CircleDot,
 	Dices,
 	Flag,
@@ -15,7 +16,6 @@ import {
 	Palette,
 	Shuffle,
 	Sparkles,
-	Swords,
 	Vote,
 	Zap,
 } from "lucide-react";
@@ -124,6 +124,26 @@ export interface PlannedGameCatalogEntry extends GameCatalogBaseEntry {
 export type GameCatalogEntry = LiveGameCatalogEntry | PlannedGameCatalogEntry;
 
 export const liveGames: LiveGameCatalogEntry[] = [
+	{
+		id: "quick-math",
+		title: "Quick Math",
+		description:
+			"Rapid-fire arithmetic where the fastest correct answer steals the point. Sprint solo or race friends as the problems get harder.",
+		icon: <Calculator className="w-10 h-10" />,
+		path: "/games/quick-math",
+		players: "1-8 players",
+		minPlayers: 1,
+		maxPlayers: 8,
+		idealPlayers: [1, 6],
+		durationMinutes: [5, 15],
+		complexity: "light",
+		moods: ["brainy", "competitive"],
+		tags: ["solo", "multiplayer", "brainy", "quick"],
+		color: "from-lime-500 to-green-500",
+		status: "live",
+		category: "arcade",
+		isNew: true,
+	},
 	{
 		id: "bomb-defusal",
 		title: "Bomb Defusal",
@@ -540,44 +560,7 @@ export const liveGames: LiveGameCatalogEntry[] = [
 	},
 ];
 
-export const plannedGames: PlannedGameCatalogEntry[] = [
-	{
-		id: "quick-math",
-		title: "Quick Math",
-		description:
-			"Rapid-fire arithmetic where the fastest correct answer steals the point.",
-		icon: <Swords className="w-10 h-10" />,
-		players: "1-8 players",
-		minPlayers: 1,
-		maxPlayers: 8,
-		idealPlayers: [1, 6],
-		durationMinutes: [5, 15],
-		complexity: "light",
-		moods: ["brainy", "competitive"],
-		tags: ["solo", "multiplayer", "brainy", "quick"],
-		color: "from-lime-500 to-green-500",
-		status: "planned",
-		category: "arcade",
-	},
-	{
-		id: "would-you-rather",
-		title: "Would You Rather",
-		description:
-			"Vote on impossible choices and immediately see who matched the group.",
-		icon: <Vote className="w-10 h-10" />,
-		players: "3-20 players",
-		minPlayers: 3,
-		maxPlayers: 20,
-		idealPlayers: [4, 12],
-		durationMinutes: [10, 25],
-		complexity: "light",
-		moods: ["laughs", "spicy", "chill"],
-		tags: ["multiplayer", "fun", "hot", "drinking", "chill"],
-		color: "from-zinc-500 to-slate-600",
-		status: "planned",
-		category: "social",
-	},
-];
+export const plannedGames: PlannedGameCatalogEntry[] = [];
 
 /** Display name for a stats/history game id. */
 export const gameTitle = (game: string) =>

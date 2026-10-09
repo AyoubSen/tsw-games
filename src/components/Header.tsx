@@ -202,9 +202,11 @@ export default function Header() {
 									{liveGames.length} live now
 								</p>
 							</div>
-							<div className="rounded-full bg-primary/12 px-3 py-1 text-xs font-semibold text-primary">
-								{plannedGames.length} next
-							</div>
+							{plannedGames.length > 0 && (
+								<div className="rounded-full bg-primary/12 px-3 py-1 text-xs font-semibold text-primary">
+									{plannedGames.length} next
+								</div>
+							)}
 						</div>
 						<p className="mt-3 text-xs leading-5 text-muted-foreground">
 							{categorySummary}
@@ -245,33 +247,37 @@ export default function Header() {
 						</Link>
 					))}
 
-					<div className="mt-5 mb-2 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-						Coming Next
-					</div>
-
-					<div className="space-y-2 px-1">
-						{plannedGames.slice(0, 4).map((game) => (
-							<div
-								key={game.id}
-								className="flex items-start gap-3 rounded-xl border border-dashed border-border/80 px-3 py-3"
-							>
-								<span
-									className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm ${game.color}`}
-								>
-									<span className="scale-75">{game.icon}</span>
-								</span>
-								<div className="min-w-0">
-									<div className="flex items-center gap-2">
-										<span className="text-sm font-medium">{game.title}</span>
-										<Clock3 className="h-3.5 w-3.5 text-muted-foreground" />
-									</div>
-									<p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-										{game.description}
-									</p>
-								</div>
+					{plannedGames.length > 0 && (
+						<>
+							<div className="mt-5 mb-2 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+								Coming Next
 							</div>
-						))}
-					</div>
+
+							<div className="space-y-2 px-1">
+								{plannedGames.slice(0, 4).map((game) => (
+									<div
+										key={game.id}
+										className="flex items-start gap-3 rounded-xl border border-dashed border-border/80 px-3 py-3"
+									>
+										<span
+											className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm ${game.color}`}
+										>
+											<span className="scale-75">{game.icon}</span>
+										</span>
+										<div className="min-w-0">
+											<div className="flex items-center gap-2">
+												<span className="text-sm font-medium">{game.title}</span>
+												<Clock3 className="h-3.5 w-3.5 text-muted-foreground" />
+											</div>
+											<p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+												{game.description}
+											</p>
+										</div>
+									</div>
+								))}
+							</div>
+						</>
+					)}
 
 					{pathname === "/" && (
 						<div className="mx-3 mt-5 rounded-2xl bg-primary px-4 py-4 text-primary-foreground">

@@ -499,7 +499,7 @@ function HomePage() {
 				</div>
 
 				{/* Coming next */}
-				{!isFiltering && (
+				{!isFiltering && plannedGames.length > 0 && (
 					<section className="mt-14 border-t border-border/60 pt-8">
 						<h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
 							Coming next

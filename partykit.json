@@ -28,7 +28,8 @@
     "timelinechaos": "party/timeline-chaos.ts",
     "ludo": "party/ludo.ts",
     "pool": "party/pool.ts",
-    "uno": "party/uno.ts"
+    "uno": "party/uno.ts",
+    "quickmath": "party/quick-math.ts"
   },
   "compatibilityDate": "2024-01-01"
 }

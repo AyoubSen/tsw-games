@@ -21,6 +21,7 @@ import { Route as GamesTriviaQuizRouteImport } from './routes/games/trivia-quiz'
 import { Route as GamesTimelineChaosRouteImport } from './routes/games/timeline-chaos'
 import { Route as GamesSyncUpRouteImport } from './routes/games/sync-up'
 import { Route as GamesSudokuRouteImport } from './routes/games/sudoku'
+import { Route as GamesQuickMathRouteImport } from './routes/games/quick-math'
 import { Route as GamesPressureButtonRouteImport } from './routes/games/pressure-button'
 import { Route as GamesPoolRouteImport } from './routes/games/pool'
 import { Route as GamesPokerRouteImport } from './routes/games/poker'
@@ -92,6 +93,11 @@ const GamesSyncUpRoute = GamesSyncUpRouteImport.update({
 const GamesSudokuRoute = GamesSudokuRouteImport.update({
   id: '/games/sudoku',
   path: '/games/sudoku',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GamesQuickMathRoute = GamesQuickMathRouteImport.update({
+  id: '/games/quick-math',
+  path: '/games/quick-math',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GamesPressureButtonRoute = GamesPressureButtonRouteImport.update({
@@ -171,6 +177,7 @@ export interface FileRoutesByFullPath {
   '/games/poker': typeof GamesPokerRoute
   '/games/pool': typeof GamesPoolRoute
   '/games/pressure-button': typeof GamesPressureButtonRoute
+  '/games/quick-math': typeof GamesQuickMathRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/sync-up': typeof GamesSyncUpRoute
   '/games/timeline-chaos': typeof GamesTimelineChaosRoute
@@ -197,6 +204,7 @@ export interface FileRoutesByTo {
   '/games/poker': typeof GamesPokerRoute
   '/games/pool': typeof GamesPoolRoute
   '/games/pressure-button': typeof GamesPressureButtonRoute
+  '/games/quick-math': typeof GamesQuickMathRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/sync-up': typeof GamesSyncUpRoute
   '/games/timeline-chaos': typeof GamesTimelineChaosRoute
@@ -224,6 +232,7 @@ export interface FileRoutesById {
   '/games/poker': typeof GamesPokerRoute
   '/games/pool': typeof GamesPoolRoute
   '/games/pressure-button': typeof GamesPressureButtonRoute
+  '/games/quick-math': typeof GamesQuickMathRoute
   '/games/sudoku': typeof GamesSudokuRoute
   '/games/sync-up': typeof GamesSyncUpRoute
   '/games/timeline-chaos': typeof GamesTimelineChaosRoute
@@ -252,6 +261,7 @@ export interface FileRouteTypes {
     | '/games/poker'
     | '/games/pool'
     | '/games/pressure-button'
+    | '/games/quick-math'
     | '/games/sudoku'
     | '/games/sync-up'
     | '/games/timeline-chaos'
@@ -278,6 +288,7 @@ export interface FileRouteTypes {
     | '/games/poker'
     | '/games/pool'
     | '/games/pressure-button'
+    | '/games/quick-math'
     | '/games/sudoku'
     | '/games/sync-up'
     | '/games/timeline-chaos'
@@ -304,6 +315,7 @@ export interface FileRouteTypes {
     | '/games/poker'
     | '/games/pool'
     | '/games/pressure-button'
+    | '/games/quick-math'
     | '/games/sudoku'
     | '/games/sync-up'
     | '/games/timeline-chaos'
@@ -331,6 +343,7 @@ export interface RootRouteChildren {
   GamesPokerRoute: typeof GamesPokerRoute
   GamesPoolRoute: typeof GamesPoolRoute
   GamesPressureButtonRoute: typeof GamesPressureButtonRoute
+  GamesQuickMathRoute: typeof GamesQuickMathRoute
   GamesSudokuRoute: typeof GamesSudokuRoute
   GamesSyncUpRoute: typeof GamesSyncUpRoute
   GamesTimelineChaosRoute: typeof GamesTimelineChaosRoute
@@ -426,6 +439,13 @@ declare module '@tanstack/react-router' {
       path: '/games/sudoku'
       fullPath: '/games/sudoku'
       preLoaderRoute: typeof GamesSudokuRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/games/quick-math': {
+      id: '/games/quick-math'
+      path: '/games/quick-math'
+      fullPath: '/games/quick-math'
+      preLoaderRoute: typeof GamesQuickMathRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/games/pressure-button': {
@@ -531,6 +551,7 @@ const rootRouteChildren: RootRouteChildren = {
   GamesPokerRoute: GamesPokerRoute,
   GamesPoolRoute: GamesPoolRoute,
   GamesPressureButtonRoute: GamesPressureButtonRoute,
+  GamesQuickMathRoute: GamesQuickMathRoute,
   GamesSudokuRoute: GamesSudokuRoute,
   GamesSyncUpRoute: GamesSyncUpRoute,
   GamesTimelineChaosRoute: GamesTimelineChaosRoute,

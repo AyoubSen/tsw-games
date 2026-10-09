@@ -13,6 +13,7 @@ export const GAME_NIGHT_GAMES = [
 	{ id: "typerace", title: "Type Race", path: "/games/typerace", party: "typerace", minPlayers: 2, maxPlayers: 8 },
 	{ id: "drawing", title: "Drawing", path: "/games/drawing", party: "drawing", minPlayers: 2, maxPlayers: 8 },
 	{ id: "word-scramble", title: "Word Scramble", path: "/games/word-scramble", party: "wordscramble", minPlayers: 2, maxPlayers: 8 },
+	{ id: "quick-math", title: "Quick Math", path: "/games/quick-math", party: "quickmath", minPlayers: 2, maxPlayers: 8 },
 	{ id: "sync-up", title: "Sync Up", path: "/games/sync-up", party: "syncup", minPlayers: 2, maxPlayers: 12 },
 	{ id: "hot-take-arena", title: "Hot Take Arena", path: "/games/hot-take-arena", party: "hottakearena", minPlayers: 2, maxPlayers: 12 },
 	{ id: "pressure-button", title: "Pressure Button", path: "/games/pressure-button", party: "pressurebutton", minPlayers: 2, maxPlayers: 10 },

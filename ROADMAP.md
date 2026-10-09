@@ -15,7 +15,7 @@ check this file so useful ideas are not lost, while the user's current request a
 - [ ] **Daily Challenge** - Shared daily word everyone competes on (leaderboard by attempts)
 - [ ] **Timed Mode** - Add a countdown timer per guess or total game time
 - [ ] **Custom Words** - Let the host pick a secret word for friends to guess
-- [ ] **Stats Tracking** - Win streaks, guess distribution chart, games played
+- [x] **Stats Tracking** - Win streaks, guess distribution chart, games played (account profiles)
 - [x] **Share Results** - Generate the classic emoji grid to copy/share
 - [x] **Rematch Button** - Quick restart with same players after game ends
 - [ ] **Themed Word Packs** - Optional categories such as movies, animals, or custom room lists
@@ -32,7 +32,7 @@ check this file so useful ideas are not lost, while the user's current request a
 - [x] **Telephone Mode** - Alternate private prompts, drawings, and descriptions, followed by a synchronized reveal
 - [x] **Reveal Reactions** - Let players react live as Telephone entries are revealed
 - [x] **Landscape Canvas and Undo** - Wider drawing surface with synchronized Classic undo
-- [ ] **Draw & Vote** - Everyone draws the same prompt, then anonymously votes for a favorite
+- [x] **Draw & Vote** - Everyone draws the same prompt, then anonymously votes for a favorite
 - [ ] **Drawing Replay** - Animate submitted drawings stroke-by-stroke during reveals
 - [ ] **Custom Prompt Packs** - Host-created themes, room prompts, and inside-joke packs
 - [ ] **Team Drawing** - Team-based rounds with shared scoring and rotating artists
@@ -50,21 +50,22 @@ check this file so useful ideas are not lost, while the user's current request a
 - [ ] **Difficulty Levels** - Short/Medium/Long text options
 - [ ] **Countdown Timer** - Optional time limit mode
 - [ ] **Mistake Highlighting** - Show where errors occurred after finishing
-- [ ] **Practice Stats** - Track personal best WPM over time
+- [x] **Practice Stats** - Track personal best WPM over time (account profiles)
 - [ ] **Custom Text** - Let host paste custom text to race on
 
 ### Cross-Game Improvements
 
 - [ ] **In-Game Chat** - Simple message bubbles during lobby/game
-- [ ] **Sound Effects** - Key clicks, win/lose sounds, countdown beeps
-- [ ] **Spectator Mode** - Watch ongoing games without participating
+- [x] **Sound Effects** - Key clicks, win/lose sounds, countdown beeps
+- [x] **Spectator Mode** - Watch ongoing games without participating (Codenames, Uno, Poker, Parcheesi, Pool)
 - [ ] **Kick Player** - Let host remove disruptive players
 - [x] **Auto-Reconnect** - Handle network drops gracefully
-- [ ] **Game History** - View past games and results
-- [ ] **Game Night Rooms** - Keep one room code while switching games and carrying a session scoreboard
+- [x] **Game History** - View past games and results (recent games on the profile page)
+- [x] **Game Night Rooms** - Keep one room code while switching games and carrying a session scoreboard
 - [ ] **Match Series** - Reusable best-of-three or best-of-five scoring across supported games
 - [x] **Invite Links** - Open the correct game and room directly from a shared URL
 - [ ] **Daily Challenges** - Shared seeded challenges with local streaks and optional friend rankings
+- [x] **Accounts & Profiles** - Clerk sign-in with Convex-backed profiles, verified results, recent games, and per-game stats
 - [ ] **Accessibility Options** - Colorblind palettes, stronger contrast, reduced motion, and optional vibration feedback
 
 ---
@@ -74,20 +75,27 @@ check this file so useful ideas are not lost, while the user's current request a
 ### High Priority
 
 - [x] **Drawing Game (Pictionary)** - One player draws, others guess the word. Canvas-based drawing with real-time sync.
-- [ ] **Trivia Quiz** - Use template-driven rounds instead of a giant fixed question bank. Best variants: ranking, image reveal, category sort, fake-vs-real.
+- [x] **Trivia Quiz** - Use template-driven rounds instead of a giant fixed question bank. Best variants: ranking, image reveal, category sort, fake-vs-real.
 
 ### Medium Priority
 
 - [x] **Word Scramble** - MVP implemented with anagram rounds built from the local Wordle answer list, so replayability comes from letter combinations instead of hardcoded prompts.
-- [ ] **Quick Math** - Rapid-fire arithmetic problems. First to answer correctly gets points.
-- [ ] **Memory Match** - Start with icons, colors, shapes, or symbols instead of external image packs. Can evolve into race mode or power-up mode.
+- [x] **Quick Math** - Rapid-fire arithmetic problems. First to answer correctly gets points.
+- [x] **Memory Match** - Start with icons, colors, shapes, or symbols instead of external image packs. Can evolve into race mode or power-up mode.
 
 ### Low Priority / Fun Ideas
 
 - [x] **Word Chain / Shiritori** - Each player says a word starting with the last letter of the previous word.
-- [ ] **Code Breaker (Mastermind)** - Guess the secret color/shape/emoji sequence and use feedback about exact vs misplaced slots.
-- [ ] **Would You Rather / Voting** - Build around reusable prompt templates and player-submitted prompts, not a fixed deck.
+- [x] **Code Breaker (Mastermind)** - Guess the secret color/shape/emoji sequence and use feedback about exact vs misplaced slots.
 - [ ] **Emoji Puzzle** - Best only if backed by player-created decks or category packs; otherwise content runs dry too quickly.
+
+### Board, Card & Table Games
+
+- [x] **Uno** - Multiplayer Uno with bots and spectators.
+- [x] **Texas Hold'em Poker** - Multiplayer no-limit poker with bots and spectators.
+- [x] **Parcheesi** - 3D Parcheesi/Ludo board with bots and spectators.
+- [x] **Pool** - 8-ball with a deterministic shared physics sim and server-paced shots.
+- [x] **Guess the Country** - Geography guessing game.
 
 ### Social Deduction / Party Games
 
@@ -97,20 +105,33 @@ check this file so useful ideas are not lost, while the user's current request a
 ### Interaction-First Ideas
 
 - [ ] **Trust Fall** - Players submit true and fake statements, and the room votes on which ones are believable.
-- [ ] **Hot Take Arena** - Prompt templates plus group voting. The fun comes from defending takes, not from storing hundreds of prompts.
-- [ ] **Sync Up** - Everyone answers privately and scores by matching other players without coordinating.
-- [ ] **Pressure Button** - Answer, pass, or pressure another player into answering under risk.
+- [x] **Hot Take Arena** - Prompt templates plus group voting. The fun comes from defending takes, not from storing hundreds of prompts.
+- [x] **Sync Up** - Everyone answers privately and scores by matching other players without coordinating.
+- [x] **Pressure Button** - Answer, pass, or pressure another player into answering under risk.
 - [x] **Timeline Chaos** - Order real events from oldest to newest in solo or server-authoritative multiplayer rounds.
 - [ ] **One Mic** - Collaborative story building where each player only sees the previous line or two.
 - [ ] **Tier List Battle** - Players drag items into a shared tier board and vote on the final arrangement.
-- [ ] **Bomb Defusal** - One player sees clues while another manipulates wires, symbols, switches, or sequences.
+- [x] **Bomb Defusal** - One player sees clues while another manipulates wires, symbols, switches, or sequences.
 - [ ] **Shape Builder** - Players drag, rotate, and place shapes to recreate a hidden target arrangement.
 - [ ] **Cluster Up** - Drag cards into groups that match a hidden rule, then let others infer the rule.
+
+### New Game Ideas
+
+- [ ] **Liar's Dice** - Hidden dice cups and escalating bids; call a bluff or raise.
+- [ ] **Artillery** - Turn-based angle-and-power shots across destructible terrain (Worms/Scorched Earth style).
+- [ ] **Mini Golf** - Physics putting courses played in turns or simultaneously.
+- [ ] **Imposter** - Everyone gets the same secret word except one player, who must blend in through clues.
+- [ ] **Fake Facts** - Players write convincing fake answers to real questions, then vote for the truth.
+- [ ] **The Mind** - Co-op card game: play numbers in ascending order without talking.
+- [ ] **Storage Wars** - Bid on mystery storage units from partial glimpses, then reveal what's inside.
+- [ ] **Light Cycles** - Real-time Tron trails; last rider standing wins.
+- [ ] **Simultaneous Conquest** - Everyone plans territory moves secretly, then all orders resolve at once.
+- [ ] **Jenga 3D** - Take turns pulling and stacking blocks on a physics tower.
 
 ### Design Notes
 
 - Prefer games with replayability from player input, combinations, procedural generation, voting, dragging, or hidden information instead of giant hardcoded content banks.
-- `Trivia`, `Would You Rather`, `Hot Take Arena`, and `Sync Up` should be driven by templates, room-generated content, or mixed system prompts.
+- `Trivia`, `Hot Take Arena`, and `Sync Up` should be driven by templates, room-generated content, or mixed system prompts.
 - `Memory Match` should start with generated symbols or icons and not depend on external image packs.
 - Shared manipulation games are a strong fit for this app: drag-to-sort, place-and-rotate, cooperative assembly, sabotage, and hidden-role board interaction all map well to the existing browser multiplayer setup.
 
@@ -118,7 +139,7 @@ check this file so useful ideas are not lost, while the user's current request a
 
 ## Technical Debt & Infrastructure
 
-- [ ] Add error boundaries and better error handling
+- [x] Add error boundaries and better error handling
 - [x] Implement auto-reconnect for WebSocket drops
 - [ ] Add rate limiting for room creation
 - [ ] Room cleanup for old/empty games
@@ -143,3 +164,10 @@ _Move items here when done_
 - [x] Word Chain - Multiplayer word chaining with casual/hardcore modes and hearts system
 - [x] Word Scramble - Single-player anagram MVP using the local Wordle answer list
 - [x] Cross-game auto-reconnect with reload recovery and preserved player state
+- [x] Trivia Quiz, Quick Math, Memory Match, Code Breaker, Guess the Country, Timeline Chaos
+- [x] Hot Take Arena, Sync Up, Pressure Button, Bomb Defusal
+- [x] Uno, Texas Hold'em, Parcheesi, Pool, Codenames, Mafia, Sudoku
+- [x] Drawing - Draw & Vote mode
+- [x] Game Night rooms with a shared session scoreboard
+- [x] Spectators for table games
+- [x] Accounts and profiles (Clerk + Convex) with per-game stats

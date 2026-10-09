@@ -781,11 +781,11 @@ function LudoPage() {
         </div>
 
         {/* Top bar */}
-        <div className="pointer-events-none absolute inset-x-3 top-3 flex items-center gap-2 lg:inset-x-6 lg:top-5">
+        <div className="pointer-events-none absolute inset-x-3 top-3 flex items-center gap-1.5 sm:gap-2 lg:inset-x-6 lg:top-5">
           <button
             type="button"
             onClick={leaveMultiplayer}
-            className={`${glass} flex h-11 shrink-0 items-center gap-1.5 px-3 text-sm font-semibold transition hover:bg-black/60`}
+            className={`${glass} flex h-11 w-10 shrink-0 items-center justify-center gap-1.5 text-sm font-semibold transition hover:bg-black/60 sm:w-auto sm:px-3`}
           >
             <ArrowLeft className="h-4 w-4" />
             <span className="hidden sm:inline">Leave</span>
@@ -798,7 +798,7 @@ function LudoPage() {
             </p>
           </div>
           <div
-            className={`${glass} flex h-11 min-w-0 flex-1 items-center gap-3 px-4 transition-colors duration-500 lg:absolute lg:left-1/2 lg:min-w-[340px] lg:max-w-[560px] lg:flex-none lg:-translate-x-1/2 ${
+            className={`${glass} flex h-11 min-w-0 flex-1 items-center gap-2 px-3 transition-colors duration-500 sm:gap-3 sm:px-4 lg:absolute lg:left-1/2 lg:min-w-[340px] lg:max-w-[560px] lg:flex-none lg:-translate-x-1/2 ${
               mustChoose ? "border-amber-300/70 bg-amber-500/25" : ""
             }`}
           >
@@ -811,7 +811,7 @@ function LudoPage() {
                 style={{ background: turnColor, boxShadow: `0 0 14px ${turnColor}` }}
               />
             )}
-            <p className="min-w-0 flex-1 truncate text-sm font-semibold">
+            <p className="min-w-0 flex-1 truncate text-sm font-semibold max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:leading-tight">
               {statusText}
             </p>
             {showTimer && (
@@ -821,15 +821,16 @@ function LudoPage() {
             )}
           </div>
           {/* Above the finish screen, where the host seats spectators. */}
-          <div className="relative z-30 ml-auto flex shrink-0 items-start gap-2">
+          <div className="relative z-30 ml-auto flex shrink-0 items-start gap-1.5 sm:gap-2">
             {watching && <WatchingMenu {...watching} />}
-            <SoundToggle />
+            <SoundToggle className="max-sm:w-10" />
             {!spectating && (
               <ReactionPicker
                 onReact={multiplayer.react}
                 disabled={multiplayer.connectionStatus !== "connected"}
                 side="bottom"
                 align="end"
+                className="max-sm:w-10"
               />
             )}
           </div>
@@ -844,7 +845,7 @@ function LudoPage() {
             return (
               <div
                 key={player.id}
-                className={`${glass} relative flex h-12 shrink-0 items-center gap-2 px-2.5 transition-all ${
+                className={`${glass} pointer-events-auto relative flex h-12 shrink-0 items-center gap-2 px-2.5 transition-all ${
                   player.connected === false ? "opacity-60" : ""
                 }`}
                 style={isTurn ? { borderColor: color, boxShadow: `0 0 18px ${color}66` } : undefined}

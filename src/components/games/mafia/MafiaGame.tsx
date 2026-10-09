@@ -649,7 +649,7 @@ function Seat(props: {
         )}
         style={{ width: avatar, height: avatar }}
       >
-        {revealKey && <span key={revealKey} className="mafia-spot absolute -inset-1 rounded-full" />}
+        {revealKey && <span key={`spot-${revealKey}`} className="mafia-spot absolute -inset-1 rounded-full" />}
         <span
           key={revealKey ?? "still"}
           className={cn("relative grid size-full place-items-center rounded-full border-2 font-black transition-[opacity,filter,box-shadow] duration-500", revealKey && "mafia-die", props.dim && alive && "opacity-80")}

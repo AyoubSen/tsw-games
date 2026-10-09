@@ -136,7 +136,7 @@ export function MultiplayerSetupCard({
 					<ProfileNameChip name={profile.displayName} color={profile.color} />
 				) : (
 					<Input
-						className="h-11 sm:h-9"
+						className="h-11 sm:pointer-fine:h-9"
 						value={playerName}
 						onChange={(event) => onPlayerNameChange(event.target.value)}
 						placeholder="Your name"
@@ -145,7 +145,7 @@ export function MultiplayerSetupCard({
 				)}
 				<div className="grid gap-3 sm:grid-cols-[1fr_auto]">
 					<Input
-						className="h-11 sm:h-9"
+						className="h-11 sm:pointer-fine:h-9"
 						value={roomCode}
 						onChange={(event) =>
 							onRoomCodeChange(
@@ -158,12 +158,12 @@ export function MultiplayerSetupCard({
 						placeholder="Room code"
 						maxLength={6}
 					/>
-					<Button className="h-11 sm:h-9" variant="outline" onClick={onJoin}>
+					<Button className="h-11 sm:pointer-fine:h-9" variant="outline" onClick={onJoin}>
 						Join Room
 					</Button>
 				</div>
 				{children}
-				<Button className="h-11 w-full sm:h-9" onClick={onCreate}>
+				<Button className="h-11 w-full sm:pointer-fine:h-9" onClick={onCreate}>
 					{createLabel}
 				</Button>
 				{message && (
@@ -253,7 +253,7 @@ export function RoomCodeCard({ roomCode, copied, onCopy }: RoomCodeCardProps) {
 				</div>
 				<Button
 					type="button"
-					className="size-11 sm:h-8 sm:w-auto"
+					className="size-11 sm:pointer-fine:h-8 sm:pointer-fine:w-auto"
 					variant="outline"
 					size="sm"
 					onClick={onCopy}
@@ -334,14 +334,14 @@ export function MultiplayerLobby({
 							onCopy={onCopyRoomCode}
 						/>
 						<Button
-							className="h-11 w-full sm:h-9"
+							className="h-11 w-full sm:pointer-fine:h-9"
 							onClick={onStart}
 							disabled={!isHost || !canStart}
 						>
 							<Play className="mr-2 h-4 w-4" />
 							{startLabel}
 						</Button>
-						<Button className="h-11 w-full sm:h-9" variant="outline" onClick={onLeave}>
+						<Button className="h-11 w-full sm:pointer-fine:h-9" variant="outline" onClick={onLeave}>
 							Leave Lobby
 						</Button>
 						{message && (

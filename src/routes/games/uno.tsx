@@ -108,14 +108,14 @@ function UnoPage() {
     <div className="rounded-2xl border bg-red-500/5 p-4 text-sm">
       <div className="flex items-center justify-between gap-2">
         <p className="font-bold">Bots</p>
-        <Button size="sm" variant="outline" className="h-10 sm:h-8" disabled={!multiplayer.isHost || players.length >= multiplayer.gameState.maxPlayers} onClick={multiplayer.addBot}><Bot className="mr-1 h-3.5 w-3.5" />Add bot</Button>
+        <Button size="sm" variant="outline" className="h-10 sm:pointer-fine:h-8" disabled={!multiplayer.isHost || players.length >= multiplayer.gameState.maxPlayers} onClick={multiplayer.addBot}><Bot className="mr-1 h-3.5 w-3.5" />Add bot</Button>
       </div>
       {bots.length === 0 ? <p className="mt-2 text-muted-foreground">Fill empty seats with bots to start without a full table.</p> : <ul className="mt-2 space-y-1">
         {bots.map((bot) => <li key={bot.id} className="flex items-center justify-between gap-2">
           <span className="flex items-center gap-2"><Bot className="h-3.5 w-3.5 text-muted-foreground" />{bot.name}</span>
           <span className="flex items-center gap-1">
             <BotLevelPicker name={bot.name} level={bot.botLevel} disabled={!multiplayer.isHost} onChange={(level) => multiplayer.setBotLevel(bot.id, level)} />
-            {multiplayer.isHost && <Button size="sm" variant="ghost" className="h-10 sm:h-8" onClick={() => multiplayer.removePlayer(bot.id)}>Remove</Button>}
+            {multiplayer.isHost && <Button size="sm" variant="ghost" className="h-10 sm:pointer-fine:h-8" onClick={() => multiplayer.removePlayer(bot.id)}>Remove</Button>}
           </span>
         </li>)}
       </ul>}

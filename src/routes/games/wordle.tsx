@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { GameRouteError } from '@/components/GameErrorBoundary'
 import { useMultiplayerSession } from '@/lib/multiplayerSession'
 import { parseInviteSearch } from '@/lib/inviteLinks'
 import { createFileRoute, Link } from '@tanstack/react-router'
@@ -31,6 +32,7 @@ import type { GameMode, RevealMode, SeriesLength } from '../../../party/wordle'
 export const Route = createFileRoute('/games/wordle')({
   validateSearch: parseInviteSearch,
   component: WordlePage,
+  errorComponent: GameRouteError,
 })
 
 type GameView = 'select' | 'single' | 'multiplayer-lobby' | 'multiplayer-game'

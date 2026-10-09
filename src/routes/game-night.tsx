@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { GameRouteError } from "@/components/GameErrorBoundary";
 import { Gamepad2, Trophy, Users, Vote } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GameNightLounge } from "@/components/game-night/GameNightLounge";
@@ -13,6 +14,7 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/game-night")({
 	validateSearch: parseInviteSearch,
 	component: GameNightPage,
+	errorComponent: GameRouteError,
 });
 
 function GameNightPage() {

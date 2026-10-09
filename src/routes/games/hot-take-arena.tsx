@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { GameRouteError } from "@/components/GameErrorBoundary";
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
 import { Timer, Vote } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -24,6 +25,7 @@ import type { HotTakeSettings } from "../../../party/hot-take-arena";
 export const Route = createFileRoute("/games/hot-take-arena")({
 	validateSearch: parseInviteSearch,
 	component: HotTakeArenaPage,
+	errorComponent: GameRouteError,
 });
 
 type HotTakeArenaView = "setup" | "lobby" | "game";

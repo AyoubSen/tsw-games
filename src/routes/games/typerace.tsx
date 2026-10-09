@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { GameRouteError } from "@/components/GameErrorBoundary";
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
 import { RotateCcw, Trophy, User, Users, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -26,6 +27,7 @@ import type { GameMode } from "../../../party/typerace";
 export const Route = createFileRoute("/games/typerace")({
 	validateSearch: parseInviteSearch,
 	component: TypeRacePage,
+	errorComponent: GameRouteError,
 });
 
 type GameView = "select" | "single" | "multiplayer-lobby" | "multiplayer-game";

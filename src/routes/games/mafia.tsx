@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { GameRouteError } from '@/components/GameErrorBoundary'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -14,6 +15,7 @@ import { useMultiplayerMafia, type MafiaSettings } from '@/components/games/mafi
 export const Route = createFileRoute('/games/mafia')({
   validateSearch: parseInviteSearch,
   component: MafiaPage,
+  errorComponent: GameRouteError,
 })
 
 type GameView = 'select' | 'lobby' | 'game'

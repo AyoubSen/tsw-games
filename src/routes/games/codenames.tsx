@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { GameRouteError } from '@/components/GameErrorBoundary'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -18,6 +19,7 @@ import type { Team, PlayerRole } from '../../../party/codenames'
 export const Route = createFileRoute('/games/codenames')({
   validateSearch: parseInviteSearch,
   component: CodenamesPage,
+  errorComponent: GameRouteError,
 })
 
 type GameView = 'select' | 'lobby' | 'team-selection' | 'game'

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { GameRouteError } from '@/components/GameErrorBoundary'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -15,6 +16,7 @@ import { WatchingMenu } from '@/components/multiplayer/Spectators'
 export const Route = createFileRoute('/games/poker')({
   validateSearch: parseInviteSearch,
   component: PokerPage,
+  errorComponent: GameRouteError,
 })
 
 type GameView = 'select' | 'lobby' | 'game'

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { GameRouteError } from "@/components/GameErrorBoundary";
 import { Clock, Crosshair, Palette, Phone, RotateCcw, Swords, Vote } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge";
@@ -29,6 +30,7 @@ import {
 export const Route = createFileRoute("/games/drawing")({
 	validateSearch: parseInviteSearch,
 	component: DrawingPage,
+	errorComponent: GameRouteError,
 });
 
 type GameView = "select" | "multiplayer-lobby" | "multiplayer-game";

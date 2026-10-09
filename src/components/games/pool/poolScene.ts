@@ -1175,14 +1175,20 @@ export function createPoolScene(container: HTMLElement, handlers: PoolSceneHandl
 
   function dispose() {
     renderer.setAnimationLoop(null)
-    resizeObserver.disconnect()
-    renderer.domElement.removeEventListener("pointerdown", handlePointerDown)
-    renderer.domElement.removeEventListener("pointermove", handlePointerMove)
-    renderer.domElement.removeEventListener("pointerup", handlePointerUp)
-    renderer.domElement.removeEventListener("pointercancel", handlePointerUp)
-    for (const item of disposables) item.dispose()
-    renderer.dispose()
-    renderer.domElement.remove()
+    // The GPU side is released even if tearing down the scene graph throws
+    // (e.g. after a crash left it half-built), so a remount doesn't leak a context.
+    try {
+      resizeObserver.disconnect()
+      renderer.domElement.removeEventListener("pointerdown", handlePointerDown)
+      renderer.domElement.removeEventListener("pointermove", handlePointerMove)
+      renderer.domElement.removeEventListener("pointerup", handlePointerUp)
+      renderer.domElement.removeEventListener("pointercancel", handlePointerUp)
+      for (const item of disposables) item.dispose()
+    } finally {
+      renderer.dispose()
+      renderer.forceContextLoss()
+      renderer.domElement.remove()
+    }
   }
 
   return { update, dispose }

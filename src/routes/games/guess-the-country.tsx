@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
+import { GameRouteError } from "@/components/GameErrorBoundary"
 import {
   CheckCircle2,
   Clock3,
@@ -46,6 +47,7 @@ import type {
 export const Route = createFileRoute("/games/guess-the-country")({
   validateSearch: parseInviteSearch,
   component: GuessTheCountryPage,
+  errorComponent: GameRouteError,
 })
 
 type GameView =

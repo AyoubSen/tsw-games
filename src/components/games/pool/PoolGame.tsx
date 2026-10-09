@@ -1,5 +1,6 @@
 import { Bot, Camera, ChevronLeft, ChevronRight, Crosshair, Hand, RotateCcw, ScrollText, Trophy } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
+import { GameErrorBoundary } from "@/components/GameErrorBoundary"
 import { GLASS, GlassButton, PartyTable, SidePanel, TableTopBar, TimerRing, useBeat, useNow, useSoundCue } from "@/components/games/party-shell/shell"
 import { ProfileBadge } from "@/components/multiplayer/ProfileBadge"
 import { ReactionBubble, type ReactionBubbles } from "@/components/multiplayer/Reactions"
@@ -588,7 +589,7 @@ export function PoolGame({ game, playerId, roomLabel, connected, error, clockOff
 
   return (
     <PartyTable tableRef={null} background="radial-gradient(ellipse at 50% 40%, #16201b 0%, #07090a 70%)">
-      <PoolCanvas view={view} handlers={handlers} />
+      <GameErrorBoundary><PoolCanvas view={view} handlers={handlers} /></GameErrorBoundary>
 
       <TableTopBar
         title="Pool"

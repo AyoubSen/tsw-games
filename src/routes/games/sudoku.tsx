@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { GameRouteError } from '@/components/GameErrorBoundary'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft, Clock, RotateCcw, Trophy, Pause, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -17,6 +18,7 @@ import { useSudokuKeyboard } from '@/components/games/sudoku/useSudokuKeyboard'
 export const Route = createFileRoute('/games/sudoku')({
   validateSearch: parseInviteSearch,
   component: SudokuPage,
+  errorComponent: GameRouteError,
 })
 
 type GameView = 'select' | 'single' | 'multiplayer-lobby' | 'multiplayer-game'

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
+import { GameRouteError } from "@/components/GameErrorBoundary"
 import { Bot, Circle, Crosshair, Target } from "lucide-react"
 import { useEffect, useState } from "react"
 import { PoolGame } from "@/components/games/pool/PoolGame"
@@ -14,6 +15,7 @@ import { cn } from "@/lib/utils"
 export const Route = createFileRoute("/games/pool")({
   validateSearch: parseInviteSearch,
   component: PoolPage,
+  errorComponent: GameRouteError,
 })
 
 function PoolPage() {

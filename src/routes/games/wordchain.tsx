@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { GameRouteError } from "@/components/GameErrorBoundary";
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
 import { Clock, Heart, Link2, RotateCcw, Skull } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -24,6 +25,7 @@ import {
 export const Route = createFileRoute("/games/wordchain")({
 	validateSearch: parseInviteSearch,
 	component: WordChainPage,
+	errorComponent: GameRouteError,
 });
 
 type GameView = "select" | "multiplayer-lobby" | "multiplayer-game";

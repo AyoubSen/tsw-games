@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
+import { GameRouteError } from "@/components/GameErrorBoundary"
 import {
   Brain,
   Clock3,
@@ -44,6 +45,7 @@ import type {
 export const Route = createFileRoute("/games/trivia-quiz")({
   validateSearch: parseInviteSearch,
   component: TriviaQuizPage,
+  errorComponent: GameRouteError,
 })
 
 type GameView = "select" | "solo" | "multiplayer-lobby" | "multiplayer-game"

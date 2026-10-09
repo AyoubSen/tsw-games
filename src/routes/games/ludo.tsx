@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
+import { GameErrorBoundary, GameRouteError } from "@/components/GameErrorBoundary"
 import {
   ArrowLeft,
   Bot,
@@ -55,6 +56,7 @@ import { playSound } from "@/lib/sounds"
 export const Route = createFileRoute("/games/ludo")({
   validateSearch: parseInviteSearch,
   component: LudoPage,
+  errorComponent: GameRouteError,
 })
 
 /** How long the die tumbles, then how long the result stays up before play moves on. */
@@ -756,24 +758,26 @@ function LudoPage() {
 
         {/* Board - leaves room for the panels on small screens, fills the table on large ones. */}
         <div className="absolute inset-x-0 top-[124px] bottom-[176px] lg:inset-x-0 lg:top-14 lg:bottom-0">
-          <LudoBoard
-            tokens={tokens}
-            targets={targets}
-            activeSeats={seatPlayers
-              .map((player, seat) => (player ? seat : -1))
-              .filter((seat) => seat !== -1)}
-            viewSeat={mySeat}
-            turnSeat={isFinished ? null : turnSeat}
-            dice={{ values: shownFaces, rolling }}
-            selectedPawn={activePawn}
-            lastMove={
-              game.lastMove
-                ? { ...game.lastMove, key: String(game.lastMove.moveId) }
-                : null
-            }
-            onSelectPawn={selectPawn}
-            onSelectTarget={sendMove}
-          />
+          <GameErrorBoundary>
+            <LudoBoard
+              tokens={tokens}
+              targets={targets}
+              activeSeats={seatPlayers
+                .map((player, seat) => (player ? seat : -1))
+                .filter((seat) => seat !== -1)}
+              viewSeat={mySeat}
+              turnSeat={isFinished ? null : turnSeat}
+              dice={{ values: shownFaces, rolling }}
+              selectedPawn={activePawn}
+              lastMove={
+                game.lastMove
+                  ? { ...game.lastMove, key: String(game.lastMove.moveId) }
+                  : null
+              }
+              onSelectPawn={selectPawn}
+              onSelectTarget={sendMove}
+            />
+          </GameErrorBoundary>
         </div>
 
         {/* Top bar */}

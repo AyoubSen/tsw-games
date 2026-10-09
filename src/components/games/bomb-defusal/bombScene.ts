@@ -1162,16 +1162,22 @@ export function createBombScene(container: HTMLElement, handlers: BombSceneHandl
 
   function dispose() {
     renderer.setAnimationLoop(null)
-    resizeObserver.disconnect()
-    renderer.domElement.removeEventListener("pointerdown", handlePointerDown)
-    renderer.domElement.removeEventListener("pointermove", handlePointerMove)
-    renderer.domElement.removeEventListener("pointerup", handlePointerUp)
-    renderer.domElement.removeEventListener("pointercancel", handlePointerCancel)
-    for (const item of owned) item.dispose()
-    for (const item of lampOwned) item.dispose()
-    for (const item of disposables) item.dispose()
-    renderer.dispose()
-    renderer.domElement.remove()
+    // The GPU side is released even if tearing down the scene graph throws
+    // (e.g. after a crash left it half-built), so a remount doesn't leak a context.
+    try {
+      resizeObserver.disconnect()
+      renderer.domElement.removeEventListener("pointerdown", handlePointerDown)
+      renderer.domElement.removeEventListener("pointermove", handlePointerMove)
+      renderer.domElement.removeEventListener("pointerup", handlePointerUp)
+      renderer.domElement.removeEventListener("pointercancel", handlePointerCancel)
+      for (const item of owned) item.dispose()
+      for (const item of lampOwned) item.dispose()
+      for (const item of disposables) item.dispose()
+    } finally {
+      renderer.dispose()
+      renderer.forceContextLoss()
+      renderer.domElement.remove()
+    }
   }
 
   return { update, dispose }

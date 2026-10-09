@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { GameRouteError } from "@/components/GameErrorBoundary";
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
 import { Loader2, Sparkles, Timer } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -24,6 +25,7 @@ import type { SyncUpSettings } from "../../../party/sync-up";
 export const Route = createFileRoute("/games/sync-up")({
 	validateSearch: parseInviteSearch,
 	component: SyncUpPage,
+	errorComponent: GameRouteError,
 });
 
 type SyncUpView = "setup" | "lobby" | "game";

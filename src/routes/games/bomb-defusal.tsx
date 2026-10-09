@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
+import { GameRouteError } from "@/components/GameErrorBoundary"
 import { Bomb, BookOpen, Radio, ShieldCheck } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { useGameNightGameBridge } from "@/components/game-night/useGameNightGameBridge"
@@ -12,6 +13,7 @@ import { useMultiplayerSession } from "@/lib/multiplayerSession"
 export const Route = createFileRoute("/games/bomb-defusal")({
   validateSearch: parseInviteSearch,
   component: BombDefusalPage,
+  errorComponent: GameRouteError,
 })
 
 function BombDefusalPage() {

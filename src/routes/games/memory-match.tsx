@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
+import { GameRouteError } from "@/components/GameErrorBoundary"
 import {
   Brain,
   Clock3,
@@ -44,6 +45,7 @@ import { useMultiplayerSession } from "@/lib/multiplayerSession"
 export const Route = createFileRoute("/games/memory-match")({
   validateSearch: parseInviteSearch,
   component: MemoryMatchPage,
+  errorComponent: GameRouteError,
 })
 
 type GameView = "select" | "solo" | "multiplayer-lobby" | "multiplayer-game"

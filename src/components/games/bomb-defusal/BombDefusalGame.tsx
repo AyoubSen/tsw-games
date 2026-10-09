@@ -1,5 +1,6 @@
 import { ArrowLeft, BookOpen, Check, Clock, Eye, Hand, LogOut, Radio, RotateCcw, Scissors, ScrollText, ShieldCheck, TriangleAlert, X } from "lucide-react"
 import { useEffect, useRef, useState, type ReactNode } from "react"
+import { GameErrorBoundary } from "@/components/GameErrorBoundary"
 import { ReactionBubble, type ReactionBubbles } from "@/components/multiplayer/Reactions"
 import {
   BOMB_DIFFICULTIES, BOMB_PACE_MS, BOMB_STRIKE_LIMIT, BOMB_SYMBOLS, BUTTON_HOLD_MS, MODULE_LABELS, formatBombTime,
@@ -323,7 +324,7 @@ export function BombDefusalGame(props: BombDefusalGameProps) {
 
   return (
     <div className="relative h-[calc(100dvh-73px)] overflow-hidden text-white select-none" style={{ background: TABLE_BG }}>
-      {showDevice && <DeviceCanvas view={sceneState} handlers={handlers} />}
+      {showDevice && <GameErrorBoundary><DeviceCanvas view={sceneState} handlers={handlers} /></GameErrorBoundary>}
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_45%,rgb(0_0_0/.55)_100%)]" />
 
       <TableTopBar

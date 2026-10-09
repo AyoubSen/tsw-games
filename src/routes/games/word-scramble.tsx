@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { GameRouteError } from "@/components/GameErrorBoundary";
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
 import {
 	Clock3,
@@ -53,6 +54,7 @@ import type {
 export const Route = createFileRoute("/games/word-scramble")({
 	validateSearch: parseInviteSearch,
 	component: WordScramblePage,
+	errorComponent: GameRouteError,
 });
 
 type GameView = "select" | "single" | "multiplayer-lobby" | "multiplayer-game";

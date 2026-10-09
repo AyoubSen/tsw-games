@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
+import { GameRouteError } from "@/components/GameErrorBoundary"
 import { Bot, Users } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useGameNight } from "@/components/game-night/GameNightProvider"
@@ -14,7 +15,7 @@ import { cn } from "@/lib/utils"
 import { getGameNightInviteLink, getInviteLink, parseInviteSearch } from "@/lib/inviteLinks"
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
 
-export const Route = createFileRoute("/games/uno")({ validateSearch: parseInviteSearch, component: UnoPage })
+export const Route = createFileRoute("/games/uno")({ validateSearch: parseInviteSearch, component: UnoPage, errorComponent: GameRouteError })
 
 type View = "select" | "lobby" | "game"
 

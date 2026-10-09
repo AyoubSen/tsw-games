@@ -1516,19 +1516,25 @@ export function createLudoScene(
 
   function dispose() {
     renderer.setAnimationLoop(null)
-    resizeObserver.disconnect()
-    renderer.domElement.removeEventListener("pointermove", handlePointerMove)
-    renderer.domElement.removeEventListener("pointerdown", handlePointerDown)
-    renderer.domElement.removeEventListener("pointerup", handlePointerUp)
-    renderer.domElement.removeEventListener("pointerleave", handlePointerLeave)
-    for (const pawn of [...pawns.values()]) removePawn(pawn)
-    rebuildTargets([])
-    rebuildBlockades([])
-    clearTrail()
-    for (const effect of effects) removeEffect(effect)
-    for (const item of disposables) item.dispose()
-    renderer.dispose()
-    renderer.domElement.remove()
+    // The GPU side is released even if tearing down the scene graph throws
+    // (e.g. after a crash left it half-built), so a remount doesn't leak a context.
+    try {
+      resizeObserver.disconnect()
+      renderer.domElement.removeEventListener("pointermove", handlePointerMove)
+      renderer.domElement.removeEventListener("pointerdown", handlePointerDown)
+      renderer.domElement.removeEventListener("pointerup", handlePointerUp)
+      renderer.domElement.removeEventListener("pointerleave", handlePointerLeave)
+      for (const pawn of [...pawns.values()]) removePawn(pawn)
+      rebuildTargets([])
+      rebuildBlockades([])
+      clearTrail()
+      for (const effect of effects) removeEffect(effect)
+      for (const item of disposables) item.dispose()
+    } finally {
+      renderer.dispose()
+      renderer.forceContextLoss()
+      renderer.domElement.remove()
+    }
   }
 
   return { update, dispose }

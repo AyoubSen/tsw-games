@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
+import { GameRouteError } from "@/components/GameErrorBoundary"
 import {
   Binary,
   CheckCircle2,
@@ -43,6 +44,7 @@ import { useMultiplayerSession } from "@/lib/multiplayerSession"
 export const Route = createFileRoute("/games/code-breaker")({
   validateSearch: parseInviteSearch,
   component: CodeBreakerPage,
+  errorComponent: GameRouteError,
 })
 
 type GameView = "select" | "solo" | "multiplayer-lobby" | "multiplayer-game"

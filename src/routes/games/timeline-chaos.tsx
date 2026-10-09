@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
+import { GameRouteError } from "@/components/GameErrorBoundary"
 import { History, Play, Users } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useGameNight } from "@/components/game-night/GameNightProvider"
@@ -17,6 +18,7 @@ import type { TimelineRoundCount, TimelineSeconds, TimelineSettings } from "../.
 export const Route = createFileRoute("/games/timeline-chaos")({
   validateSearch: parseInviteSearch,
   component: TimelineChaosPage,
+  errorComponent: GameRouteError,
 })
 
 type View = "select" | "solo" | "lobby" | "game"

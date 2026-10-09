@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { GameRouteError } from "@/components/GameErrorBoundary";
 import { useMultiplayerSession } from "@/lib/multiplayerSession"
 import { Timer, Zap } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -24,6 +25,7 @@ import { PASSES_PER_GAME, POINTS, type PressureButtonSettings } from "../../../p
 export const Route = createFileRoute("/games/pressure-button")({
 	validateSearch: parseInviteSearch,
 	component: PressureButtonPage,
+	errorComponent: GameRouteError,
 });
 
 type PressureButtonView = "setup" | "lobby" | "game";

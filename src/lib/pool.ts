@@ -246,25 +246,25 @@ export const SIM_DT = 0.001
 export const SAMPLE_EVERY = 16
 const G = 9.81
 const MU_SLIDE = 0.2
-const MU_ROLL = 0.012
+const MU_ROLL = 0.011
 const MU_SPIN = 0.044
 const BALL_E = 0.95
 const RAIL_E = 0.78
 const RAIL_MU = 0.2
 const MAX_STEPS = 40000
 const NEAR_EDGE = 0.1
-export const MAX_SHOT_SPEED = 8
+export const MAX_SHOT_SPEED = 9
 const MIN_SHOT_SPEED = 0.25
 
 /** Power slider (0-1) to cue ball speed: fine control low down, a real break at the top. */
 export function speedFromPower(power: number): number {
   const p = Math.min(1, Math.max(0, power))
-  return MIN_SHOT_SPEED + (MAX_SHOT_SPEED - MIN_SHOT_SPEED) * p ** 1.5
+  return MIN_SHOT_SPEED + (MAX_SHOT_SPEED - MIN_SHOT_SPEED) * p ** 1.6
 }
 
 export function powerFromSpeed(speed: number): number {
   const s = Math.min(MAX_SHOT_SPEED, Math.max(MIN_SHOT_SPEED, speed))
-  return ((s - MIN_SHOT_SPEED) / (MAX_SHOT_SPEED - MIN_SHOT_SPEED)) ** (2 / 3)
+  return ((s - MIN_SHOT_SPEED) / (MAX_SHOT_SPEED - MIN_SHOT_SPEED)) ** (1 / 1.6)
 }
 
 /**
@@ -729,7 +729,7 @@ export function chooseBotShot(balls: PoolBall[], context: BotContext, random: ()
     const dx = FOOT_SPOT.x - cue.x
     const dy = FOOT_SPOT.y - cue.y
     const length = Math.sqrt(dx * dx + dy * dy)
-    return finish({ x: dx / length, y: dy / length }, context.level === "easy" ? 6 : 7.6, 0, cue, null)
+    return finish({ x: dx / length, y: dy / length }, context.level === "easy" ? 6.75 : 8.5, 0, cue, null)
   }
 
   const targets = legalTargets(balls, context.group, false)

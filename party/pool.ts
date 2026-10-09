@@ -211,6 +211,8 @@ const BOT_THINK_MS = 2400
 const BOT_NAMES = ["Chalky", "Rex", "Dot"]
 const BOT_REACT_MS = 600
 const AIM_RELAY_MS = 50
+/** After an alarm error, try again this soon instead of re-firing on a time that has already passed. */
+const ALARM_RETRY_MS = 2000
 
 function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value)
@@ -256,7 +258,8 @@ class PoolParty implements Party.Server {
 
   async refreshAlarm() {
     const state = this.state
-    const at = state?.status === "playing" ? (state.phase === "rolling" ? state.shotEndsAt : state.turnDeadline) : null
+    // A table in play always has a next step: a missing time means it is due now. Dropping the alarm here froze the table.
+    const at = state?.status === "playing" ? ((state.phase === "rolling" ? state.shotEndsAt : state.turnDeadline) ?? Date.now()) : null
     if (!at) {
       await this.room.storage.deleteAlarm()
       return
@@ -954,7 +957,7 @@ class PoolParty implements Party.Server {
     // Whatever happens, the state is saved, re-armed and sent below.
     try {
       if (state.phase === "rolling") {
-        if (!state.shotEndsAt || state.shotEndsAt > Date.now()) {
+        if (state.shotEndsAt && state.shotEndsAt > Date.now()) {
           await this.refreshAlarm()
           return
         }
@@ -962,14 +965,15 @@ class PoolParty implements Party.Server {
         // The outcome was lost to an earlier error: the shooter plays from the same table again.
         else this.beginTurn(state.turnSeat, state.ballInHand)
       } else {
-        if (!state.turnDeadline || state.turnDeadline > Date.now()) {
+        if (state.turnDeadline && state.turnDeadline > Date.now()) {
           await this.refreshAlarm()
           return
         }
-        const plan = state.botPlan
-        if (plan && this.seatPlayer(state.turnSeat)?.isBot) {
-          this.takeShot(state.turnSeat, { ...plan })
-        } else {
+        const plan = this.seatPlayer(state.turnSeat)?.isBot ? state.botPlan : null
+        // A refused bot shot used to leave the turn on a passed deadline, re-firing forever without moving on.
+        const refused = plan ? this.takeShot(state.turnSeat, { ...plan }) : null
+        if (refused) console.error("Pool bot shot refused:", refused)
+        if (!plan || refused) {
           // A human ran out of time: the other player gets ball in hand (or the break).
           const player = this.seatPlayer(state.turnSeat)
           const text = `${player?.name ?? "The shooter"} ran out of time`
@@ -981,7 +985,14 @@ class PoolParty implements Party.Server {
       }
     } catch (error) {
       console.error("Pool alarm error:", error)
-      if (state.status === "playing" && state.phase === "aim" && !state.turnDeadline) state.turnDeadline = Date.now() + POOL_TURN_MS
+      // Retry shortly: rolling falls back to a fresh turn (its outcome is gone or applied), aiming falls back to a timeout.
+      if (state.status === "playing") {
+        if (state.phase === "rolling") state.shotEndsAt = Date.now() + ALARM_RETRY_MS
+        else {
+          state.botPlan = null
+          state.turnDeadline = Date.now() + ALARM_RETRY_MS
+        }
+      }
     }
     await this.saveState()
     await this.refreshAlarm()

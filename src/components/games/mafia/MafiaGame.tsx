@@ -294,7 +294,7 @@ export function MafiaGame({
   const PhaseIcon = night || phase === "role-reveal" ? Moon : phase === "dawn" ? Sunrise : phase === "day-voting" || phase === "day-elimination" ? Gavel : phase === "hunter-revenge" ? Crosshair : over ? Trophy : Sun
 
   return (
-    <div ref={rootRef} className="relative h-[calc(100dvh-73px)] overflow-hidden bg-[#05070d] text-white select-none">
+    <div ref={rootRef} className="relative h-[calc(100dvh-73px)] min-h-[560px] overflow-hidden bg-[#05070d] text-white select-none">
       <Scene mood={mood} cx={cx} cy={cy} rx={rx} ry={ry} />
 
       {/* Arrows: who votes for whom. */}
@@ -386,8 +386,8 @@ export function MafiaGame({
       })}
 
       {/* Top bar. */}
-      <div className="pointer-events-none absolute inset-x-3 top-3 z-40 flex items-start gap-2 lg:inset-x-6 lg:top-5">
-        <button type="button" onClick={onLeave} className={cn(GLASS, "flex h-11 shrink-0 items-center gap-1.5 px-3 text-sm font-semibold transition hover:bg-black/65")}>
+      <div className="pointer-events-none absolute inset-x-3 top-3 z-40 flex items-start gap-1.5 sm:gap-2 lg:inset-x-6 lg:top-5">
+        <button type="button" onClick={onLeave} className={cn(GLASS, "flex h-11 w-10 shrink-0 items-center justify-center gap-1.5 text-sm font-semibold transition hover:bg-black/65 sm:w-auto sm:px-3")}>
           <ArrowLeft className="size-4" />
           <span className="hidden sm:inline">Leave</span>
         </button>
@@ -398,10 +398,10 @@ export function MafiaGame({
         <div className="flex min-w-0 flex-1 flex-col items-stretch gap-1 lg:absolute lg:left-1/2 lg:w-[min(520px,44vw)] lg:-translate-x-1/2">
           <div
             aria-live="polite"
-            className={cn(GLASS, "flex h-11 min-w-0 items-center gap-3 px-4 transition-colors duration-700")}
+            className={cn(GLASS, "flex h-11 min-w-0 items-center gap-2 px-3 transition-colors duration-700 sm:gap-3 sm:px-4")}
             style={myTurnHex ? { borderColor: `${myTurnHex}aa`, background: `${myTurnHex}22` } : undefined}
           >
-            <PhaseIcon className="size-4 shrink-0 text-white/80" />
+            <PhaseIcon className="size-4 shrink-0 text-white/80 max-sm:hidden" />
             <div className="min-w-0 flex-1 leading-tight">
               <p className="truncate text-sm font-semibold">{title}</p>
               {subtitle && <p className="truncate text-[11px] text-white/60">{subtitle}</p>}
@@ -414,13 +414,13 @@ export function MafiaGame({
             )}
           </div>
         </div>
-        <div className="ml-auto flex shrink-0 items-start gap-2">
+        <div className="ml-auto flex shrink-0 items-start gap-1.5 sm:gap-2">
           <button
             type="button"
             onClick={() => setChatOpen((open) => !open)}
             aria-pressed={chatOpen}
             aria-label="Chat"
-            className={cn(GLASS, "relative flex h-11 items-center gap-1.5 px-3 text-sm font-semibold transition hover:bg-black/65", chatOpen && "border-white/30 bg-white/15")}
+            className={cn(GLASS, "relative flex h-11 w-10 items-center justify-center gap-1.5 text-sm font-semibold transition hover:bg-black/65 sm:w-auto sm:px-3", chatOpen && "border-white/30 bg-white/15")}
           >
             <MessageSquare className="size-4" />
             <span className="hidden sm:inline">Chat</span>
@@ -431,13 +431,13 @@ export function MafiaGame({
             onClick={() => setLogOpen((open) => !open)}
             aria-pressed={logOpen}
             aria-label="Game log"
-            className={cn(GLASS, "flex h-11 items-center gap-1.5 px-3 text-sm font-semibold transition hover:bg-black/65", logOpen && "border-white/30 bg-white/15")}
+            className={cn(GLASS, "flex h-11 w-10 items-center justify-center gap-1.5 text-sm font-semibold transition hover:bg-black/65 sm:w-auto sm:px-3", logOpen && "border-white/30 bg-white/15")}
           >
             <ScrollText className="size-4" />
             <span className="hidden sm:inline">Log</span>
           </button>
-          <SoundToggle />
-          <ReactionPicker onReact={onReact} disabled={!connected || (!alive && !over)} side="bottom" align="end" />
+          <SoundToggle className="max-sm:w-10" />
+          <ReactionPicker onReact={onReact} disabled={!connected || (!alive && !over)} side="bottom" align="end" className="max-sm:w-10" />
         </div>
       </div>
 
@@ -480,7 +480,7 @@ export function MafiaGame({
               className="relative shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
             >
               <RoleFlip role={myRole} size="sm" faceUp={peek || over} />
-              {!peek && !over && <span className="absolute inset-x-0 -bottom-1 mx-auto w-fit rounded bg-black/70 px-1 text-[8px] font-bold uppercase tracking-wide text-white/70">Peek</span>}
+              {!peek && !over && <span className="absolute inset-x-0 -bottom-1 mx-auto w-fit rounded bg-black/70 px-1 text-[9px] font-bold uppercase tracking-wide text-white/70">Peek</span>}
             </button>
           )}
           <div className="min-w-0 flex-1">
@@ -525,7 +525,7 @@ export function MafiaGame({
               </p>
             )}
             <p className="text-xs text-white/50">Keep it secret. Night falls{secondsLeft ? ` in ${secondsLeft}s` : " soon"}.</p>
-            <button type="button" onClick={() => setRoleSeen(true)} className="rounded-xl border border-white/15 bg-white/10 px-5 py-2 text-sm font-semibold transition hover:bg-white/20">Got it</button>
+            <button type="button" onClick={() => setRoleSeen(true)} className="h-11 rounded-xl border border-white/15 bg-white/10 px-5 text-sm font-semibold transition hover:bg-white/20">Got it</button>
           </div>
         </div>
       )}
@@ -1063,7 +1063,7 @@ function ChatPanel({ state, myId, docked, onClose, onSend }: {
             key={candidate.id}
             type="button"
             onClick={() => setPicked({ key: contextKey, tab: candidate.id })}
-            className={cn("rounded-lg px-2.5 py-1 text-xs font-bold transition", candidate.id === tab.id ? "bg-white/15" : "text-white/55 hover:bg-white/10")}
+            className={cn("min-h-10 rounded-lg px-3 text-xs font-bold transition", candidate.id === tab.id ? "bg-white/15" : "text-white/55 hover:bg-white/10")}
             style={candidate.id === tab.id ? { color: candidate.hex } : undefined}
           >
             {candidate.label}
@@ -1071,7 +1071,7 @@ function ChatPanel({ state, myId, docked, onClose, onSend }: {
           </button>
         ))}
         <span className="flex-1" />
-        <button type="button" onClick={onClose} aria-label="Close chat" className="grid size-7 place-items-center rounded-md text-white/60 transition hover:bg-white/10 hover:text-white"><X className="size-3.5" /></button>
+        <button type="button" onClick={onClose} aria-label="Close chat" className="grid size-10 place-items-center rounded-md text-white/60 transition hover:bg-white/10 hover:text-white"><X className="size-3.5" /></button>
       </div>
       <div ref={listRef} className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-3 select-text">
         {tab.messages.length === 0 && <p className="text-center text-xs text-white/40">No messages yet</p>}
@@ -1096,9 +1096,9 @@ function ChatPanel({ state, myId, docked, onClose, onSend }: {
           maxLength={200}
           disabled={!tab.canSend}
           placeholder={tab.canSend ? (tab.id === "wolf" ? "Whisper to the pack…" : tab.id === "ghost" ? "Speak to the dead…" : "Say something…") : tab.closed}
-          className="h-9 min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white placeholder:text-white/35 focus:border-white/30 focus:outline-none disabled:opacity-60"
+          className="h-10 min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white pointer-coarse:text-base placeholder:text-white/35 focus:border-white/30 focus:outline-none disabled:opacity-60"
         />
-        <button type="submit" disabled={!tab.canSend || !text.trim()} aria-label="Send" className="grid size-9 place-items-center rounded-lg bg-white/15 transition hover:bg-white/25 disabled:opacity-40">
+        <button type="submit" disabled={!tab.canSend || !text.trim()} aria-label="Send" className="grid size-10 place-items-center rounded-lg bg-white/15 transition hover:bg-white/25 disabled:opacity-40">
           <Send className="size-4" />
         </button>
       </form>

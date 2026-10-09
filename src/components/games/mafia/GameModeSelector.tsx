@@ -157,7 +157,7 @@ export function GameModeSelector({
                     onClick={() => setDiscussionTime(opt.value)}
                     disabled={isConnecting}
                     className={cn(
-                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors",
+                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors pointer-coarse:min-h-10",
                       discussionTime === opt.value
                         ? "border-primary bg-primary/10 text-primary"
                         : "border-border hover:border-primary/50"
@@ -181,7 +181,7 @@ export function GameModeSelector({
                     onClick={() => setVotingTime(opt.value)}
                     disabled={isConnecting}
                     className={cn(
-                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors",
+                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors pointer-coarse:min-h-10",
                       votingTime === opt.value
                         ? "border-primary bg-primary/10 text-primary"
                         : "border-border hover:border-primary/50"
@@ -205,7 +205,7 @@ export function GameModeSelector({
                     onClick={() => setNightTime(opt.value)}
                     disabled={isConnecting}
                     className={cn(
-                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors",
+                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors pointer-coarse:min-h-10",
                       nightTime === opt.value
                         ? "border-primary bg-primary/10 text-primary"
                         : "border-border hover:border-primary/50"

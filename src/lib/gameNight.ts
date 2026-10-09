@@ -1,4 +1,5 @@
 import type { Reaction, ReactionMessage } from "./reactions";
+import type { ResultExtra } from "../../party/shared/account";
 
 export const GAME_NIGHT_GAMES = [
 	{ id: "bomb-defusal", title: "Bomb Defusal", path: "/games/bomb-defusal", party: "bombdefusal", minPlayers: 2, maxPlayers: 4 },
@@ -157,6 +158,8 @@ export interface GameNightResult {
 	winnerIds: string[];
 	/** A bot took a seat, so the match counts as a bot game in profile stats. */
 	vsBot?: boolean;
+	/** Game-specific profile stats, by Game Night player id. */
+	extras?: Record<string, ResultExtra>;
 }
 
 export function getGameNightGame(gameId: string) {

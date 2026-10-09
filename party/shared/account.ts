@@ -13,12 +13,24 @@ export interface VerifiedAccount {
   poolCue?: string
 }
 
+/** Game-specific stats for one player, measured by the game server. */
+export interface ResultExtra {
+  /** Wordle: guesses used in each round of the game (a series counts as one), 0 for a round they ran out of guesses. */
+  wordleRounds?: number[]
+  /** TypeRace: from the race clock and the keystrokes the server saw. Only for players who finished the text. */
+  wpm?: number
+  accuracy?: number
+  /** Pool: the winner cleared their whole group and the 8 in one visit; a break-and-run started that visit with the break. */
+  runOut?: boolean
+  breakAndRun?: boolean
+}
+
 export interface GameResultReport {
   /** Unique per finished game; Convex ignores repeats. */
   resultId: string
   game: string
   vsBot: boolean
-  players: { userId: string; won: boolean }[]
+  players: { userId: string; won: boolean; extra?: ResultExtra }[]
 }
 
 function readEnv(room: Party.Room, key: string): string | null {
@@ -116,9 +128,9 @@ export class JoinVerifier {
  */
 export async function reportDirectResult(
   room: Party.Room,
-  report: Omit<GameResultReport, "players"> & { players: { userId?: string; won: boolean }[] },
+  report: Omit<GameResultReport, "players"> & { players: { userId?: string; won: boolean; extra?: ResultExtra }[] },
 ): Promise<void> {
   if (await isGameNightRoom(room)) return
-  const players = report.players.flatMap(({ userId, won }) => (userId ? [{ userId, won }] : []))
+  const players = report.players.flatMap(({ userId, won, extra }) => (userId ? [{ userId, won, ...(extra ? { extra } : {}) }] : []))
   await reportResult(room, { ...report, players })
 }

@@ -5,6 +5,66 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { gameTitle } from "@/lib/gameCatalog"
 import { cn } from "@/lib/utils"
 import { api } from "../../../convex/_generated/api"
+import type { Doc } from "../../../convex/_generated/dataModel"
+
+type HighlightStats = Pick<Doc<"gameStats">, "game" | "wordle" | "typerace" | "pool">
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`
+
+/** Game-specific stats (Wordle streak and guesses, TypeRace speed, Pool run-outs); nothing when there are none. */
+export function GameHighlights({ stats, className }: { stats: HighlightStats[]; className?: string }) {
+  const byGame = (game: string) => stats.find((stat) => stat.game === game)
+  const wordle = byGame("wordle")?.wordle
+  const typerace = byGame("typerace")?.typerace
+  const pool = byGame("pool")?.pool
+  if (!wordle && !typerace && !pool) return null
+  const mostSolved = Math.max(1, ...(wordle?.solvedIn ?? []))
+  return (
+    <div className={cn("space-y-3 text-sm", className)}>
+      {wordle && (
+        <div>
+          <p className="font-medium">
+            {gameTitle("wordle")}{" "}
+            <span className="font-normal text-muted-foreground">
+              · streak {wordle.streak} · best {wordle.bestStreak}
+            </span>
+          </p>
+          <div className="mt-1.5 space-y-0.5">
+            {wordle.solvedIn.map((count, index) => (
+              <div key={index} className="flex items-center gap-2 text-xs tabular-nums">
+                <span className="w-2 text-muted-foreground">{index + 1}</span>
+                <span
+                  className={cn("rounded-sm px-1.5 text-right", count > 0 ? "bg-primary text-primary-foreground" : "bg-muted")}
+                  style={{ width: `max(1.5rem, ${(count / mostSolved) * 100}%)` }}
+                >
+                  {count}
+                </span>
+              </div>
+            ))}
+            {wordle.failed > 0 && <p className="text-xs text-muted-foreground">{wordle.failed} not solved</p>}
+          </div>
+        </div>
+      )}
+      {typerace && typerace.timedRaces > 0 && (
+        <p>
+          <span className="font-medium">{gameTitle("typerace")}</span>{" "}
+          <span className="text-muted-foreground">
+            · best <span className="font-semibold text-foreground tabular-nums">{typerace.bestWpm}</span> WPM ·{" "}
+            {Math.round(typerace.accuracyTotal / typerace.timedRaces)}% average accuracy
+          </span>
+        </p>
+      )}
+      {pool && (
+        <p>
+          <span className="font-medium">{gameTitle("pool")}</span>{" "}
+          <span className="text-muted-foreground">
+            · {plural(pool.runOuts, "run-out")} · {plural(pool.breakAndRuns, "break-and-run")}
+          </span>
+        </p>
+      )}
+    </div>
+  )
+}
 
 /** The signed-in check next to a player's name; opens their profile card when the server sent a profile id. */
 export function ProfileBadge({ profileId, color, className }: { profileId?: string; color?: string; className?: string }) {
@@ -70,6 +130,7 @@ function ProfileCard({ profileId }: { profileId: string }) {
           </tbody>
         </table>
       )}
+      <GameHighlights stats={card.stats} className="border-t pt-3" />
     </>
   )
 }

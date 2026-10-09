@@ -11,6 +11,7 @@ import {
 	UserRound,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { GameHighlights } from "@/components/multiplayer/ProfileBadge";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -223,6 +224,7 @@ function SignedInProfile() {
 							</tbody>
 						</table>
 					)}
+					<GameHighlights stats={sortedStats} className="mt-4 border-t pt-4" />
 				</CardContent>
 			</Card>
 

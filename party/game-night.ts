@@ -1,5 +1,5 @@
 import type * as Party from "partykit/server";
-import { JoinVerifier, reportResult } from "./shared/account";
+import { JoinVerifier, reportResult, type ResultExtra } from "./shared/account";
 import { withRoomCleanup } from "./shared/cleanup";
 import {
 	computeAwards,
@@ -353,7 +353,7 @@ class GameNightParty implements Party.Server {
 				playerIds: [...new Set([...(match.playerIds ?? Object.keys(this.state.matchTickets)), ...winnerIds])].filter((id) => Boolean(this.state?.players[id])),
 			};
 			this.state.history.push(history);
-			this.reportMatch(history, result.vsBot === true);
+			this.reportMatch(history, result.vsBot === true, result.extras && typeof result.extras === "object" ? result.extras : {});
 			match.status = "finished";
 			this.state.recap = { matchId, stage: "waiting", waitUntil: null, startedAt: null, endsAt: null };
 			this.maybeStartRecap();
@@ -370,7 +370,7 @@ class GameNightParty implements Party.Server {
 	}
 
 	/** Sends one finished match to Convex under its own game, so every Game Night game shows up in profile stats. */
-	reportMatch(entry: GameNightHistoryEntry, vsBot: boolean) {
+	reportMatch(entry: GameNightHistoryEntry, vsBot: boolean, extras: Record<string, ResultExtra>) {
 		const s = this.state;
 		if (!s) return;
 		const accounts = s.accounts ?? {};
@@ -379,7 +379,7 @@ class GameNightParty implements Party.Server {
 			game: entry.gameId,
 			vsBot,
 			players: (entry.playerIds ?? []).flatMap((id) =>
-				accounts[id] ? [{ userId: accounts[id], won: entry.scored && entry.winnerIds.includes(id) }] : [],
+				accounts[id] ? [{ userId: accounts[id], won: entry.scored && entry.winnerIds.includes(id), ...(extras[id] ? { extra: extras[id] } : {}) }] : [],
 			),
 		});
 	}

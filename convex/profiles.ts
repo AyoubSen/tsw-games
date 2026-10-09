@@ -180,7 +180,7 @@ export const card = query({
       isYou,
       stats: stats
         .sort((a, b) => b.played - a.played || b.lastPlayedAt - a.lastPlayedAt)
-        .map((stat) => ({ game: stat.game, played: stat.played, wins: stat.wins })),
+        .map((stat) => ({ game: stat.game, played: stat.played, wins: stat.wins, wordle: stat.wordle, typerace: stat.typerace, pool: stat.pool })),
       vsYou: record ? { played: record.played, wins: record.wins, losses: record.losses } : null,
     }
   },

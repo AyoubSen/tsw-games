@@ -25,6 +25,11 @@ export default defineSchema({
     /** The part of played/wins that had a bot at the table. Missing on rows from before bots were counted apart. */
     botPlayed: v.optional(v.number()),
     botWins: v.optional(v.number()),
+    /** Game-specific stats, only ever from game servers. solvedIn[i] counts rounds solved in i + 1 guesses. */
+    wordle: v.optional(v.object({ streak: v.number(), bestStreak: v.number(), solvedIn: v.array(v.number()), failed: v.number() })),
+    /** Average accuracy is accuracyTotal / timedRaces. */
+    typerace: v.optional(v.object({ bestWpm: v.number(), accuracyTotal: v.number(), timedRaces: v.number() })),
+    pool: v.optional(v.object({ runOuts: v.number(), breakAndRuns: v.number() })),
     lastPlayedAt: v.number(),
   })
     .index("by_user", ["clerkUserId"])

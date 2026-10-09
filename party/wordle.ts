@@ -36,6 +36,8 @@ export interface Player {
   readyForNextTurn: boolean
   /** Server-only: the verified account behind this player. */
   userId?: string
+  /** Server-only: guesses used in each round of this series, 0 for a failed round; for profile stats. */
+  seriesRounds?: number[]
 }
 
 export interface PublicPlayer {
@@ -359,6 +361,7 @@ function normalizeStoredState(value: unknown, roomCode: string): GameState | nul
       graceHandled: Boolean(player.graceHandled),
       readyForNextTurn: Boolean(player.readyForNextTurn),
       userId: typeof player.userId === "string" ? player.userId : undefined,
+      seriesRounds: Array.isArray(player.seriesRounds) ? player.seriesRounds.filter(Number.isInteger) : undefined,
     }
   }
 
@@ -642,6 +645,10 @@ class WordleParty implements Party.Server {
     for (const winnerId of this.state.winnerIds) {
       this.state.seriesScores[winnerId] = (this.state.seriesScores[winnerId] ?? 0) + 1
     }
+    // Players still guessing when a race ends have no result for the round.
+    for (const player of players) {
+      if (player.won || player.completed) player.seriesRounds = [...(player.seriesRounds ?? []), player.won ? player.attempts : 0]
+    }
     const winsNeeded = Math.floor(this.state.seriesLength / 2) + 1
     const reachedTarget = Object.values(this.state.seriesScores).some(score => score >= winsNeeded)
     this.state.seriesComplete = this.state.seriesLength === 1 || reachedTarget || this.state.seriesRound >= this.state.seriesLength
@@ -658,7 +665,11 @@ class WordleParty implements Party.Server {
         resultId: `wordle:${this.state.roomCode}:${this.state.roundId}`,
         game: "wordle",
         vsBot: false,
-        players: players.map(player => ({ userId: player.userId, won: winnerIds.includes(player.id) })),
+        players: players.map(player => ({
+          userId: player.userId,
+          won: winnerIds.includes(player.id),
+          extra: player.seriesRounds?.length ? { wordleRounds: player.seriesRounds } : undefined,
+        })),
       })
     }
   }
@@ -1023,6 +1034,7 @@ class WordleParty implements Party.Server {
           } else {
             this.state.seriesRound = 1
             this.state.seriesScores = Object.fromEntries(Object.values(this.state.players).map(player => [player.id, 0]))
+            for (const player of Object.values(this.state.players)) player.seriesRounds = []
           }
           this.state.seriesWinnerIds = []
           this.state.seriesComplete = false
@@ -1094,7 +1106,11 @@ class WordleParty implements Party.Server {
       const entry = Object.entries(this.state!.players).find(([, player]) => player.id === playerId)
       return entry ? [entry[0]] : []
     })
-    return Response.json({ finished, scored: true, winnerIds })
+    const extras = finished
+      ? Object.fromEntries(Object.entries(this.state!.players).flatMap(([credential, player]) =>
+          player.seriesRounds?.length ? [[credential, { wordleRounds: player.seriesRounds }]] : []))
+      : {}
+    return Response.json({ finished, scored: true, winnerIds, extras })
   }
 
   async onAlarm() {

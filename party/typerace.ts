@@ -1,7 +1,7 @@
 import type * as Party from "partykit/server"
 import { withRoomCleanup } from "./shared/cleanup"
 import { getGameNightResultMatch, validateGameNightConnection, type GameNightMember } from "./shared/gameNight"
-import { JoinVerifier, reportDirectResult } from "./shared/account"
+import { JoinVerifier, reportDirectResult, type ResultExtra } from "./shared/account"
 import {
   markConnected,
   markDisconnected,
@@ -42,6 +42,8 @@ export interface GameState {
   finishedAt: number | null
   /** Server-only: player id -> verified account. Kept off Player, which is sent to clients as is. */
   accounts?: Record<string, string>
+  /** Server-only: characters each player typed this race and how many were wrong, for profile accuracy. */
+  typing?: Record<string, { keys: number; misses: number; finishedText: boolean }>
 }
 
 // Message types from client
@@ -276,6 +278,7 @@ class TypeRaceParty implements Party.Server {
           this.state.status = "playing"
           this.state.startedAt = Date.now()
           this.state.text = getRandomPhrase()
+          this.state.typing = {}
           await this.saveState()
 
           this.broadcast({
@@ -296,7 +299,13 @@ class TypeRaceParty implements Party.Server {
           player.progress = Math.max(player.progress, Math.max(0, Math.min(100, data.progress)))
           player.wpm = Math.max(0, data.wpm)
           player.accuracy = Math.max(0, Math.min(100, data.accuracy))
+          const before = player.typedText ?? ""
           player.typedText = data.typedText.slice(0, this.state.text.length)
+          const typing = (this.state.typing ??= {})[sender.id] ??= { keys: 0, misses: 0, finishedText: false }
+          for (let i = before.length; i < player.typedText.length; i++) {
+            typing.keys++
+            if (player.typedText[i] !== this.state.text[i]) typing.misses++
+          }
           await this.saveState()
 
           // Broadcast progress to others
@@ -321,6 +330,8 @@ class TypeRaceParty implements Party.Server {
           player.completed = true
           player.completedAt = Date.now()
           player.progress = 100
+          const typing = this.state.typing?.[sender.id]
+          if (typing) typing.finishedText = player.typedText === this.state.text
           player.wpm = data.wpm
           player.accuracy = data.accuracy
           await this.saveState()
@@ -416,6 +427,7 @@ class TypeRaceParty implements Party.Server {
 
           // Reset game state to waiting
           this.state.status = "waiting"
+          this.state.typing = {}
           this.state.text = getRandomPhrase()
           this.state.winnerId = null
           this.state.startedAt = null
@@ -449,8 +461,21 @@ class TypeRaceParty implements Party.Server {
       resultId: `typerace:${this.state.roomCode}:${this.state.startedAt}`,
       game: "typerace",
       vsBot: false,
-      players: Object.keys(this.state.players).map((id) => ({ userId: accounts[id], won: id === this.state!.winnerId })),
+      players: Object.keys(this.state.players).map((id) => ({ userId: accounts[id], won: id === this.state!.winnerId, extra: this.typingExtra(id) })),
     })
+  }
+
+  /** Speed and accuracy as the server measured them, for players who typed the whole text. */
+  typingExtra(id: string): ResultExtra | undefined {
+    const player = this.state?.players[id]
+    const typing = this.state?.typing?.[id]
+    if (!this.state?.startedAt || !player?.completedAt || !typing?.finishedText || typing.keys === 0) return undefined
+    const minutes = (player.completedAt - this.state.startedAt) / 60000
+    if (minutes <= 0) return undefined
+    return {
+      wpm: Math.round(this.state.text.length / 5 / minutes),
+      accuracy: Math.round(((typing.keys - typing.misses) / typing.keys) * 100),
+    }
   }
 
   async onClose(conn: Party.Connection) {
@@ -477,10 +502,17 @@ class TypeRaceParty implements Party.Server {
     const match = await getGameNightResultMatch(this.room, request, "typerace")
     if (!match) return new Response("Not found", { status: 404 })
     const finished = this.state?.status === "finished"
+    const extras = finished
+      ? Object.fromEntries(Object.keys(this.state!.players).flatMap((id) => {
+          const extra = this.typingExtra(id)
+          return extra ? [[id, extra]] : []
+        }))
+      : {}
     return Response.json({
       finished,
       scored: true,
       winnerIds: finished && this.state?.winnerId ? [this.state.winnerId] : [],
+      extras,
     })
   }
 }

@@ -7,6 +7,7 @@ import {
   chooseBotShot,
   defaultCueSpot,
   FOUL_TEXT,
+  groupBalls,
   isOnEight,
   isValidPlacement,
   judgeShot,
@@ -94,6 +95,8 @@ interface PendingOutcome {
   logs: LogEntry[]
   result: PoolResult
   reactions: { playerId: string; options: Reaction[]; odds: number }[]
+  /** The winning shot ended a visit that cleared the shooter's whole group and the 8. */
+  runOut?: { breakAndRun: boolean }
 }
 
 export interface GameState {
@@ -117,6 +120,8 @@ export interface GameState {
   shotCount: number
   shot: PoolShotRecord | null
   pending: PendingOutcome | null
+  /** Server-only: the current run of shots by one seat, for run-out stats. */
+  visit?: { seat: number; fromBreak: boolean; onTable: number[] } | null
   botPlan: PlannedShot | null
   result: PoolResult | null
   log: LogEntry[]
@@ -383,6 +388,7 @@ class PoolParty implements Party.Server {
     state.result = null
     state.winner = null
     state.log = []
+    state.visit = null
     const breaker = this.seatPlayer(state.breakerSeat)
     this.pushLog([this.logEntry(`Rack ${state.rack} - ${breaker?.name ?? "Someone"} breaks`, "info")])
     this.beginTurn(state.breakerSeat, "kitchen")
@@ -396,6 +402,9 @@ class PoolParty implements Party.Server {
     state.phase = "aim"
     state.ballInHand = ballInHand
     state.shotEndsAt = null
+    if (state.visit?.seat !== seat) {
+      state.visit = { seat, fromBreak: state.isBreak, onTable: state.balls.filter((ball) => ball.n !== 0 && !ball.down).map((ball) => ball.n) }
+    }
     const player = this.seatPlayer(seat)
     if (player?.isBot) {
       try {
@@ -472,8 +481,12 @@ class PoolParty implements Party.Server {
     if (judged.assigned) logs.push(this.logEntry(`${name} takes ${judged.assigned}`, "info", shotId))
 
     let winner: PoolWinner | null = null
+    let runOut: PendingOutcome["runOut"]
     let text: string
     if (judged.eight === "win") {
+      const visit = state.visit
+      const won = groups[seat]
+      if (visit?.seat === seat && won && groupBalls(won).every((n) => visit.onTable.includes(n))) runOut = { breakAndRun: visit.fromBreak }
       winner = { id: shooter.id, name, seat, reason: `${name} sank the 8${calledPocket !== null ? ` in the ${POCKET_NAMES[calledPocket]}` : ""}` }
       text = `${name} sinks the 8 and wins the rack!`
       logs.push(this.logEntry(text, "win", shotId))
@@ -506,6 +519,7 @@ class PoolParty implements Party.Server {
       logs,
       result: { shotId, text, foul: Boolean(judged.foul) || judged.eight === "lose" },
       reactions,
+      runOut,
     }
     state.shotCount = shotId
     state.shot = { id: shotId, seat, before, ...shot, startedAt: Date.now(), durationMs: Math.round(result.duration * 1000) }
@@ -532,13 +546,13 @@ class PoolParty implements Party.Server {
       if (player?.isBot && Math.random() < reaction.odds && this.humanCount() > 0) this.react(player.id, pickReaction(reaction.options), BOT_REACT_MS)
     }
     if (pending.winner) {
-      this.finish(pending.winner)
+      this.finish(pending.winner, pending.runOut)
       return
     }
     this.beginTurn(pending.nextSeat, pending.ballInHand)
   }
 
-  finish(winner: PoolWinner) {
+  finish(winner: PoolWinner, runOut?: PendingOutcome["runOut"]) {
     const state = this.state
     if (!state) return
     state.status = "finished"
@@ -555,7 +569,11 @@ class PoolParty implements Party.Server {
       resultId: `pool:${state.roomCode}:${state.roundId}`,
       game: "pool",
       vsBot: seated.some((player) => player.isBot),
-      players: seated.flatMap((player) => (player.userId ? [{ userId: player.userId, won: player.id === winner.id }] : [])),
+      players: seated.flatMap((player) => {
+        if (!player.userId) return []
+        const won = player.id === winner.id
+        return [{ userId: player.userId, won, ...(won && runOut ? { extra: { runOut: true, breakAndRun: runOut.breakAndRun } } : {}) }]
+      }),
     })
   }
 

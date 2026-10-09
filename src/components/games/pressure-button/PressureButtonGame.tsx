@@ -163,7 +163,7 @@ export function PressureButtonGame(props: PressureButtonGameProps) {
   const promptSmall = compact || reveal !== null || over
   const promptW = Math.min(promptSmall ? 560 : 620, compact ? Math.max(220, innerW + 24) : (promptSmall ? 1.3 : 1.5) * rx - seatW)
   const promptHalf = promptSmall ? 50 : 70
-  const promptY = cy - ry * (promptSmall ? 0.64 : 0.58)
+  const promptY = cy - ry * (compact ? 0.56 : promptSmall ? 0.64 : 0.58)
   const halfW = Math.max(110, compact ? rx - seatW / 2 : Math.min(400, rx * 0.74 - seatW / 2))
   const stageTop = promptY + promptHalf + 12
   const stageBottom = cy + ry * (compact ? 0.78 : 0.72) - avatar / 2 - 18
@@ -212,7 +212,7 @@ export function PressureButtonGame(props: PressureButtonGameProps) {
     <>
       <Zap className="size-4 shrink-0 text-orange-300" />
       <div className="min-w-0 flex-1 leading-tight">
-        <p className="truncate text-sm font-semibold">{over ? "Final scores" : `Turn ${state.turnNumber} / ${state.settings.turns}`}</p>
+        <p className="truncate text-sm font-semibold">{over ? "Final scores" : <><span className="max-sm:hidden">Turn </span>{state.turnNumber} / {state.settings.turns}</>}</p>
         <p className="truncate text-[11px] text-white/60">{subline}</p>
       </div>
       {secondsLeft !== null && landed && <TimerRing left={secondsLeft} limit={limit} />}
@@ -224,7 +224,7 @@ export function PressureButtonGame(props: PressureButtonGameProps) {
   const responderName = state.players[responderId ?? activeId ?? ""]?.name ?? "Someone"
 
   return (
-    <PartyTable tableRef={tableRef} background={TABLE_BG}>
+    <PartyTable tableRef={tableRef} background={TABLE_BG} className="min-h-[640px]">
       {/* Stage light. */}
       <div aria-hidden="true" className="pointer-events-none absolute rounded-[50%] bg-orange-400/[.07] blur-2xl" style={{ left: cx - rx * 0.9, top: cy - ry * 0.75, width: rx * 1.8, height: ry * 1.5 }} />
 

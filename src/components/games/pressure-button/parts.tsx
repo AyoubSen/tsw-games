@@ -77,10 +77,10 @@ export function ButtonCluster({ compact, passesLeft, targeting, watching, onAnsw
   onPressure: () => void
   onCancel: () => void
 }) {
-  const size = compact ? 70 : watching ? 78 : 100
+  const size = compact ? 64 : watching ? 78 : 100
   return (
     <div className={cn("flex flex-col items-center", watching && "pointer-events-none opacity-60")}>
-      <div className="flex items-end justify-center gap-2 sm:gap-4">
+      <div className="flex items-end justify-center gap-1 sm:gap-4">
         <BigButton kind="answer" size={size} sub={`+${POINTS.selfAccepted} · ${POINTS.selfFailed} if rejected`} disabled={watching || targeting} onClick={onAnswer} />
         <BigButton kind="pressure" size={Math.round(size * 1.14)} sub={targeting ? "Tap a seat" : `They +${POINTS.pressuredAccepted} · you +${POINTS.pressureLanded}`} armed={targeting} disabled={watching} onClick={targeting ? onCancel : onPressure} />
         <BigButton kind="pass" size={size} sub={passesLeft > 0 ? `${passesLeft} left · 0 pts` : "No passes left"} disabled={watching || targeting || passesLeft <= 0} onClick={onPass} />

@@ -171,7 +171,7 @@ function PowerBar({ pull, onPull, onRelease, disabled }: { pull: number; onPull:
       aria-valuemax={100}
       aria-valuenow={Math.round(pull * 100)}
       aria-disabled={disabled}
-      className={cn(GLASS, "relative flex h-[min(300px,42dvh)] w-14 touch-none select-none flex-col items-center overflow-hidden p-1.5", disabled ? "opacity-40" : "cursor-grab active:cursor-grabbing")}
+      className={cn(GLASS, "relative flex h-[min(300px,42dvh,calc(100dvh-257px))] w-14 touch-none select-none flex-col items-center overflow-hidden p-1.5", disabled ? "opacity-40" : "cursor-grab active:cursor-grabbing")}
       onPointerDown={(event) => {
         if (disabled) return
         event.currentTarget.setPointerCapture(event.pointerId)
@@ -241,7 +241,7 @@ function SpinPicker({ spin, onSpin, disabled }: { spin: { x: number; y: number }
         <span className="absolute inset-y-2 left-1/2 w-px bg-black/15" />
         <span className="absolute size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-600 ring-2 ring-white shadow" style={{ left: `${50 + spin.x * 40}%`, top: `${50 - spin.y * 40}%` }} />
       </div>
-      <button type="button" disabled={disabled} onClick={() => onSpin({ x: 0, y: 0 })} className="text-[11px] font-semibold text-white/70 hover:text-white">
+      <button type="button" disabled={disabled} onClick={() => onSpin({ x: 0, y: 0 })} className="-mx-2 -mb-2 h-10 self-stretch rounded-b-2xl text-xs font-semibold text-white/70 hover:text-white">
         {label}{side}
       </button>
     </div>
@@ -623,7 +623,7 @@ export function PoolGame({ game, playerId, roomLabel, connected, error, clockOff
           <div className="absolute bottom-3 left-3 z-20">
             <SpinPicker spin={spin} onSpin={setSpin} disabled={!myTurn} />
           </div>
-          <div className="absolute right-3 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-2">
+          <div className="absolute bottom-3 right-3 z-20 flex flex-col items-center gap-2">
             <PowerBar pull={pull} onPull={setPull} onRelease={shoot} disabled={!myTurn || !placementValid} />
             <div className="flex gap-1.5">
               <NudgeButton direction={-1} onNudge={(amount) => setAngle((value) => value + amount)} disabled={!myTurn} />

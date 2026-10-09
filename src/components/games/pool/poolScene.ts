@@ -895,7 +895,7 @@ export function createPoolScene(container: HTMLElement, handlers: PoolSceneHandl
 
   function handlePointerDown(event: PointerEvent) {
     const current = state
-    if (!current?.interactive || current.playback) return
+    if (drag || !current?.interactive || current.playback) return
     const point = tablePoint(event)
     const start = { id: event.pointerId, lastX: event.clientX, startX: event.clientX, startY: event.clientY, moved: false, lastAngle: null }
     if (effectiveCamera(current) === "cue") {

@@ -85,7 +85,7 @@ export function ProfileNameChip({ name, color }: { name: string; color: string }
 			<span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: color }} />
 			<span className="text-muted-foreground">Playing as</span>
 			<span className="truncate font-semibold">{name}</span>
-			<Link to="/profile" className="ml-auto text-xs text-primary hover:underline">
+			<Link to="/profile" className="relative ml-auto text-xs text-primary before:absolute before:-inset-3 before:content-[''] hover:underline">
 				Edit
 			</Link>
 		</div>
@@ -136,6 +136,7 @@ export function MultiplayerSetupCard({
 					<ProfileNameChip name={profile.displayName} color={profile.color} />
 				) : (
 					<Input
+						className="h-11 sm:h-9"
 						value={playerName}
 						onChange={(event) => onPlayerNameChange(event.target.value)}
 						placeholder="Your name"
@@ -144,6 +145,7 @@ export function MultiplayerSetupCard({
 				)}
 				<div className="grid gap-3 sm:grid-cols-[1fr_auto]">
 					<Input
+						className="h-11 sm:h-9"
 						value={roomCode}
 						onChange={(event) =>
 							onRoomCodeChange(
@@ -156,12 +158,12 @@ export function MultiplayerSetupCard({
 						placeholder="Room code"
 						maxLength={6}
 					/>
-					<Button variant="outline" onClick={onJoin}>
+					<Button className="h-11 sm:h-9" variant="outline" onClick={onJoin}>
 						Join Room
 					</Button>
 				</div>
 				{children}
-				<Button className="w-full" onClick={onCreate}>
+				<Button className="h-11 w-full sm:h-9" onClick={onCreate}>
 					{createLabel}
 				</Button>
 				{message && (
@@ -251,6 +253,7 @@ export function RoomCodeCard({ roomCode, copied, onCopy }: RoomCodeCardProps) {
 				</div>
 				<Button
 					type="button"
+					className="size-11 sm:h-8 sm:w-auto"
 					variant="outline"
 					size="sm"
 					onClick={onCopy}
@@ -331,14 +334,14 @@ export function MultiplayerLobby({
 							onCopy={onCopyRoomCode}
 						/>
 						<Button
-							className="w-full"
+							className="h-11 w-full sm:h-9"
 							onClick={onStart}
 							disabled={!isHost || !canStart}
 						>
 							<Play className="mr-2 h-4 w-4" />
 							{startLabel}
 						</Button>
-						<Button className="w-full" variant="outline" onClick={onLeave}>
+						<Button className="h-11 w-full sm:h-9" variant="outline" onClick={onLeave}>
 							Leave Lobby
 						</Button>
 						{message && (

@@ -202,7 +202,7 @@ export function SyncUpGame(props: SyncUpGameProps) {
       <Shuffle className="size-4 shrink-0 text-teal-200" />
       <div className="min-w-0 flex-1 leading-tight">
         <p className="truncate text-sm font-semibold">
-          {over ? "Final scores" : `Round ${state.roundNumber} / ${state.settings.rounds}`}
+          {over ? "Final scores" : <><span className="max-sm:hidden">Round </span>{state.roundNumber} / {state.settings.rounds}</>}
         </p>
         <p className="truncate text-[11px] text-white/60">
           {submitting ? `${state.submittedPlayerIds.length} / ${players.length} locked in` : stage ? (perfect && stage === "score" ? "Perfect sync!" : STAGE_LINE[stage]) : over ? `${history.length} prompts played` : ""}
@@ -217,7 +217,7 @@ export function SyncUpGame(props: SyncUpGameProps) {
     !lit || !group ? "plain" : perfect ? "perfect" : group.points > 0 ? "match" : group.answers.length === 1 ? "alone" : "plain"
 
   return (
-    <PartyTable tableRef={tableRef} background={TABLE_BG}>
+    <PartyTable tableRef={tableRef} background={TABLE_BG} className="min-h-[560px]">
       {/* Stage light. */}
       <div aria-hidden="true" className="pointer-events-none absolute rounded-[50%] bg-teal-300/[.06] blur-2xl" style={{ left: cx - rx * 0.9, top: cy - ry * 0.75, width: rx * 1.8, height: ry * 1.5 }} />
 

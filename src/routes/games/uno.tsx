@@ -97,7 +97,7 @@ function UnoPage() {
           const on = multiplayer.gameState!.rules[rule.key]
           return <li key={rule.key} className="flex items-start justify-between gap-3">
             <span><span className="font-semibold">{rule.label}</span><span className="block text-muted-foreground">{rule.description}</span></span>
-            <button type="button" role="switch" aria-checked={on} aria-label={rule.label} disabled={!multiplayer.isHost} onClick={() => multiplayer.setRule(rule.key, !on)} className={cn("relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60", on ? "bg-red-500" : "bg-muted-foreground/30")}>
+            <button type="button" role="switch" aria-checked={on} aria-label={rule.label} disabled={!multiplayer.isHost} onClick={() => multiplayer.setRule(rule.key, !on)} className={cn("relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors before:absolute before:-inset-2.5 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60", on ? "bg-red-500" : "bg-muted-foreground/30")}>
               <span className={cn("absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow transition-transform", on && "translate-x-5")} />
             </button>
           </li>
@@ -108,14 +108,14 @@ function UnoPage() {
     <div className="rounded-2xl border bg-red-500/5 p-4 text-sm">
       <div className="flex items-center justify-between gap-2">
         <p className="font-bold">Bots</p>
-        <Button size="sm" variant="outline" disabled={!multiplayer.isHost || players.length >= multiplayer.gameState.maxPlayers} onClick={multiplayer.addBot}><Bot className="mr-1 h-3.5 w-3.5" />Add bot</Button>
+        <Button size="sm" variant="outline" className="h-10 sm:h-8" disabled={!multiplayer.isHost || players.length >= multiplayer.gameState.maxPlayers} onClick={multiplayer.addBot}><Bot className="mr-1 h-3.5 w-3.5" />Add bot</Button>
       </div>
       {bots.length === 0 ? <p className="mt-2 text-muted-foreground">Fill empty seats with bots to start without a full table.</p> : <ul className="mt-2 space-y-1">
         {bots.map((bot) => <li key={bot.id} className="flex items-center justify-between gap-2">
           <span className="flex items-center gap-2"><Bot className="h-3.5 w-3.5 text-muted-foreground" />{bot.name}</span>
           <span className="flex items-center gap-1">
             <BotLevelPicker name={bot.name} level={bot.botLevel} disabled={!multiplayer.isHost} onChange={(level) => multiplayer.setBotLevel(bot.id, level)} />
-            {multiplayer.isHost && <Button size="sm" variant="ghost" onClick={() => multiplayer.removePlayer(bot.id)}>Remove</Button>}
+            {multiplayer.isHost && <Button size="sm" variant="ghost" className="h-10 sm:h-8" onClick={() => multiplayer.removePlayer(bot.id)}>Remove</Button>}
           </span>
         </li>)}
       </ul>}

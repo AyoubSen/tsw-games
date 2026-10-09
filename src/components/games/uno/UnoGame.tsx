@@ -921,7 +921,7 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
 
       {/* Top bar. */}
       <div className="pointer-events-none absolute inset-x-3 top-3 flex items-start gap-2 lg:inset-x-6 lg:top-5">
-        <button type="button" onClick={onLeave} className={cn(GLASS, "flex h-11 shrink-0 items-center gap-1.5 px-3 text-sm font-semibold transition hover:bg-black/60")}>
+        <button type="button" onClick={onLeave} className={cn(GLASS, "flex h-11 w-10 shrink-0 items-center justify-center gap-1.5 text-sm font-semibold transition hover:bg-black/60 sm:w-auto sm:px-3")}>
           <ArrowLeft className="size-4" />
           <span className="hidden sm:inline">Leave</span>
         </button>
@@ -932,10 +932,10 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
         <div className="flex min-w-0 flex-1 flex-col items-stretch gap-1 lg:absolute lg:left-1/2 lg:w-[min(560px,48vw)] lg:-translate-x-1/2">
           <div
             aria-live="polite"
-            className={cn(GLASS, "flex h-11 min-w-0 items-center gap-3 px-4 transition-colors duration-500", myTurn && !active && "border-amber-200/70 bg-amber-400/20")}
+            className={cn(GLASS, "flex h-11 min-w-0 items-center gap-2 px-3 transition-colors duration-500 sm:gap-3 sm:px-4", myTurn && !active && "border-amber-200/70 bg-amber-400/20")}
           >
             <span aria-hidden="true" className={cn("size-3 shrink-0 rounded-full", !finished && "animate-pulse")} style={{ background: turnHex, boxShadow: `0 0 14px ${turnHex}` }} />
-            <p className="min-w-0 flex-1 truncate text-sm font-semibold">{statusText}</p>
+            <p className="min-w-0 flex-1 truncate text-sm font-semibold max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:leading-tight">{statusText}</p>
             {!connected && <span className="flex shrink-0 items-center gap-1 text-xs text-amber-200"><WifiOff className="size-3.5" />Reconnecting</span>}
           </div>
           {story?.sub && !beforeLanding && !wheelActive ? (
@@ -945,20 +945,20 @@ export function UnoGame({ state, playerId, isHost, spectating, watching, roomLab
           ) : null}
         </div>
         {/* Above the finish screen, where the host seats spectators between hands. */}
-        <div className="relative z-[60] ml-auto flex shrink-0 items-start gap-2">
+        <div className="relative z-[60] ml-auto flex shrink-0 items-start gap-1.5 sm:gap-2">
           {watching}
           <button
             type="button"
             onClick={() => setLogOpen((open) => !open)}
             aria-pressed={logOpen}
             aria-label="Recent plays"
-            className={cn(GLASS, "flex h-11 items-center gap-1.5 px-3 text-sm font-semibold transition hover:bg-black/60", logOpen && "border-white/30 bg-white/15")}
+            className={cn(GLASS, "flex h-11 w-10 items-center justify-center gap-1.5 text-sm font-semibold transition hover:bg-black/60 sm:w-auto sm:px-3", logOpen && "border-white/30 bg-white/15")}
           >
             <ScrollText className="size-4" />
             <span className="hidden sm:inline">Log</span>
           </button>
-          <SoundToggle />
-          {!spectating && <ReactionPicker onReact={onReact} disabled={!connected} side="bottom" align="end" />}
+          <SoundToggle className="max-sm:w-10" />
+          {!spectating && <ReactionPicker onReact={onReact} disabled={!connected} side="bottom" align="end" className="max-sm:w-10" />}
         </div>
       </div>
 
@@ -1080,7 +1080,7 @@ function TrayButton({ children, onClick, tone = "solid" }: { children: ReactNode
       type="button"
       onClick={onClick}
       className={cn(
-        "flex h-9 shrink-0 items-center gap-1.5 rounded-xl px-3.5 text-sm font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200",
+        "flex h-10 shrink-0 items-center gap-1.5 rounded-xl px-3.5 text-sm font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200",
         tone === "solid" ? "bg-amber-300 text-[#1a1406] hover:bg-amber-200" : "bg-white/10 text-white hover:bg-white/20",
       )}
     >
@@ -1091,7 +1091,7 @@ function TrayButton({ children, onClick, tone = "solid" }: { children: ReactNode
 
 function IconButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} aria-label={label} className="grid size-9 shrink-0 place-items-center rounded-xl text-white/70 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200">
+    <button type="button" onClick={onClick} aria-label={label} className="grid size-10 shrink-0 place-items-center rounded-xl text-white/70 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200">
       <X className="size-4" />
     </button>
   )
@@ -1107,7 +1107,7 @@ function ColorPicker({ label, onPick, extra }: { label: string; onPick: (color: 
           type="button"
           onClick={() => onPick(color)}
           aria-label={`Play as ${COLOR_NAME[color]}`}
-          className="size-9 shrink-0 rounded-full border-2 border-white/90 shadow-lg transition hover:scale-110 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/60 sm:size-10"
+          className="size-10 shrink-0 rounded-full border-2 border-white/90 shadow-lg transition hover:scale-110 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/60"
           style={{ background: `radial-gradient(circle at 35% 30%, ${COLOR_HEX[color].base}, ${COLOR_HEX[color].deep})` }}
         />
       ))}
@@ -1180,7 +1180,7 @@ function Seat({ refCallback, name, x, y, count, compact, isTurn, isHost, offline
         {offline && <WifiOff className="size-3 shrink-0" />}
       </p>
       {onCatch ? (
-        <button type="button" onClick={onCatch} className="uno-bob rounded-full bg-[#ffd23f] px-2.5 py-0.5 text-[11px] font-black uppercase tracking-wide text-[#141416] shadow-[0_0_16px_#ffd23faa] transition hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+        <button type="button" onClick={onCatch} className="uno-bob relative rounded-full before:absolute before:-inset-2.5 before:content-[''] bg-[#ffd23f] px-2.5 py-0.5 text-[11px] font-black uppercase tracking-wide text-[#141416] shadow-[0_0_16px_#ffd23faa] transition hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
           Catch!
         </button>
       ) : tag ? (

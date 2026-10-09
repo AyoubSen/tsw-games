@@ -80,7 +80,7 @@ export function GlassButton({ icon, label, pressed, onClick, badge }: { icon: Re
       onClick={onClick}
       aria-pressed={pressed}
       aria-label={label}
-      className={cn(GLASS, "relative flex h-11 items-center gap-1.5 px-3 text-sm font-semibold transition hover:bg-black/65 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70", pressed && "border-white/30 bg-white/15")}
+      className={cn(GLASS, "relative flex h-11 min-w-10 items-center justify-center gap-1.5 px-0 text-sm font-semibold transition sm:px-3 hover:bg-black/65 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70", pressed && "border-white/30 bg-white/15")}
     >
       {icon}
       <span className="hidden sm:inline">{label}</span>
@@ -101,8 +101,8 @@ export function TableTopBar({ title, roomLabel, onLeave, connected, status, acti
   canReact: boolean
 }) {
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start gap-2 p-3">
-      <button type="button" onClick={onLeave} className={cn(GLASS, "pointer-events-auto flex h-11 shrink-0 items-center gap-1.5 px-3 text-sm font-semibold transition hover:bg-black/65")}>
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start gap-1.5 p-3 sm:gap-2">
+      <button type="button" onClick={onLeave} className={cn(GLASS, "pointer-events-auto flex h-11 w-10 shrink-0 items-center justify-center gap-1.5 text-sm font-semibold transition hover:bg-black/65 sm:w-auto sm:px-3")}>
         <ArrowLeft className="size-4" />
         <span className="hidden sm:inline">Leave</span>
       </button>
@@ -111,15 +111,15 @@ export function TableTopBar({ title, roomLabel, onLeave, connected, status, acti
         {roomLabel && <p className="text-xs text-white/60">Room {roomLabel}</p>}
       </div>
       <div className="pointer-events-auto flex min-w-0 flex-1 justify-center lg:absolute lg:left-1/2 lg:w-[min(460px,40vw)] lg:-translate-x-1/2">
-        <div aria-live="polite" className={cn(GLASS, "flex h-11 w-full min-w-0 items-center gap-3 px-3")}>
+        <div aria-live="polite" className={cn(GLASS, "flex h-11 w-full min-w-0 items-center gap-2 px-2 max-sm:[&_.truncate]:line-clamp-2 max-sm:[&_.truncate]:whitespace-normal max-sm:[&_.truncate]:leading-tight sm:gap-3 sm:px-3")}>
           {status}
           {!connected && <span className="flex shrink-0 items-center gap-1 text-xs text-amber-200"><WifiOff className="size-3.5" /><span className="hidden sm:inline">Reconnecting</span></span>}
         </div>
       </div>
-      <div className="pointer-events-auto ml-auto flex shrink-0 items-start gap-2">
+      <div className="pointer-events-auto ml-auto flex shrink-0 items-start gap-1.5 sm:gap-2">
         {actions}
-        <SoundToggle />
-        <ReactionPicker onReact={onReact} disabled={!connected || !canReact} side="bottom" align="end" />
+        <SoundToggle className="max-sm:w-10" />
+        <ReactionPicker onReact={onReact} disabled={!connected || !canReact} side="bottom" align="end" className="max-sm:w-10" />
       </div>
     </div>
   )
@@ -132,7 +132,7 @@ export function SidePanel({ title, icon, onClose, children }: { title: string; i
       <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
         {icon}
         <p className="flex-1 text-sm font-bold">{title}</p>
-        <button type="button" onClick={onClose} aria-label={`Close ${title.toLowerCase()}`} className="grid size-8 place-items-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white">
+        <button type="button" onClick={onClose} aria-label={`Close ${title.toLowerCase()}`} className="grid size-10 place-items-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white">
           <X className="size-4" />
         </button>
       </div>

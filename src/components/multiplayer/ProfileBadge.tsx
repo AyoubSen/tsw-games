@@ -13,7 +13,7 @@ export function ProfileBadge({ profileId, color, className }: { profileId?: stri
   if (!profileId) return icon
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} aria-label="View profile" className="inline cursor-pointer align-baseline">
+      <button type="button" onClick={() => setOpen(true)} aria-label="View profile" className="relative inline cursor-pointer align-baseline before:absolute before:-inset-3 before:content-['']">
         {icon}
       </button>
       <Dialog open={open} onOpenChange={setOpen}>

@@ -26,6 +26,8 @@ import {
 } from "../src/lib/reactions";
 
 export const PASSES_PER_GAME = 2;
+/** A hot seat whose player has dropped is skipped after this long, so the table never stalls. */
+const AWAY_SKIP_MS = 15000;
 
 /** Points for each way a turn can end. */
 export const POINTS = {
@@ -272,7 +274,7 @@ class PressureButtonParty implements Party.Server {
 		}
 	}
 
-	/** The alarm drives the answer clock and the reveal beats. */
+	/** The alarm drives the answer clock, the reveal beats and skipping an empty hot seat. */
 	async scheduleAlarm() {
 		const s = this.state;
 		const at =
@@ -280,9 +282,16 @@ class PressureButtonParty implements Party.Server {
 				? s.turnStartedAt + s.settings.answerTimeLimit * 1000
 				: s?.status === "reveal"
 					? (s.reveal?.endsAt ?? null)
-					: null;
+					: s?.status === "decision" && this.activeAway()
+						? Date.now() + AWAY_SKIP_MS
+						: null;
 		if (at) await this.room.storage.setAlarm(Math.max(Date.now() + 10, at));
 		else await this.room.storage.deleteAlarm();
+	}
+
+	activeAway(): boolean {
+		const s = this.state;
+		return Boolean(s?.activePlayerId && s.players[s.activePlayerId]?.connected === false);
 	}
 
 	async saveState() {
@@ -567,7 +576,8 @@ class PressureButtonParty implements Party.Server {
 	reportFinish() {
 		if (!this.state) return;
 		const players = Object.values(this.state.players);
-		const highestScore = Math.max(...players.map((player) => player.score), 0);
+		// Scores can go negative, so the top score is not floored at zero (same as onRequest).
+		const highestScore = Math.max(...players.map((player) => player.score));
 		const accounts = this.state.accounts ?? {};
 		void reportDirectResult(this.room, {
 			resultId: `pressure-button:${this.state.roomCode}:${this.state.startedAt}`,
@@ -858,6 +868,9 @@ class PressureButtonParty implements Party.Server {
 		} else if (s.status === "reveal" && s.reveal?.endsAt) {
 			if (now < s.reveal.endsAt - 50) return this.scheduleAlarm();
 			await this.advanceReveal();
+		} else if (s.status === "decision" && this.activeAway()) {
+			// Skipped, not a spent pass: they never got to choose.
+			await this.pass();
 		}
 	}
 
@@ -874,6 +887,7 @@ class PressureButtonParty implements Party.Server {
 		markDisconnected(this.state.players, connection.id);
 
 		await this.saveState();
+		if (this.state.status === "decision" && this.state.activePlayerId === connection.id) await this.scheduleAlarm();
 		// No "player-left" here: they may be back in a moment, and the client
 		// removes players on that message.
 		this.broadcast({ type: "state", state: this.getPublicState() });

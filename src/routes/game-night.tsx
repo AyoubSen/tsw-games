@@ -85,7 +85,7 @@ function GameNightPage() {
 							<span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: profile.color }} />
 							<span className="text-white/60">Playing as</span>
 							<span className="truncate font-bold">{profile.displayName}</span>
-							<Link to="/profile" className="ml-auto text-xs text-amber-300 hover:underline">Edit</Link>
+							<Link to="/profile" className="relative ml-auto text-xs text-amber-300 before:absolute before:-inset-3 before:content-[''] hover:underline">Edit</Link>
 						</div>
 					) : (
 						<input className={input} value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" maxLength={20} />

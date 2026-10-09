@@ -147,7 +147,7 @@ export function GameNightLounge() {
 	const landed = recapPlaying && recapElapsed >= RECAP_BEATS.land;
 
 	return (
-		<PartyTable tableRef={tableRef} background={LOUNGE_BG}>
+		<PartyTable tableRef={tableRef} background={LOUNGE_BG} className="min-h-[560px]">
 			<TableTopBar
 				title="Game Night"
 				roomLabel={state.roomCode}

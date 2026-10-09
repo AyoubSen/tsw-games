@@ -21,7 +21,7 @@ import {
 	type PublicGameNightState,
 } from "../src/lib/gameNight";
 import { isReaction, takeReactionSlot } from "../src/lib/reactions";
-import { markConnected, markDisconnected, nextHost } from "./shared/presence";
+import { isPresent, markConnected, markDisconnected, nextHost } from "./shared/presence";
 
 interface GameNightState extends PublicGameNightState {
 	playerTokens: Record<string, string>;
@@ -221,7 +221,8 @@ class GameNightParty implements Party.Server {
 			roomId: crypto.randomUUID(),
 			status: "launching",
 			startedAt: Date.now(),
-			playerIds: players.map((player) => player.id),
+			// Only who is here plays; tickets still go to everyone so someone returning can join.
+			playerIds: players.filter(isPresent).map((player) => player.id),
 		};
 		this.state.activeMatch = match;
 		this.state.vote = null;
@@ -348,7 +349,8 @@ class GameNightParty implements Party.Server {
 				winnerNames: winnerIds.map((id) => this.state!.players[id].name),
 				scored: result.scored,
 				finishedAt: Date.now(),
-				playerIds: (match.playerIds ?? Object.keys(this.state.matchTickets)).filter((id) => Boolean(this.state?.players[id])),
+				// A winner who arrived after the launch still played.
+				playerIds: [...new Set([...(match.playerIds ?? Object.keys(this.state.matchTickets)), ...winnerIds])].filter((id) => Boolean(this.state?.players[id])),
 			};
 			this.state.history.push(history);
 			this.reportMatch(history, result.vsBot === true);

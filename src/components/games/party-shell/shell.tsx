@@ -65,9 +65,9 @@ export function useSoundCue(key: string | null, play: () => void) {
   })
 }
 
-export function PartyTable({ tableRef, background, children }: { tableRef: Ref<HTMLDivElement>; background: string; children: ReactNode }) {
+export function PartyTable({ tableRef, background, className, children }: { tableRef: Ref<HTMLDivElement>; background: string; className?: string; children: ReactNode }) {
   return (
-    <div ref={tableRef} className="relative h-[calc(100dvh-73px)] overflow-hidden text-white select-none" style={{ background }}>
+    <div ref={tableRef} className={cn("relative h-[calc(100dvh-73px)] overflow-hidden text-white select-none", className)} style={{ background }}>
       {children}
     </div>
   )
@@ -111,7 +111,7 @@ export function TableTopBar({ title, roomLabel, onLeave, connected, status, acti
         {roomLabel && <p className="text-xs text-white/60">Room {roomLabel}</p>}
       </div>
       <div className="pointer-events-auto flex min-w-0 flex-1 justify-center lg:absolute lg:left-1/2 lg:w-[min(460px,40vw)] lg:-translate-x-1/2">
-        <div aria-live="polite" className={cn(GLASS, "flex h-11 w-full min-w-0 items-center gap-2 px-2 max-sm:[&_.truncate]:line-clamp-2 max-sm:[&_.truncate]:whitespace-normal max-sm:[&_.truncate]:leading-tight sm:gap-3 sm:px-3")}>
+        <div aria-live="polite" className={cn(GLASS, "flex h-11 w-full min-w-0 items-center gap-2 px-2 max-sm:[&>.truncate]:line-clamp-2 max-sm:[&>.truncate]:whitespace-normal max-sm:[&>.truncate]:leading-tight sm:gap-3 sm:px-3")}>
           {status}
           {!connected && <span className="flex shrink-0 items-center gap-1 text-xs text-amber-200"><WifiOff className="size-3.5" /><span className="hidden sm:inline">Reconnecting</span></span>}
         </div>

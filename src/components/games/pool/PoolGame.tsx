@@ -1,6 +1,7 @@
-import { BadgeCheck, Bot, Camera, ChevronLeft, ChevronRight, Crosshair, Hand, RotateCcw, ScrollText, Trophy } from "lucide-react"
+import { Bot, Camera, ChevronLeft, ChevronRight, Crosshair, Hand, RotateCcw, ScrollText, Trophy } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import { GLASS, GlassButton, PartyTable, SidePanel, TableTopBar, TimerRing, useBeat, useNow, useSoundCue } from "@/components/games/party-shell/shell"
+import { ProfileBadge } from "@/components/multiplayer/ProfileBadge"
 import { ReactionBubble, type ReactionBubbles } from "@/components/multiplayer/Reactions"
 import { useProfile } from "@/lib/account"
 import {
@@ -132,7 +133,7 @@ function PlayerPanel({ game, seat, align, balls, ballSet, reactions, active }: {
         <p className="min-w-0 flex-1 truncate text-sm font-bold">
           {player.isBot && <Bot className="mr-1 inline size-3.5 -translate-y-px text-white/60" />}
           {player.name}
-          {player.verified && <BadgeCheck className="ml-1 inline size-3.5 -translate-y-px" style={{ color: player.color }} aria-label="Signed in" />}
+          {player.verified && <ProfileBadge profileId={player.profileId} color={player.color} className="ml-1 inline size-3.5 -translate-y-px" />}
           {player.connected === false && <span className="ml-1 text-xs font-normal text-amber-200">away</span>}
         </p>
         {wins > 0 && <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-[11px] font-semibold text-white/80">{wins} {wins === 1 ? "rack" : "racks"}</span>}

@@ -35,6 +35,8 @@ export interface Player {
   botLevel?: BotLevel
   /** Clerk user id for signed-in players; never sent to clients. */
   userId?: string
+  /** Public profile id; opens their profile card. */
+  profileId?: string
   color?: string
   /** Cue id from their profile, drawn whenever they shoot. */
   cue?: string
@@ -135,6 +137,7 @@ export interface PublicPlayer {
   botLevel?: BotLevel
   /** Signed in: the name is their profile name and can't be spoofed. */
   verified?: boolean
+  profileId?: string
   color?: string
   cue?: string
 }
@@ -281,6 +284,7 @@ class PoolParty implements Party.Server {
           isBot: player.isBot,
           botLevel: player.isBot ? (player.botLevel ?? "normal") : undefined,
           verified: player.userId ? true : undefined,
+          profileId: player.profileId,
           color: player.color,
           cue: player.cue,
         },
@@ -632,7 +636,7 @@ class PoolParty implements Party.Server {
           }
           const account = await this.joins.verify(sender, data.authToken)
           const name = account?.displayName ?? (typeof data.name === "string" ? data.name.trim().slice(0, 20) : "")
-          const identity = account ? { userId: account.userId, color: account.color, cue: account.poolCue } : {}
+          const identity = account ? { userId: account.userId, profileId: account.profileId, color: account.color, cue: account.poolCue } : {}
           const returning = state.players[sender.id]
           if (returning) {
             if (state.playerTokens[sender.id] !== playerToken) {
@@ -706,7 +710,7 @@ class PoolParty implements Party.Server {
             return
           }
           delete state.spectators![spectator.id]
-          state.players[spectator.id] = { id: spectator.id, name: spectator.name, joinedAt: Date.now(), connected: true, disconnectedAt: null, seat: null, userId: spectator.userId, color: spectator.color, cue: spectator.cue }
+          state.players[spectator.id] = { id: spectator.id, name: spectator.name, joinedAt: Date.now(), connected: true, disconnectedAt: null, seat: null, userId: spectator.userId, profileId: spectator.profileId, color: spectator.color, cue: spectator.cue }
           if (state.status === "finished") {
             state.status = "waiting"
             state.seatOrder = Array.from({ length: POOL_SEATS }, () => null)

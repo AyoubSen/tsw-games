@@ -5,6 +5,8 @@ import { isGameNightRoom } from "./gameNight"
 /** A signed-in player, with the name and colour from their Convex profile. */
 export interface VerifiedAccount {
   userId: string
+  /** Public profile id, safe to send to other players; opens their profile card. */
+  profileId: string
   displayName: string
   color: string
   /** Pool cue id from their profile; everyone at the table sees it. */
@@ -59,10 +61,12 @@ export async function verifyAccount(room: Party.Room, authToken: unknown): Promi
       body: JSON.stringify({ clerkUserId: claims.sub }),
     })
     if (!response.ok) return null
-    const profile = (await response.json()) as { displayName?: unknown; color?: unknown; poolCue?: unknown }
+    const profile = (await response.json()) as { profileId?: unknown; displayName?: unknown; color?: unknown; poolCue?: unknown }
     if (typeof profile.displayName !== "string" || !profile.displayName || typeof profile.color !== "string") return null
+    if (typeof profile.profileId !== "string") return null
     return {
       userId: claims.sub,
+      profileId: profile.profileId,
       displayName: profile.displayName.slice(0, 20),
       color: profile.color,
       poolCue: typeof profile.poolCue === "string" ? profile.poolCue.slice(0, 40) : undefined,

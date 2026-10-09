@@ -1,9 +1,10 @@
 import { useNavigate } from "@tanstack/react-router";
-import { BadgeCheck, Check, Copy, Crown, Flag, Gamepad2, LogOut, ScrollText, Sparkles, Trophy, Vote, X } from "lucide-react";
+import { Check, Copy, Crown, Flag, Gamepad2, LogOut, ScrollText, Sparkles, Trophy, Vote, X } from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
 import { Scoreboard, type ScoreRow } from "@/components/games/party-shell/Scoreboard";
 import { ringLayout, Seat, SeatChip, viewerFirst } from "@/components/games/party-shell/SeatRing";
 import { GLASS, GlassButton, PartyTable, SidePanel, TableTopBar, TimerRing, useBeat, useElementSize, useNow, useSoundCue } from "@/components/games/party-shell/shell";
+import { ProfileBadge } from "@/components/multiplayer/ProfileBadge";
 import { GAME_NIGHT_GAMES, type GameNightGameId, type GameNightPlayer, gameNightMisfit, getGameNightGame, RECAP_BEATS, RECAP_MS, SPIN_MS, VOTE_MS } from "@/lib/gameNight";
 import { getGameNightInviteLink } from "@/lib/inviteLinks";
 import { playSound } from "@/lib/sounds";
@@ -279,7 +280,7 @@ export function GameNightLounge() {
 						bubble={gameNight.reactions[id]}
 						bubbleSide={index === 0 ? "top" : seat.y < ring.cy ? "bottom" : "top"}
 					>
-						{player.verified && <BadgeCheck aria-label="Signed in" className="absolute -right-1 -top-1 size-4 rounded-full bg-black/80 p-0.5" style={{ color: player.color }} />}
+						{player.verified && <ProfileBadge profileId={player.profileId} color={player.color} className="absolute -right-1 -top-1 size-4 rounded-full bg-black/80 p-0.5" />}
 						{won && <span key={`w${recapEntry!.matchId}`} className="poker-float-up absolute bottom-full left-1/2 -translate-x-1/2 whitespace-nowrap font-mono text-lg font-black text-amber-300 drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]">+1</span>}
 					</Seat>
 				);

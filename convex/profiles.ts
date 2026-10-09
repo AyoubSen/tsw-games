@@ -144,6 +144,44 @@ export const publicProfile = internalQuery({
   args: { clerkUserId: v.string() },
   handler: async (ctx, { clerkUserId }) => {
     const profile = await profileFor(ctx, clerkUserId)
-    return profile ? { displayName: profile.displayName, color: profile.color, poolCue: profile.cosmetics.pool?.cue ?? null } : null
+    return profile
+      ? { profileId: profile._id, displayName: profile.displayName, color: profile.color, poolCue: profile.cosmetics.pool?.cue ?? null }
+      : null
+  },
+})
+
+/**
+ * A player's public card, opened from their badge in a game. The profile id is
+ * the public id; the Clerk user id is never returned.
+ */
+export const card = query({
+  args: { profileId: v.string() },
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("profiles", args.profileId)
+    const profile = id && (await ctx.db.get(id))
+    if (!profile) return null
+    const stats = await ctx.db
+      .query("gameStats")
+      .withIndex("by_user", (q) => q.eq("clerkUserId", profile.clerkUserId))
+      .collect()
+    const identity = await ctx.auth.getUserIdentity()
+    const isYou = identity?.subject === profile.clerkUserId
+    const record =
+      identity && !isYou
+        ? await ctx.db
+            .query("headToHead")
+            .withIndex("by_pair", (q) => q.eq("clerkUserId", identity.subject).eq("opponentId", profile.clerkUserId))
+            .unique()
+        : null
+    return {
+      displayName: profile.displayName,
+      color: profile.color,
+      memberSince: profile.createdAt,
+      isYou,
+      stats: stats
+        .sort((a, b) => b.played - a.played || b.lastPlayedAt - a.lastPlayedAt)
+        .map((stat) => ({ game: stat.game, played: stat.played, wins: stat.wins })),
+      vsYou: record ? { played: record.played, wins: record.wins, losses: record.losses } : null,
+    }
   },
 })

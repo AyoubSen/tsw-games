@@ -13,6 +13,7 @@ export interface Spectator {
   joinedAt: number
   /** Clerk user id, when the spectator signed in - carried over if they are seated. */
   userId?: string
+  profileId?: string
   color?: string
   /** Pool cue id, carried over like the colour. */
   cue?: string

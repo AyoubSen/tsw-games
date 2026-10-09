@@ -35,6 +35,8 @@ export interface GameNightPlayer {
 	inLounge?: boolean;
 	/** Signed in: the name is their profile name and can't be spoofed. */
 	verified?: boolean;
+	/** Public profile id; opens their profile card. */
+	profileId?: string;
 	color?: string;
 }
 

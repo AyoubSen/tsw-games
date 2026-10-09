@@ -578,3 +578,9 @@ export const plannedGames: PlannedGameCatalogEntry[] = [
 		category: "social",
 	},
 ];
+
+/** Display name for a stats/history game id. */
+export const gameTitle = (game: string) =>
+	game === "game-night"
+		? "Game Night"
+		: (liveGames.find((entry) => entry.id === game)?.title ?? game);

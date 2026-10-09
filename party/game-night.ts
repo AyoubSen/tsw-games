@@ -426,7 +426,7 @@ class GameNightParty implements Party.Server {
 				}
 				if (account) {
 					this.state.accounts = { ...this.state.accounts, [sender.id]: account.userId };
-					Object.assign(this.state.players[sender.id], { verified: true, color: account.color });
+					Object.assign(this.state.players[sender.id], { verified: true, profileId: account.profileId, color: account.color });
 				}
 				if (!this.state.players[this.state.hostId]) this.state.hostId = sender.id;
 				this.state.revision += 1;

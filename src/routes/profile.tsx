@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useProfile } from "@/lib/account";
-import { liveGames } from "@/lib/gameCatalog";
+import { gameTitle } from "@/lib/gameCatalog";
 import { cn } from "@/lib/utils";
 import { api } from "../../convex/_generated/api";
 import {
@@ -44,11 +44,6 @@ import {
 } from "../../convex/profileColors";
 
 export const Route = createFileRoute("/profile")({ component: ProfilePage });
-
-const gameTitle = (game: string) =>
-	game === "game-night"
-		? "Game Night"
-		: (liveGames.find((entry) => entry.id === game)?.title ?? game);
 
 const playedWhen = (time: number) => {
 	const minutes = Math.round((Date.now() - time) / 60000);

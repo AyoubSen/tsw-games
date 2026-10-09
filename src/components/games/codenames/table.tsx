@@ -141,7 +141,9 @@ export function boardMetrics(w: number, h: number) {
 }
 
 function wordFont(word: string, w: number) {
-  return Math.max(8, Math.min(w * 0.13, (w * 1.5) / Math.max(word.length, 4)))
+  // Phone-sized cards get a bigger cap for short words and a tighter fit for long ones.
+  const [cap, fit] = w < 100 ? [0.16, 1.15] : [0.13, 1.5]
+  return Math.max(8, Math.min(w * cap, (w * fit) / Math.max(word.length, 4)))
 }
 
 export function hueOf(id: string) {

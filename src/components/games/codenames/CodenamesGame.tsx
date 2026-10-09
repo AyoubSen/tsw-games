@@ -279,9 +279,9 @@ export function CodenamesGame(props: CodenamesGameProps) {
     if (turn.clue && turn.phase === "guessing" && pending?.kind !== "clue") {
       const left = turn.clue.count === 0 ? "∞" : `${turn.guessesRemaining}`
       return (
-        <div key={turn.clue.timestamp} className={cn(GLASS, "uno-pop flex min-w-0 items-center gap-3 px-3 py-1.5 sm:px-4")} style={{ borderColor: `${hex}88`, boxShadow: `0 0 28px ${hex}40` }}>
+        <div key={turn.clue.timestamp} className={cn(GLASS, "uno-pop flex min-w-0 items-center gap-2 px-3 py-1.5 sm:gap-3 sm:px-4")} style={{ borderColor: `${hex}88`, boxShadow: `0 0 28px ${hex}40` }}>
           <span style={{ color: hex }}><TeamMark team={turn.team} /></span>
-          <span className="min-w-0 truncate text-lg font-black uppercase tracking-wider sm:text-2xl">{turn.clue.word}</span>
+          <span className="min-w-0 truncate text-base font-black uppercase tracking-wide sm:text-2xl sm:tracking-wider">{turn.clue.word}</span>
           <span className="grid size-8 shrink-0 place-items-center rounded-lg text-lg font-black" style={{ background: hex }}>{turn.clue.count === 0 ? "∞" : turn.clue.count}</span>
           <span className="hidden shrink-0 text-[10px] font-bold uppercase leading-tight tracking-wider text-white/55 sm:block">{left}<br />guesses</span>
           {timer}
@@ -355,7 +355,7 @@ export function CodenamesGame(props: CodenamesGameProps) {
   const seatsLeft = 8 - Object.keys(state.players).length
 
   return (
-    <div className="relative flex h-[calc(100dvh-73px)] select-none flex-col overflow-hidden text-white" style={{ background: TABLE_BG }}>
+    <div className="relative flex h-[calc(100dvh-73px)] min-h-[560px] select-none flex-col overflow-hidden text-white" style={{ background: TABLE_BG }}>
       {/* Active side glow */}
       <div
         aria-hidden="true"
@@ -367,8 +367,8 @@ export function CodenamesGame(props: CodenamesGameProps) {
         }}
       />
 
-      <header className="relative z-20 flex items-center gap-2 p-2 sm:p-3">
-        <button type="button" onClick={props.onLeave} className={cn(GLASS, "flex h-11 shrink-0 items-center gap-1.5 px-3 text-sm font-bold hover:bg-black/60")}>
+      <header className="relative z-20 flex items-center gap-1.5 p-2 sm:gap-2 sm:p-3">
+        <button type="button" onClick={props.onLeave} className={cn(GLASS, "flex h-11 w-10 shrink-0 items-center justify-center gap-1.5 text-sm font-bold hover:bg-black/60 sm:w-auto sm:px-3")}>
           <ArrowLeft className="size-4" /><span className="hidden sm:inline">Leave</span>
         </button>
         <div className={cn(GLASS, "hidden h-11 shrink-0 items-center gap-2 px-3 md:flex")}>
@@ -377,17 +377,17 @@ export function CodenamesGame(props: CodenamesGameProps) {
           {(settings.clueTimeLimit > 0 || settings.guessTimeLimit > 0) && <span className="flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-300"><Clock className="size-3" />Timed</span>}
         </div>
         <div className="flex min-w-0 flex-1 justify-center">{clueDock}</div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
           {state.spectators.length > 0 && (
             <span className={cn(GLASS, "hidden h-11 items-center gap-1 px-3 text-xs font-bold text-white/70 sm:flex")} title={state.spectators.map((s) => s.name).join(", ")}>
               <Eye className="size-4" />{state.spectators.length}
             </span>
           )}
-          <button type="button" aria-label="Clue log" aria-expanded={logOpen} onClick={() => setLogOpen((value) => !value)} className={cn(GLASS, "grid size-11 place-items-center hover:bg-black/60 lg:hidden", logOpen && "bg-black/70")}>
+          <button type="button" aria-label="Clue log" aria-expanded={logOpen} onClick={() => setLogOpen((value) => !value)} className={cn(GLASS, "grid size-11 place-items-center hover:bg-black/60 max-sm:w-10 lg:hidden", logOpen && "bg-black/70")}>
             <ScrollText className="size-5" />
           </button>
-          <SoundToggle />
-          {!spectator && <ReactionPicker onReact={props.onReact} disabled={!connected} align="end" side="bottom" />}
+          <SoundToggle className="max-sm:w-10" />
+          {!spectator && <ReactionPicker onReact={props.onReact} disabled={!connected} align="end" side="bottom" className="max-sm:w-10" />}
         </div>
       </header>
 

@@ -212,7 +212,7 @@ export function GameModeSelector({
                     onClick={() => setClueTimeLimit(option.value)}
                     disabled={isConnecting}
                     className={cn(
-                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors",
+                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors pointer-coarse:min-h-10",
                       clueTimeLimit === option.value
                         ? "border-primary bg-primary/10 text-primary"
                         : "border-border hover:border-primary/50"
@@ -237,7 +237,7 @@ export function GameModeSelector({
                     onClick={() => setGuessTimeLimit(option.value)}
                     disabled={isConnecting}
                     className={cn(
-                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors",
+                      "py-2 px-2 rounded-lg border text-xs font-medium transition-colors pointer-coarse:min-h-10",
                       guessTimeLimit === option.value
                         ? "border-primary bg-primary/10 text-primary"
                         : "border-border hover:border-primary/50"

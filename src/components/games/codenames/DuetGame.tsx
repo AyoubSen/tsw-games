@@ -275,7 +275,7 @@ export function DuetGame({ gameState: state, playerId, isHost, roomLabel, connec
   const initial = (id: string) => state.players[id]?.name.charAt(0).toUpperCase() ?? "?"
 
   return (
-    <div className="relative flex h-[calc(100dvh-73px)] select-none flex-col overflow-hidden text-white" style={{ background: TABLE_BG }}>
+    <div className="relative flex h-[calc(100dvh-73px)] min-h-[560px] select-none flex-col overflow-hidden text-white" style={{ background: TABLE_BG }}>
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0"
